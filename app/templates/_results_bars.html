@@ -1,0 +1,19 @@
+{# Simple, manipulation-resistant results: three percentages + total. #}
+<div class="results">
+  <div class="bar-row">
+    <span class="bar-label">Pour</span>
+    <span class="bar"><span class="bar-fill for" style="width: {{ tally.percentages['for'] }}%"></span></span>
+    <span class="bar-pct">{{ tally.percentages['for'] }}% ({{ tally.counts['for'] }})</span>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label">Contre</span>
+    <span class="bar"><span class="bar-fill against" style="width: {{ tally.percentages['against'] }}%"></span></span>
+    <span class="bar-pct">{{ tally.percentages['against'] }}% ({{ tally.counts['against'] }})</span>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label">Abstention</span>
+    <span class="bar"><span class="bar-fill abstain" style="width: {{ tally.percentages['abstain'] }}%"></span></span>
+    <span class="bar-pct">{{ tally.percentages['abstain'] }}% ({{ tally.counts['abstain'] }})</span>
+  </div>
+  <p class="total">Nombre total de votant·e·s : <strong>{{ tally.total }}</strong></p>
+</div>

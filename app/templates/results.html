@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Résultats — {{ law.title }}{% endblock %}
+{% block content %}
+<article class="law">
+  <p class="breadcrumb"><a href="/loi/{{ law.slug }}">← Retour à la loi</a></p>
+  <h1>Résultats — {{ law.title }}</h1>
+  <span class="status status-{{ status }}">{{ status }}</span>
+
+  {% include "_results_bars.html" %}
+
+  <section class="block">
+    <h2>Évolution des votes</h2>
+    {% if evolution %}
+    <table class="evolution">
+      <thead><tr><th>Période</th><th>Pour</th><th>Contre</th><th>Abstention</th></tr></thead>
+      <tbody>
+        {% for bucket in evolution %}
+        <tr>
+          <td>{{ bucket.label }}</td>
+          <td>{{ bucket.counts['for'] }}</td>
+          <td>{{ bucket.counts['against'] }}</td>
+          <td>{{ bucket.counts['abstain'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="meta">La courbe d'évolution permet de détecter d'éventuelles campagnes de mobilisation organisée.</p>
+    {% else %}
+    <p class="meta">L'évolution dans le temps sera affichée lorsque le nombre de votes sera suffisant pour garantir l'anonymat.</p>
+    {% endif %}
+  </section>
+
+  <section class="block">
+    <h2>Données ouvertes</h2>
+    <p>Les données brutes anonymisées (loi, choix, horodatage — aucun identifiant) sont téléchargeables :</p>
+    <p class="downloads">
+      <a href="/loi/{{ law.slug }}/export.csv">Télécharger en CSV</a>
+      <a href="/loi/{{ law.slug }}/export.json">Télécharger en JSON</a>
+    </p>
+  </section>
+
+  <p class="disclaimer-inline">⚠️ {{ DISCLAIMER }}</p>
+</article>
+{% endblock %}

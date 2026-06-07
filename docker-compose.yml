@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: votations
+      POSTGRES_PASSWORD: votations
+      POSTGRES_DB: votations
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U votations"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
+      TEST_DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations_test
+      SECRET_KEY: change-me-in-production
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change-me
+      MIN_BUCKET_VOLUME: "50"
+      # Seed sample laws on startup (set to 0 to disable).
+      SEED_ON_START: "1"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Live code reload in development; remove for an immutable production image.
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  pgdata:

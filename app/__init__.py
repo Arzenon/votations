@@ -1,0 +1,1 @@
+"""Votations Françaises — application package."""

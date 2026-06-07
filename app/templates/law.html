@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ law.title }} — Votations Françaises{% endblock %}
+{% block content %}
+<article class="law">
+  <p class="breadcrumb"><a href="/">← Toutes les votations</a></p>
+  <span class="status status-{{ status }}">{{ status }}</span>
+  <h1>{{ law.title }}</h1>
+  {% if law.official_ref %}
+  <p class="official-ref">
+    Référence : {{ law.official_ref }}
+    {% if law.legifrance_url %}— <a href="{{ law.legifrance_url }}" rel="noopener" target="_blank">Texte officiel (Légifrance)</a>{% endif %}
+  </p>
+  {% endif %}
+
+  <section class="block">
+    <h2>Ce que dit la loi</h2>
+    <p>{{ law.summary_text or "—" }}</p>
+  </section>
+
+  <section class="block">
+    <h2>Ce que ça change en pratique</h2>
+    <p>{{ law.practical_changes or "—" }}</p>
+  </section>
+
+  <div class="arguments">
+    <section class="block arguments-for">
+      <h2>Arguments des partisans</h2>
+      {% if law.arguments_for %}
+      <ul>
+        {% for arg in law.arguments_for %}
+        <li>
+          <p>{{ arg.text }}</p>
+          {% if arg.author or arg.source %}
+          <p class="attribution">
+            {% if arg.author %}{{ arg.author }}{% endif %}
+            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener" target="_blank">source</a>{% endif %}
+          </p>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p>—</p>{% endif %}
+    </section>
+
+    <section class="block arguments-against">
+      <h2>Arguments des opposants</h2>
+      {% if law.arguments_against %}
+      <ul>
+        {% for arg in law.arguments_against %}
+        <li>
+          <p>{{ arg.text }}</p>
+          {% if arg.author or arg.source %}
+          <p class="attribution">
+            {% if arg.author %}{{ arg.author }}{% endif %}
+            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener" target="_blank">source</a>{% endif %}
+          </p>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p>—</p>{% endif %}
+    </section>
+  </div>
+
+  <section class="block vote-block">
+    <h2>Voter</h2>
+    {% if status == "open" %}
+      {% include "_ballot.html" %}
+    {% else %}
+      <h3>Résultats</h3>
+      {% include "_results_bars.html" %}
+    {% endif %}
+  </section>
+
+  <p class="disclaimer-inline">⚠️ {{ DISCLAIMER }}</p>
+
+  <p><a href="/loi/{{ law.slug }}/resultats">Voir les résultats détaillés et télécharger les données</a></p>
+</article>
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} — Administration{% endblock %}
+{% block content %}
+<p class="breadcrumb"><a href="/admin">← Administration</a></p>
+<h1>{% if law %}Éditer la loi{% else %}Nouvelle loi{% endif %}</h1>
+
+<form class="law-form" method="post"
+      action="{% if law %}/admin/lois/{{ law.id }}{% else %}/admin/lois{% endif %}">
+  <label>Titre
+    <input type="text" name="title" required value="{{ law.title if law else '' }}">
+  </label>
+
+  <label>Référence officielle (JO / Légifrance)
+    <input type="text" name="official_ref" value="{{ law.official_ref if law and law.official_ref else '' }}">
+  </label>
+
+  <label>URL Légifrance
+    <input type="url" name="legifrance_url" value="{{ law.legifrance_url if law and law.legifrance_url else '' }}">
+  </label>
+
+  <label>Ce que dit la loi
+    <textarea name="summary_text" rows="4">{{ law.summary_text if law else '' }}</textarea>
+  </label>
+
+  <label>Ce que ça change en pratique
+    <textarea name="practical_changes" rows="4">{{ law.practical_changes if law else '' }}</textarea>
+  </label>
+
+  <label>Arguments des partisans (JSON : [{"text":"…","author":"…","source":"…"}])
+    <textarea name="arguments_for" rows="4">{{ law.arguments_for | tojson if law else '[]' }}</textarea>
+  </label>
+
+  <label>Arguments des opposants (JSON : [{"text":"…","author":"…","source":"…"}])
+    <textarea name="arguments_against" rows="4">{{ law.arguments_against | tojson if law else '[]' }}</textarea>
+  </label>
+
+  <div class="form-row">
+    <label>Ouverture du vote
+      <input type="datetime-local" name="opens_at"
+             value="{{ law.opens_at.strftime('%Y-%m-%dT%H:%M') if law and law.opens_at else '' }}">
+    </label>
+    <label>Clôture du vote
+      <input type="datetime-local" name="closes_at"
+             value="{{ law.closes_at.strftime('%Y-%m-%dT%H:%M') if law and law.closes_at else '' }}">
+    </label>
+  </div>
+
+  <label class="checkbox">
+    <input type="checkbox" name="published" value="1" {% if law and law.published %}checked{% endif %}>
+    Publiée (visible publiquement)
+  </label>
+
+  <button type="submit">Enregistrer</button>
+</form>
+{% endblock %}

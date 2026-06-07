@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Recherche — Votations Françaises{% endblock %}
+{% block content %}
+<h1>Recherche avancée</h1>
+
+<form class="search advanced" action="/recherche" method="get" role="search">
+  <div>
+    <label for="q">Mots-clés</label>
+    <input type="search" id="q" name="q" value="{{ q }}" placeholder="Titre, référence ou résumé…">
+  </div>
+  <div>
+    <label for="status">Statut</label>
+    <select id="status" name="status">
+      <option value="" {% if not status %}selected{% endif %}>Tous</option>
+      <option value="open" {% if status == 'open' %}selected{% endif %}>Ouvertes</option>
+      <option value="closed" {% if status == 'closed' %}selected{% endif %}>Closes</option>
+      <option value="scheduled" {% if status == 'scheduled' %}selected{% endif %}>Programmées</option>
+    </select>
+  </div>
+  <button type="submit">Rechercher</button>
+</form>
+
+<p class="meta">{{ total }} résultat·s</p>
+
+{% if laws %}
+<ul class="law-list">
+  {% for law in laws %}
+  <li class="law-card">
+    <a href="/loi/{{ law.slug }}">
+      <span class="status status-{{ law.status() }}">{{ law.status() }}</span>
+      <h3>{{ law.title }}</h3>
+      {% if law.official_ref %}<p class="meta">{{ law.official_ref }}</p>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+
+{% if pages > 1 %}
+<nav class="pagination">
+  {% if page > 1 %}<a href="/recherche?q={{ q }}&status={{ status }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
+  <span>Page {{ page }} / {{ pages }}</span>
+  {% if page < pages %}<a href="/recherche?q={{ q }}&status={{ status }}&page={{ page + 1 }}">Suivant →</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p>Aucun résultat.</p>
+{% endif %}
+{% endblock %}

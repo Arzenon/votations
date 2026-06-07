@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Administration — Votations Françaises{% endblock %}
+{% block content %}
+<h1>Administration</h1>
+<p><a class="button" href="/admin/lois/nouvelle">+ Nouvelle loi</a></p>
+
+{% if laws %}
+<table class="admin-table">
+  <thead>
+    <tr><th>Titre</th><th>Statut</th><th>Clôture</th><th>Votes</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for law in laws %}
+    <tr>
+      <td><a href="/loi/{{ law.slug }}">{{ law.title }}</a></td>
+      <td><span class="status status-{{ law.status() }}">{{ law.status() }}</span></td>
+      <td>{% if law.closes_at %}{{ law.closes_at.strftime('%d/%m/%Y %H:%M') }}{% else %}—{% endif %}</td>
+      <td>
+        {{ tallies[law.id].total }}
+        (P {{ tallies[law.id].counts['for'] }} /
+         C {{ tallies[law.id].counts['against'] }} /
+         A {{ tallies[law.id].counts['abstain'] }})
+      </td>
+      <td class="actions">
+        <a href="/admin/lois/{{ law.id }}">Éditer</a>
+        <a href="/loi/{{ law.slug }}/export.csv">Export</a>
+        <form action="/admin/lois/{{ law.id }}/supprimer" method="post"
+              onsubmit="return confirm('Supprimer cette loi et tous ses votes ?');">
+          <button type="submit" class="link-danger">Supprimer</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Aucune loi enregistrée.</p>
+{% endif %}
+{% endblock %}

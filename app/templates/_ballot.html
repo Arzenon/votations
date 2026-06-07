@@ -1,0 +1,23 @@
+{# Ballot + live confirmation. Works as a plain form (no JS); HTMX enhances it
+   to swap this fragment in place. #}
+<div id="ballot">
+  {% if status == "open" %}
+  <form action="/loi/{{ law.slug }}/vote" method="post"
+        hx-post="/loi/{{ law.slug }}/vote" hx-target="#ballot" hx-swap="outerHTML">
+    <fieldset>
+      <legend>Votre vote</legend>
+      {% for choice in choices %}
+      <label class="choice">
+        <input type="radio" name="choice" value="{{ choice.value }}"
+               {% if existing_choice == choice.value %}checked{% endif %}>
+        {% if choice.value == "for" %}Pour{% elif choice.value == "against" %}Contre{% else %}Abstention{% endif %}
+      </label>
+      {% endfor %}
+    </fieldset>
+    <button type="submit">{% if existing_choice %}Modifier mon vote{% else %}Voter{% endif %}</button>
+    {% if existing_choice %}<p class="vote-confirm">Votre vote a été enregistré. Vous pouvez le modifier tant que la votation est ouverte.</p>{% endif %}
+  </form>
+  {% else %}
+  <p class="closed-note">Cette votation est {{ status }}. Le vote n'est pas disponible.</p>
+  {% endif %}
+</div>

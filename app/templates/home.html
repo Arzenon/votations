@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Donnez votre avis sur les lois</h1>
+<p class="lede">
+  Exprimez votre opinion sur les textes adoptés par le Parlement. Présentation
+  neutre, données ouvertes, aucune donnée personnelle collectée.
+</p>
+
+<form class="search" action="/" method="get" role="search">
+  <label for="q">Rechercher une loi</label>
+  <input type="search" id="q" name="q" value="{{ q }}" placeholder="Titre ou référence…">
+  <button type="submit">Rechercher</button>
+</form>
+
+<h2>Dernières votations</h2>
+{% if laws %}
+<ul class="law-list">
+  {% for law in laws %}
+  <li class="law-card">
+    <a href="/loi/{{ law.slug }}">
+      <span class="status status-{{ law.status() }}">{{ law.status() }}</span>
+      <h3>{{ law.title }}</h3>
+      {% if law.summary_text %}<p>{{ law.summary_text[:200] }}{% if law.summary_text|length > 200 %}…{% endif %}</p>{% endif %}
+      {% if law.closes_at %}<p class="meta">Clôture : {{ law.closes_at.strftime('%d/%m/%Y') }}</p>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>Aucune loi pour le moment.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Votations Françaises{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="/">Votations&nbsp;Françaises</a>
+      <nav class="nav">
+        <a href="/recherche">Rechercher</a>
+        <a href="/connexion">{{ auth.login_label }}</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="disclaimer" role="note">
+    <div class="container">⚠️ {{ DISCLAIMER }}</div>
+  </div>
+
+  <main class="container" id="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Données publiées en accès libre, anonymisées.
+        La plateforme ne prend aucune position et ne formule aucune recommandation.
+      </p>
+      <p><a href="/connexion">À propos de l'authentification</a></p>
+    </div>
+  </footer>
+</body>
+</html>
