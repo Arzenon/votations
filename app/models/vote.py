@@ -8,7 +8,7 @@ No IP address, no user-agent, no personal data whatsoever.
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -39,5 +39,10 @@ class Vote(Base):
     voter_token: Mapped[str] = mapped_column(String(64), index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    # True once this voter's optional demographics have been folded into the
+    # aggregate counters — prevents double-counting on a vote change. Stores no
+    # demographic values, only the fact that the one-time contribution happened.
+    demographics_recorded: Mapped[bool] = mapped_column(Boolean, default=False)
 
     law = relationship("Law")

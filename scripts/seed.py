@@ -11,7 +11,7 @@ import random
 from datetime import UTC, datetime, timedelta
 
 from app.db import SessionLocal
-from app.models import Law, Vote, VoteChoice
+from app.models import DemographicTally, Law, Vote, VoteChoice
 
 
 def _utc(days: int = 0, hours: int = 0) -> datetime:
@@ -67,6 +67,7 @@ SAMPLE_LAWS = [
         "opens_at": _utc(days=-5),
         "closes_at": _utc(days=10),
         "votes": None,
+        "demographics": None,
     },
     {
         "slug": "encadrement-loyers-zones-tendues",
@@ -103,6 +104,20 @@ SAMPLE_LAWS = [
         "opens_at": _utc(days=-30),
         "closes_at": _utc(days=-1),
         "votes": {"for": 412, "against": 233, "abstain": 61},
+        # Aggregate demographics (only a subset of voters provided them). Every
+        # cell is well above the suppression threshold so the breakdown shows.
+        "demographics": {
+            "age": {
+                "25-34": {"for": 60, "against": 22, "abstain": 12},
+                "35-49": {"for": 95, "against": 51, "abstain": 14},
+                "50-64": {"for": 48, "against": 60, "abstain": 12},
+                "65+": {"for": 20, "against": 44, "abstain": 11},
+            },
+            "sexe": {
+                "femme": {"for": 110, "against": 92, "abstain": 25},
+                "homme": {"for": 103, "against": 81, "abstain": 18},
+            },
+        },
     },
     {
         "slug": "semaine-quatre-jours-fonction-publique",
@@ -140,6 +155,7 @@ SAMPLE_LAWS = [
         "opens_at": _utc(days=7),
         "closes_at": _utc(days=37),
         "votes": None,
+        "demographics": None,
     },
 ]
 
@@ -166,24 +182,50 @@ def _seed_votes(db, law: Law, counts: dict[str, int]) -> None:
             n += 1
 
 
+def _seed_demographics(db, law: Law, data: dict) -> None:
+    for dimension, categories in data.items():
+        for category, choices in categories.items():
+            for choice, count in choices.items():
+                db.add(
+                    DemographicTally(
+                        law_id=law.id,
+                        dimension=dimension,
+                        category=category,
+                        choice=VoteChoice(choice).value,
+                        count=count,
+                    )
+                )
+
+
 def main() -> None:
     db = SessionLocal()
     created = 0
     try:
         for spec in SAMPLE_LAWS:
             votes = spec.pop("votes")
-            if db.query(Law).filter_by(slug=spec["slug"]).first():
-                print(f"• skip (exists): {spec['slug']}")
-                spec["votes"] = votes
+            demographics = spec.pop("demographics")
+            existing = db.query(Law).filter_by(slug=spec["slug"]).first()
+            if existing:
+                # Top up demographics if this law has none yet (idempotent).
+                if demographics and not db.query(DemographicTally).filter_by(
+                    law_id=existing.id
+                ).first():
+                    _seed_demographics(db, existing, demographics)
+                    print(f"↻ added demographics: {spec['slug']}")
+                else:
+                    print(f"• skip (exists): {spec['slug']}")
+                spec["votes"], spec["demographics"] = votes, demographics
                 continue
             law = Law(**spec)
             db.add(law)
             db.flush()  # assign id
             if votes:
                 _seed_votes(db, law, votes)
+            if demographics:
+                _seed_demographics(db, law, demographics)
             created += 1
             print(f"✓ created: {law.slug}")
-            spec["votes"] = votes
+            spec["votes"], spec["demographics"] = votes, demographics
         db.commit()
     finally:
         db.close()

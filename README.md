@@ -84,3 +84,25 @@ horodatage. L'export en accès libre (`/loi/{slug}/export.csv` et `.json`) ne
 contient **que** `law_id, choice, created_at` — aucun identifiant. La courbe
 d'évolution n'est exposée qu'au-delà d'un volume minimal de votes
 (`MIN_BUCKET_VOLUME`) pour empêcher toute ré-identification.
+
+### Données démographiques agrégées (âge, sexe)
+
+Le profil (tranche d'âge, sexe) est **facultatif** et n'est **jamais stocké par
+votant·e**. À la première participation, il est immédiatement ajouté à des
+**compteurs agrégés** (`demographic_tallies`) puis l'événement est oublié :
+
+- la table de compteurs ne contient **ni jeton, ni identité, ni ligne par
+  personne** — uniquement des totaux par `(loi, dimension, catégorie, choix)` ;
+- aucun enregistrement ne relie jamais une personne à la fois à son profil et à
+  son vote, donc **aucune donnée sensible au sens de l'article 9 du RGPD** n'est
+  créée côté serveur ;
+- chaque votant·e n'alimente que des compteurs *marginaux* (âge **ou** sexe),
+  jamais une case croisée âge×sexe, ce qui garde les valeurs stockées élevées ;
+- un drapeau booléen `demographics_recorded` sur le vote évite le double comptage
+  lors d'un changement de vote (le profil n'est compté qu'une fois).
+
+**Suppression de cellules (k-anonymat).** Une répartition n'est affichée ou
+exportée que si **chacune** de ses cases atteint `MIN_CELL_COUNT` (10 par défaut).
+Dès qu'une case est en dessous, toute la répartition est masquée — rien de
+partiel n'est jamais publié, de sorte qu'une petite valeur ne peut être ni lue ni
+recalculée par différence (avec les autres cases, un total, ou l'autre dimension).

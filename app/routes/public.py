@@ -11,14 +11,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from sqlalchemy.orm import Session
 
 from app.auth.base import AuthProvider, get_auth_provider
+from app.crud import demographics as demo_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.crud import votes as votes_crud
 from app.db import get_db
-from app.models import VoteChoice
+from app.models import AgeBracket, Sexe, VoteChoice
 from app.templating import templates
 
 router = APIRouter()
+
+AGE_BRACKETS = [b.value for b in AgeBracket]
+SEXES = [s.value for s in Sexe]
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -84,6 +88,9 @@ def law_page(
             "tally": tally,
             "evolution": evolution,
             "choices": list(VoteChoice),
+            "age_brackets": AGE_BRACKETS,
+            "sexes": SEXES,
+            "demographics_locked": bool(existing and existing.demographics_recorded),
         },
     )
     # Carry over any Set-Cookie the auth provider issued.
@@ -98,6 +105,8 @@ def cast_vote(
     request: Request,
     slug: str,
     choice: str = Form(...),
+    age_bracket: str = Form(""),
+    sexe: str = Form(""),
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
@@ -114,9 +123,12 @@ def cast_vote(
     voter_token = auth.get_voter_token(request, response)
 
     try:
-        votes_crud.cast_vote(db, law, voter_token, vote_choice)
+        vote = votes_crud.cast_vote(db, law, voter_token, vote_choice)
     except votes_crud.VotingClosed:
         return RedirectResponse(f"/loi/{slug}", status_code=303)
+
+    # Optional, anonymous: folded once into aggregate counters (no per-voter row).
+    demo_crud.record(db, vote=vote, choice=vote_choice, age_bracket=age_bracket, sexe=sexe)
 
     tally = results_crud.tally(db, law.id)
 
@@ -131,6 +143,9 @@ def cast_vote(
                 "existing_choice": vote_choice.value,
                 "tally": tally,
                 "choices": list(VoteChoice),
+                "age_brackets": AGE_BRACKETS,
+                "sexes": SEXES,
+                "demographics_locked": vote.demographics_recorded,
             },
         )
         for key, value in response.raw_headers:
@@ -158,6 +173,7 @@ def results_page(request: Request, slug: str, db: Session = Depends(get_db)):
             "status": law.status(),
             "tally": results_crud.tally(db, law.id),
             "evolution": results_crud.evolution(db, law.id),
+            "breakdowns": demo_crud.all_breakdowns(db, law.id),
         },
     )
 
@@ -184,10 +200,27 @@ def export_json(slug: str, db: Session = Depends(get_db)):
     law = laws_crud.get_by_slug(db, slug)
     if law is None or not law.published:
         return JSONResponse({"detail": "not found"}, status_code=404)
+    # Demographic aggregates are included only where they clear cell suppression.
+    demographics = []
+    for bd in demo_crud.all_breakdowns(db, law.id):
+        if bd.shown:
+            demographics.append(
+                {
+                    "dimension": bd.dimension,
+                    "rows": [
+                        {"category": r.category, "counts": r.counts} for r in bd.rows
+                    ],
+                }
+            )
     return JSONResponse(
         {
             "law": {"id": law.id, "slug": law.slug, "title": law.title},
             "votes": results_crud.export_rows(db, law.id),
+            "demographics": demographics,
+            "demographics_note": (
+                "Répartitions agrégées uniquement, masquées sous le seuil "
+                "d'anonymat. Aucune ligne par votant·e."
+            ),
         }
     )
 

@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Anti re-identification: hide time-bucketed breakdowns below this many votes.
     min_bucket_volume: int = 50
 
+    # Cell-suppression threshold (k-anonymity): a demographic breakdown is hidden
+    # unless every one of its cells holds at least this many votes.
+    min_cell_count: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:

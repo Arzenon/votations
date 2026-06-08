@@ -90,6 +90,12 @@ fieldset { border: 1px solid var(--line); border-radius: var(--radius); }
 .vote-confirm { color: var(--for); font-size: 0.9rem; }
 .closed-note { color: var(--muted); }
 
+/* Optional demographics */
+.demographics-optional { margin: 0.75rem 0; }
+.demographics-optional summary { cursor: pointer; color: var(--blue); }
+.demo-field { display: grid; gap: 0.3rem; max-width: 280px; margin: 0.6rem 0; font-size: 0.92rem; }
+.demo-field select { padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius); font: inherit; }
+
 /* Results bars */
 .bar-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 0.6rem;
   align-items: center; margin: 0.4rem 0; }

@@ -31,6 +31,38 @@
   </section>
 
   <section class="block">
+    <h2>Répartition par profil (facultatif, agrégé)</h2>
+    <p class="meta">
+      Ces répartitions ne reposent que sur des compteurs agrégés. Une catégorie
+      n'est affichée que si chacune de ses cases atteint le seuil d'anonymat
+      (≥ {{ breakdowns[0].threshold }} votes) ; sinon, l'ensemble est masqué.
+      Elles reflètent le vote au moment où le profil a été renseigné.
+    </p>
+    {% for bd in breakdowns %}
+    <h3>{{ bd.label }}</h3>
+    {% if bd.shown %}
+    <table class="evolution">
+      <thead><tr><th>{{ bd.label }}</th><th>Pour</th><th>Contre</th><th>Abstention</th></tr></thead>
+      <tbody>
+        {% for row in bd.rows %}
+        <tr>
+          <td>{{ row.category }}</td>
+          <td>{{ row.counts['for'] }} ({{ row.percentages['for'] }}%)</td>
+          <td>{{ row.counts['against'] }} ({{ row.percentages['against'] }}%)</td>
+          <td>{{ row.counts['abstain'] }} ({{ row.percentages['abstain'] }}%)</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif bd.reason == "below_threshold" %}
+    <p class="meta">Masqué : la participation est encore trop faible pour afficher cette répartition sans risque de ré-identification.</p>
+    {% else %}
+    <p class="meta">Aucune donnée renseignée pour cette répartition.</p>
+    {% endif %}
+    {% endfor %}
+  </section>
+
+  <section class="block">
     <h2>Données ouvertes</h2>
     <p>Les données brutes anonymisées (loi, choix, horodatage — aucun identifiant) sont téléchargeables :</p>
     <p class="downloads">

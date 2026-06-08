@@ -27,6 +27,7 @@ services:
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: change-me
       MIN_BUCKET_VOLUME: "50"
+      MIN_CELL_COUNT: "10"
       # Seed sample laws on startup (set to 0 to disable).
       SEED_ON_START: "1"
     ports:
@@ -36,6 +37,7 @@ services:
       - ./app:/app/app
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
+      - ./tests:/app/tests
     command:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 

@@ -14,6 +14,31 @@
       </label>
       {% endfor %}
     </fieldset>
+
+    {% if not demographics_locked %}
+    <details class="demographics-optional">
+      <summary>Informations facultatives et anonymes (optionnel)</summary>
+      <p class="meta">
+        Ces informations ne sont jamais stockées par personne : elles sont
+        immédiatement agrégées à des compteurs. Aucune ligne ne relie votre vote
+        à votre profil, et une répartition n'est affichée qu'au-delà d'un seuil
+        d'anonymat.
+      </p>
+      <label class="demo-field">Tranche d'âge
+        <select name="age_bracket">
+          <option value="">Ne pas renseigner</option>
+          {% for b in age_brackets %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="demo-field">Sexe
+        <select name="sexe">
+          <option value="">Ne pas renseigner</option>
+          {% for s in sexes %}<option value="{{ s }}">{{ s|capitalize }}</option>{% endfor %}
+        </select>
+      </label>
+    </details>
+    {% endif %}
+
     <button type="submit">{% if existing_choice %}Modifier mon vote{% else %}Voter{% endif %}</button>
     {% if existing_choice %}<p class="vote-confirm">Votre vote a été enregistré. Vous pouvez le modifier tant que la votation est ouverte.</p>{% endif %}
   </form>
