@@ -19,11 +19,19 @@
     <button type="submit" class="secondary" form="law-form" formnovalidate
             name="regenerer" value="1"
             formaction="/admin/imports/{{ prefill.id }}/brouillon"
-            onclick="return confirm('Régénérer appelle le modèle et sera facturé. Continuer ?');">
+            data-confirm="Régénérer appelle le modèle et sera facturé. Continuer ?">
       Régénérer
     </button>
   {% endif %}
 </div>
+{% endif %}
+
+{% if prefill %}
+  {% with item = prefill,
+          pending = draft_status == 'en_cours',
+          failed = draft_status == 'echec' %}
+    {% include "admin/_draft_state.html" %}
+  {% endwith %}
 {% endif %}
 
 <h1>{% if law %}Éditer la loi{% else %}Nouvelle loi{% endif %}</h1>
@@ -34,9 +42,9 @@
   — promulguée le {{ prefill.promulgated_on.strftime('%d/%m/%Y') }}
   {% if prefill.jo_number %}· JO n° {{ prefill.jo_number }}{% endif %}
   <br>
-  <a href="{{ prefill.dossier_url }}" rel="noopener" target="_blank">Dossier Assemblée nationale</a>
+  <a href="{{ prefill.dossier_url }}" rel="noopener noreferrer" target="_blank">Dossier Assemblée nationale</a>
   {% if values.legifrance_url %}
-    · <a href="{{ values.legifrance_url }}" rel="noopener" target="_blank">Texte sur Légifrance</a>
+    · <a href="{{ values.legifrance_url }}" rel="noopener noreferrer" target="_blank">Texte sur Légifrance</a>
   {% endif %}
   {% if prefill.seances %}· {{ prefill.seances | length }} séance(s) publique(s){% endif %}
 </p>
@@ -72,7 +80,7 @@
       <blockquote>« {{ r.text }} »</blockquote>
       <p class="attrib">
         {{ r.author }}
-        {% if r.source %}· <a href="{{ r.source }}" rel="noopener" target="_blank">compte rendu</a>{% endif %}
+        {% if r.source %}· <a href="{{ r.source }}" rel="noopener noreferrer" target="_blank">compte rendu</a>{% endif %}
       </p>
     </li>
     {% endfor %}
@@ -111,10 +119,10 @@
   </label>
 
   <div class="form-row">
-    <label>Ouverture du vote
+    <label>Ouverture du vote <span class="hint">(heure de Paris)</span>
       <input type="datetime-local" name="opens_at" value="{{ values.opens_at }}">
     </label>
-    <label>Clôture du vote
+    <label>Clôture du vote <span class="hint">(heure de Paris)</span>
       <input type="datetime-local" name="closes_at" value="{{ values.closes_at }}">
     </label>
   </div>

@@ -63,6 +63,25 @@ L'application **refuse de démarrer** si `SECRET_KEY` ou `ADMIN_PASSWORD` sont
 restés à leur valeur d'exemple, ou si `COOKIE_SECURE` n'est pas activé. Un oubli
 provoque un arrêt bruyant, pas une mise en ligne silencieusement vulnérable.
 
+### Le réglage à ne pas se tromper : `TRUSTED_PROXY_HOPS`
+
+La limitation de débit du vote est la seule barrière contre le bourrage d'urnes
+scripté, et elle est indexée sur l'adresse cliente. Les proxys inverses
+**ajoutent** leur observation à la suite de `X-Forwarded-For` : les entrées de
+gauche sont donc celles que l'appelant a écrites lui-même. Le réglage dit à quelle
+distance de la **fin** lire.
+
+- Derrière le Caddy fourni (qui réécrit l'en-tête au lieu de l'allonger) : `1`.
+- Avec un proxy supplémentaire devant (CDN, équilibreur de charge) : `2`, et ainsi
+  de suite — comptez les sauts, pas les machines.
+- Sans aucun proxy : `0`, l'en-tête est alors totalement ignoré.
+
+Trop bas, des visiteurs légitimes partagent un compteur. Trop haut — ou en lisant
+à gauche — n'importe qui obtient un compteur neuf à chaque requête en inventant
+une adresse, et **la limite ne s'applique plus du tout**. Vérifiez après
+déploiement : deux votes consécutifs portant un `X-Forwarded-For` forgé différent
+doivent bien être comptés ensemble.
+
 ---
 
 ## 3. Démarrer
@@ -153,12 +172,29 @@ des votes — exactement le lien que la charte promet inexistant.
 La limitation de débit garde ses compteurs en mémoire, pour quelques minutes, et
 ne les écrit nulle part.
 
+L'application journalise ses propres échecs (`app/logging_config.py`) : c'est ce
+qui rend visible un import qui ne passe plus ou un brouillon qui échoue. Ce
+journal ne contient, par construction, aucune adresse, aucun cookie et aucun
+jeton — seulement des identifiants de loi et d'import et des classes d'erreur.
+
 En cas d'ajout de journalisation : ne jamais y faire figurer de jeton de votant,
 d'adresse IP, ni le contenu d'un brouillon.
 
 ---
 
-## 6. Après la mise à jour du code
+## 6. Ce que l'export publie
+
+`EXPORT_TIME_RESOLUTION` (défaut `day`) fixe la résolution des horodatages de
+l'export en accès libre. En dessous de `MIN_BUCKET_VOLUME` votes, l'export
+**n'en contient aucun** : c'est le seuil qui retient déjà la courbe d'évolution, et
+un fichier horodaté le contournerait à la résolution choisie par le lecteur.
+
+Ne passez à `exact` qu'en sachant ce que cela ouvre : qui sait *quand* une personne
+a voté lit alors *comment* elle a voté.
+
+---
+
+## 7. Après la mise à jour du code
 
 ```bash
 git pull
@@ -169,3 +205,22 @@ docker compose -f docker-compose.prod.yml logs --tail=30 app
 Les conteneurs de rafraîchissement (`insee-refresh`, `assemblee-refresh`,
 `db-backup`) partagent l'image de l'application : les reconstruire aussi après un
 changement qui les concerne.
+
+Les migrations sont appliquées par l'entrypoint au démarrage de `app`. La suite de
+tests construit son schéma par ces mêmes migrations et vérifie qu'il correspond
+aux modèles, donc une révision manquante est visible avant le déploiement, pas
+pendant.
+
+---
+
+## 8. Surveiller que l'import tourne encore
+
+Le service `assemblee-refresh` réessaie indéfiniment : si la source déménage — et
+elle déménage, l'URL de l'export porte le numéro de législature — il échouerait en
+silence. Le tableau de bord de l'administration affiche donc la date du dernier
+import réussi et alerte au-delà de `AN_IMPORT_STALE_AFTER_HOURS` (48 h par
+défaut). Une bannière y signifie : allez lire les journaux du service.
+
+```bash
+docker compose -f docker-compose.prod.yml logs --tail=50 assemblee-refresh
+```

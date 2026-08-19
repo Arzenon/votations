@@ -29,17 +29,27 @@ class AuthProvider(Protocol):
         Used solely to enforce one-vote-per-law. Must never be derivable from or
         linkable to a real identity. ``response`` lets the provider persist the
         token (e.g. set a signed cookie) when first issued.
+
+        Call this only when the visitor is actually voting: it *creates* an
+        identifier if none exists.
+        """
+        ...
+
+    def peek_voter_token(self, request: Request) -> str | None:
+        """The token this browser already carries, or None — issuing nothing.
+
+        Reading a law page must not mint an identifier for someone who only
+        reads, so the read path asks with this and accepts "no token" as the
+        ordinary answer.
         """
         ...
 
     def login_url(self) -> str:
         """Where the connect button points."""
 
-    def logout_url(self) -> str:
-        ...
+    def logout_url(self) -> str: ...
 
-    def is_authenticated(self, request: Request) -> bool:
-        ...
+    def is_authenticated(self, request: Request) -> bool: ...
 
 
 _provider: AuthProvider | None = None

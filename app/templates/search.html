@@ -20,14 +20,15 @@
   <button type="submit">Rechercher</button>
 </form>
 
-<p class="meta">{{ total }} résultat·s</p>
+<p class="meta">{{ total }} résultat{% if total > 1 %}s{% endif %}</p>
 
 {% if laws %}
 <ul class="law-list">
   {% for law in laws %}
+  {% set state = law.status() %}
   <li class="law-card">
     <a href="/loi/{{ law.slug }}">
-      <span class="status status-{{ law.status() }}">{{ law.status() }}</span>
+      <span class="status status-{{ state }}">{{ state | law_status }}</span>
       <h3>{{ law.title }}</h3>
       {% if law.official_ref %}<p class="meta">{{ law.official_ref }}</p>{% endif %}
     </a>
@@ -36,10 +37,11 @@
 </ul>
 
 {% if pages > 1 %}
-<nav class="pagination">
-  {% if page > 1 %}<a href="/recherche?q={{ q }}&status={{ status }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
+{% set base = '/recherche?q=' ~ (q | urlencode) ~ '&status=' ~ (status | urlencode) %}
+<nav class="pagination" aria-label="Pages de résultats">
+  {% if page > 1 %}<a href="{{ base }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
   <span>Page {{ page }} / {{ pages }}</span>
-  {% if page < pages %}<a href="/recherche?q={{ q }}&status={{ status }}&page={{ page + 1 }}">Suivant →</a>{% endif %}
+  {% if page < pages %}<a href="{{ base }}&page={{ page + 1 }}">Suivant →</a>{% endif %}
 </nav>
 {% endif %}
 {% else %}

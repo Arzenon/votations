@@ -15,6 +15,8 @@ dependencies = [
     "python-multipart>=0.0.12",
     "httpx>=0.27",
     "anthropic>=0.69",
+    # Entity-expansion-safe XML parsing for the Journal Officiel archives.
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -31,9 +33,40 @@ target-version = "py312"
 extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
-# B008: calling Depends()/Form() in argument defaults is the idiomatic FastAPI pattern.
-ignore = ["B008"]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # import order
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "S",    # bandit — security smells
+    "SIM",  # simplifications
+    "C4",   # comprehensions
+    "DTZ",  # naive datetimes: the bug class behind the vote-window offset
+    "RUF",  # ruff's own rules
+    "PIE",
+    "RET",
+    "LOG",
+]
+ignore = [
+    # Calling Depends()/Form() in argument defaults is the idiomatic FastAPI pattern.
+    "B008",
+    # French error messages are written for the person reading them, not extracted
+    # into constants.
+    "TRY003",
+    # Ambiguous-unicode flags the typographic apostrophes and « » the French copy
+    # uses on purpose.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on fixtures they receive but do not name, and use obvious fake
+# secrets by design.
+"tests/*" = ["S101", "S105", "S106", "S311", "ARG001", "SLF001"]
+# Seeding sample data uses a seeded PRNG for reproducibility, not for secrets.
+"scripts/seed.py" = ["S311"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

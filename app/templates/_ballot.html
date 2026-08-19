@@ -19,10 +19,15 @@
     <details class="demographics-optional" open>
       <summary>Informations facultatives et anonymes (optionnel)</summary>
       <p class="meta">
-        Ces informations ne sont jamais stockées par personne : elles sont
-        immédiatement agrégées à des compteurs. Aucune ligne ne relie votre vote
-        à votre profil, et une répartition n'est affichée qu'au-delà d'un seuil
-        d'anonymat.
+        Ces informations ne sont jamais enregistrées à côté de votre vote : elles
+        sont immédiatement ajoutées à des compteurs agrégés. Aucune ligne ne relie
+        votre vote à votre profil, et une répartition n'est affichée qu'au-delà
+        d'un seuil d'anonymat.
+      </p>
+      <p class="meta">
+        Ce que vous indiquez ici est conservé dans votre navigateur (et nulle part
+        ailleurs), uniquement pour que les compteurs restent justes si vous
+        modifiez votre vote. Effacer vos cookies l'efface aussi.
       </p>
       <label class="demo-field">Tranche d'âge
         <select name="age_bracket">
@@ -49,6 +54,6 @@
     {% if existing_choice %}<p class="vote-confirm">Votre vote a été enregistré. Vous pouvez le modifier tant que la votation est ouverte.</p>{% endif %}
   </form>
   {% else %}
-  <p class="closed-note">Cette votation est {{ status }}. Le vote n'est pas disponible.</p>
+  <p class="closed-note">Cette votation est {{ status | law_status }}. Le vote n'est pas disponible.</p>
   {% endif %}
 </div>

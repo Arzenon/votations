@@ -44,10 +44,7 @@ def test_cast_vote_raises_when_closed(closed_law, db_session):
 
 def test_results_math(open_law, db_session):
     db_session.add_all(
-        [
-            Vote(law_id=open_law.id, voter_token=f"t{i}", choice="for")
-            for i in range(3)
-        ]
+        [Vote(law_id=open_law.id, voter_token=f"t{i}", choice="for") for i in range(3)]
         + [Vote(law_id=open_law.id, voter_token="a", choice="against")]
     )
     db_session.commit()

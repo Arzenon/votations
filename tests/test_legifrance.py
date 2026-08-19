@@ -105,20 +105,24 @@ def test_fetches_the_law_by_nor():
 
 def test_tries_archives_oldest_first_and_falls_through():
     """The morning archive is tried first; a miss falls through to the evening one."""
-    get = _getter({
-        MORNING: _tar({"JORFTEXT01.xml": OTHER_LAW}),
-        EVENING: _tar({"JORFTEXT02.xml": OUR_LAW}),
-    })
+    get = _getter(
+        {
+            MORNING: _tar({"JORFTEXT01.xml": OTHER_LAW}),
+            EVENING: _tar({"JORFTEXT02.xml": OUR_LAW}),
+        }
+    )
     law = fetch_law_text("SFHX2609544L", date(2026, 7, 28), get=get)
     assert law.source_dump == EVENING
 
 
 def test_falls_through_to_the_next_day():
     """A text published late can only appear in the following day's archive."""
-    get = _getter({
-        MORNING: _tar({"JORFTEXT01.xml": OTHER_LAW}),
-        NEXT_DAY: _tar({"JORFTEXT02.xml": OUR_LAW}),
-    })
+    get = _getter(
+        {
+            MORNING: _tar({"JORFTEXT01.xml": OTHER_LAW}),
+            NEXT_DAY: _tar({"JORFTEXT02.xml": OUR_LAW}),
+        }
+    )
     law = fetch_law_text("SFHX2609544L", date(2026, 7, 28), get=get)
     assert law.source_dump == NEXT_DAY
 

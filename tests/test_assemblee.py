@@ -116,9 +116,7 @@ def test_parses_promulgated_laws_whatever_the_collection_shape():
     assert single.legifrance_url.endswith("numjo=SPOX2409232L")
     assert single.title == "Loi sur les moniteurs de ski"
     assert single.procedure == "Proposition de loi ordinaire"
-    assert single.dossier_url == (
-        "https://www.assemblee-nationale.fr/dyn/17/dossiers/DLR5L17N001"
-    )
+    assert single.dossier_url == ("https://www.assemblee-nationale.fr/dyn/17/dossiers/DLR5L17N001")
 
 
 def test_import_since_filters_older_promulgations():
@@ -216,7 +214,7 @@ def test_admin_imports_page_requires_auth(client):
 
 def test_creating_a_law_from_an_import_prefills_and_links(client, db_session):
     imports_crud.sync(db_session, records=_fetch())
-    item = [i for i in imports_crud.list_by_status(db_session) if i.law_code == "2026-532"][0]
+    item = next(i for i in imports_crud.list_by_status(db_session) if i.law_code == "2026-532")
 
     # The form carries the factual fields only — the narrative blocks stay empty.
     r = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin_auth())

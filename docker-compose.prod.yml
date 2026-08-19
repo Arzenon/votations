@@ -38,12 +38,29 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       MIN_BUCKET_VOLUME: "50"
       MIN_CELL_COUNT: "10"
+      # Exactly one proxy (Caddy) sits in front, and it overwrites
+      # X-Forwarded-For with the peer address — so the last entry is the real
+      # client and the rate limit cannot be keyed on a forged one.
+      TRUSTED_PROXY_HOPS: "1"
+      # Rounded timestamps in the open-data export: publishing the exact instant
+      # of every vote would undo the evolution-curve anonymity gate.
+      EXPORT_TIME_RESOLUTION: "day"
       # SEED_ON_START is deliberately absent: it defaults to 0.
     # --no-access-log: uvicorn's access log records the client IP of every
     # request, which would pair addresses with vote timestamps in the logs.
+    # --forwarded-allow-ips: only Caddy may set the proxy headers. It reaches the
+    # app over this compose network, so trust is scoped to that subnet rather
+    # than to "*", which would trust whoever happened to connect.
     command:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
-       "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
+       "--proxy-headers", "--forwarded-allow-ips", "${TRUSTED_PROXY_CIDR:-172.16.0.0/12}",
+       "--no-access-log"]
+    deploy:
+      resources:
+        limits:
+          # The import jobs decompress multi-megabyte government archives in
+          # memory; a cap keeps a bad upstream day from taking the host with it.
+          memory: 1g
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/sante', timeout=4).status==200 else 1)\""]
       interval: 30s
@@ -76,6 +93,10 @@ services:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
       INSEE_REFRESH_INTERVAL: "2592000"
     entrypoint: ["./docker/insee_cron.sh"]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   assemblee-refresh:
     build: .
@@ -86,7 +107,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
       AN_REFRESH_INTERVAL: "86400"
+      # Rolling window rather than a pinned date, so the import never quietly
+      # grows a backlog as the years pass.
+      AN_IMPORT_SINCE_DAYS: "365"
     entrypoint: ["./docker/assemblee_cron.sh"]
+    deploy:
+      resources:
+        limits:
+          # The Dossiers_Legislatifs export is ~10 MB zipped and is walked in
+          # memory; twice that is ample and bounds a decompression surprise.
+          memory: 1g
 
   # Daily dump of the only irreplaceable data on the platform: the votes.
   # Uses the Postgres image because it already ships pg_dump.

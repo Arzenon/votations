@@ -57,19 +57,30 @@ class Region(enum.StrEnum):
     OM = "Outre-mer"
 
 
-# Canonical display order per dimension.
-DIMENSION_ORDER = {
-    DIMENSION_AGE: [b.value for b in AgeBracket],
-    DIMENSION_SEXE: [s.value for s in Sexe],
-    DIMENSION_REGION: [r.value for r in Region],
+# The single source of truth for the dimensions: everything else — display
+# order, validation, labels — is derived from this mapping, so adding a
+# dimension is one line and the three views can never disagree.
+DIMENSION_ENUMS: dict[str, type[enum.StrEnum]] = {
+    DIMENSION_AGE: AgeBracket,
+    DIMENSION_SEXE: Sexe,
+    DIMENSION_REGION: Region,
 }
 
-# Allowed (dimension, category) pairs, used to validate incoming form values.
-VALID_CATEGORIES = {
-    DIMENSION_AGE: {b.value for b in AgeBracket},
-    DIMENSION_SEXE: {s.value for s in Sexe},
-    DIMENSION_REGION: {r.value for r in Region},
+# Ordered dimension keys, as displayed.
+DIMENSIONS = tuple(DIMENSION_ENUMS)
+
+# Human labels, shown on the results page.
+DIMENSION_LABELS = {
+    DIMENSION_AGE: "Tranche d'âge",
+    DIMENSION_SEXE: "Sexe",
+    DIMENSION_REGION: "Région",
 }
+
+# Canonical display order per dimension.
+DIMENSION_ORDER = {dim: [m.value for m in members] for dim, members in DIMENSION_ENUMS.items()}
+
+# Allowed (dimension, category) pairs, used to validate incoming form values.
+VALID_CATEGORIES = {dim: set(order) for dim, order in DIMENSION_ORDER.items()}
 
 # Approximate national reference shares (%), used only to show how far the
 # self-selected sample diverges from the population — never to weight results.
@@ -111,16 +122,12 @@ INSEE_REFERENCE = {
 class DemographicTally(Base):
     __tablename__ = "demographic_tallies"
     __table_args__ = (
-        UniqueConstraint(
-            "law_id", "dimension", "category", "choice", name="uq_demo_cell"
-        ),
+        UniqueConstraint("law_id", "dimension", "category", "choice", name="uq_demo_cell"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    law_id: Mapped[int] = mapped_column(
-        ForeignKey("laws.id", ondelete="CASCADE"), index=True
-    )
+    law_id: Mapped[int] = mapped_column(ForeignKey("laws.id", ondelete="CASCADE"), index=True)
     dimension: Mapped[str] = mapped_column(String(16))  # "age" | "sexe"
-    category: Mapped[str] = mapped_column(String(32))   # e.g. "35-49" | "femme"
-    choice: Mapped[str] = mapped_column(String(16))     # for | against | abstain
+    category: Mapped[str] = mapped_column(String(32))  # e.g. "35-49" | "femme"
+    choice: Mapped[str] = mapped_column(String(16))  # for | against | abstain
     count: Mapped[int] = mapped_column(Integer, default=0)

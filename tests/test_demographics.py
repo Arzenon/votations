@@ -168,8 +168,8 @@ def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session
 
     data = client.get(f"/loi/{open_law.slug}/export.json").json()
     dims = {d["dimension"] for d in data["demographics"]}
-    assert "sexe" in dims          # above threshold → exported
-    assert "age" not in dims       # below threshold → suppressed
+    assert "sexe" in dims  # above threshold → exported
+    assert "age" not in dims  # below threshold → suppressed
     # Per-vote rows still carry no demographic fields.
     for row in data["votes"]:
         assert set(row.keys()) == {"law_id", "choice", "created_at"}

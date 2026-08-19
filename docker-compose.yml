@@ -16,7 +16,11 @@ services:
       retries: 5
 
   app:
-    build: .
+    build:
+      context: .
+      # The test suite and its tooling live in the `dev` stage only, so the
+      # image that ships to production carries neither.
+      target: dev
     depends_on:
       db:
         condition: service_healthy
@@ -28,6 +32,9 @@ services:
       ADMIN_PASSWORD: change-me
       MIN_BUCKET_VOLUME: "50"
       MIN_CELL_COUNT: "10"
+      # No proxy in front locally: read the client address from the connection
+      # itself and ignore X-Forwarded-For, which anyone could set.
+      TRUSTED_PROXY_HOPS: "0"
       # Optional: enables the AI draft button in the admin. Read from your .env
       # (or the host environment); with no key the feature is simply absent.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"

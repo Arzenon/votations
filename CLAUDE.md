@@ -41,6 +41,8 @@ Displayed statistics are deliberately simple and resistant to manipulation:
 
 No cross-referencing of data will be displayed without guaranteeing sufficient volume to prevent re-identification or partisan exploitation.
 
+The same threshold governs the open-data export: it may never reveal more than the results page does. Below the minimum volume, the export carries no timestamps at all — publishing the exact moment of each vote would hand back the very time distribution the threshold withholds, and would let anyone who knows *when* a person voted read *how* they voted.
+
 ---
 
 ## What Votations Françaises Is Not
@@ -61,7 +63,12 @@ No cross-referencing of data will be displayed without guaranteeing sufficient v
 - Neutral presentation of the law (4-block structure described above)
 - Voting interface (for / against / abstain)
 - Permanent disclaimer on representativeness limitations
-- Results displayed after the vote closes, with raw data available for download
+- Results are public throughout: a running tally is available on the results page
+  while the vote is open, clearly marked as provisional, and raw data can be
+  downloaded at any point. Withholding figures until closing would mean asking
+  citizens to trust a number they cannot check, which is the opposite of what
+  this platform is for. The vote page itself keeps the ballot uncluttered and
+  shows the tally once voting has closed.
 
 ### Administration Page
 - Creation and management of laws submitted to a vote

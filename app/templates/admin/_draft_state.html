@@ -1,0 +1,25 @@
+{# Polled while a draft runs in the background. Stops polling on its own once the
+   job reaches a terminal state — HTMX only re-triggers what it swaps back in. #}
+<div id="draft-state"
+     {% if pending %}hx-get="/admin/imports/{{ item.id }}/brouillon/etat"
+     hx-trigger="every 3s" hx-target="#draft-state" hx-swap="outerHTML"{% endif %}>
+  {% if pending %}
+  <p class="disclaimer" role="status">
+    <strong>Brouillon en cours de génération…</strong>
+    Le texte officiel est téléchargé depuis le Journal Officiel, puis les comptes
+    rendus de séance sont lus. Comptez une à quelques minutes. Vous pouvez
+    continuer à saisir le formulaire pendant ce temps.
+  </p>
+  {% elif failed %}
+  <p class="disclaimer" role="alert">
+    <strong>Brouillon impossible.</strong> {{ draft_error }}
+    <br>Les blocs sont à rédiger à la main, ou à réessayer plus tard.
+  </p>
+  {% elif draft_status == 'pret' %}
+  <p class="disclaimer" role="status">
+    <strong>Le brouillon est prêt.</strong>
+    <a href="/admin/lois/nouvelle?import_id={{ item.id }}">Ouvrir le formulaire pré-rempli</a>
+    — ce qui remplacera ce que vous avez saisi ici.
+  </p>
+  {% endif %}
+</div>

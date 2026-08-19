@@ -22,7 +22,7 @@ import json
 import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
@@ -54,14 +54,14 @@ class PromulgatedLaw:
 
     dossier_uid: str
     legislature: str
-    title: str            # titreDossier.titre — the readable dossier title
-    law_title: str        # titreLoi — a fragment ("visant à …")
-    law_code: str         # "2026-532"
-    procedure: str        # procedureParlementaire.libelle
+    title: str  # titreDossier.titre — the readable dossier title
+    law_title: str  # titreLoi — a fragment ("visant à …")
+    law_code: str  # "2026-532"
+    procedure: str  # procedureParlementaire.libelle
     promulgated_on: date
     jo_date: date | None
     jo_number: str | None
-    nor: str | None       # NOR reference — the join key to Légifrance
+    nor: str | None  # NOR reference — the join key to Légifrance
     legifrance_url: str | None
     dossier_url: str
     # [{"reunion_ref": ..., "odj_ref": ...}] — the sittings where the text was
@@ -163,6 +163,22 @@ def _build(dossier: dict, acte: dict) -> PromulgatedLaw | None:
     )
 
 
+def _import_floor(settings) -> date | None:
+    """Oldest promulgation the import will accept.
+
+    A rolling window by default (``AN_IMPORT_SINCE_DAYS``) so the job does not
+    quietly accumulate a growing backlog the way a hard-coded date does; set
+    ``AN_IMPORT_SINCE`` to pin an absolute date, or clear both to take everything.
+    """
+    pinned = _parse_date(settings.an_import_since)
+    if pinned:
+        return pinned
+    days = settings.an_import_since_days
+    if days and days > 0:
+        return (datetime.now(UTC) - timedelta(days=days)).date()
+    return None
+
+
 def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
     """Fetch every promulgated law from the export, newest first.
 
@@ -175,15 +191,14 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
     try:
         archive = zipfile.ZipFile(io.BytesIO(blob))
         names = [
-            n for n in archive.namelist()
-            if n.startswith(DOSSIER_PREFIX) and n.endswith(".json")
+            n for n in archive.namelist() if n.startswith(DOSSIER_PREFIX) and n.endswith(".json")
         ]
     except zipfile.BadZipFile as exc:
         raise AssembleeFetchError(f"archive illisible : {exc}") from exc
     if not names:
         raise AssembleeFetchError("aucun dossier parlementaire dans l'archive")
 
-    since = _parse_date(settings.an_import_since)
+    since = _import_floor(settings)
     laws: list[PromulgatedLaw] = []
     for name in names:
         try:

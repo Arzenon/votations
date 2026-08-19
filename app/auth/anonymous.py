@@ -1,9 +1,15 @@
 """MVP auth provider: anonymous, signed browser token.
 
-Collects *no* personal data. A random token is minted on first visit and stored
-in a signed cookie; the value persisted in the DB is a salted hash of that token,
-so even a database leak cannot reveal the cookie nor link votes to a browser.
-This gives best-effort one-vote-per-law without any identity.
+Collects *no* personal data. A random token is minted **when someone first votes**
+— not when they read — and stored in a signed cookie; the value persisted in the
+DB is the SHA-256 of that token, so a database leak reveals neither the cookie nor
+any link between votes and a browser. This gives best-effort one-vote-per-law
+without any identity.
+
+On the digest: the token is 256 bits from :mod:`secrets`, so a plain hash is not
+guessable and a keyed digest would add nothing an attacker could exploit. It is
+left unkeyed deliberately — rotating SECRET_KEY must not silently re-open every
+past votation to a second vote from the same person.
 """
 
 from __future__ import annotations
@@ -31,6 +37,10 @@ class AnonymousProvider:
 
     def _hash(self, raw_token: str) -> str:
         return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    def peek_voter_token(self, request: Request) -> str | None:
+        raw = self._read_cookie(request)
+        return self._hash(raw) if raw is not None else None
 
     def get_voter_token(self, request: Request, response: Response) -> str:
         raw = self._read_cookie(request)

@@ -1,29 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Résultats — {{ law.title }}{% endblock %}
+{% block description %}Résultats de la votation citoyenne sur « {{ law.title }} » : pourcentages, évolution dans le temps et données brutes anonymisées.{% endblock %}
 {% block content %}
 <article class="law">
   <p class="breadcrumb"><a href="/loi/{{ law.slug }}">← Retour à la loi</a></p>
   <h1>Résultats — {{ law.title }}</h1>
-  <span class="status status-{{ status }}">{{ status }}</span>
+  <span class="status status-{{ status }}">{{ status | law_status }}</span>
+
+  {% if status == "open" %}
+  <p class="meta">
+    La votation est encore ouverte : ces chiffres sont provisoires et changeront
+    jusqu'à la clôture.
+  </p>
+  {% endif %}
 
   {% include "_results_bars.html" %}
 
   <section class="block">
     <h2>Évolution des votes</h2>
     {% if evolution %}
-    <table class="evolution">
-      <thead><tr><th>Période</th><th>Pour</th><th>Contre</th><th>Abstention</th></tr></thead>
-      <tbody>
-        {% for bucket in evolution %}
-        <tr>
-          <td>{{ bucket.label }}</td>
-          <td>{{ bucket.counts['for'] }}</td>
-          <td>{{ bucket.counts['against'] }}</td>
-          <td>{{ bucket.counts['abstain'] }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="evolution">
+        <thead><tr><th>Période</th><th>Pour</th><th>Contre</th><th>Abstention</th></tr></thead>
+        <tbody>
+          {% for bucket in evolution %}
+          <tr>
+            <td>{{ bucket.label }}</td>
+            <td>{{ bucket.counts['for'] }}</td>
+            <td>{{ bucket.counts['against'] }}</td>
+            <td>{{ bucket.counts['abstain'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     <p class="meta">La courbe d'évolution permet de détecter d'éventuelles campagnes de mobilisation organisée.</p>
     {% else %}
     <p class="meta">L'évolution dans le temps sera affichée lorsque le nombre de votes sera suffisant pour garantir l'anonymat.</p>
@@ -36,7 +46,6 @@
       Ces répartitions ne reposent que sur des compteurs agrégés. Une catégorie
       n'est affichée que si chacune de ses cases atteint le seuil d'anonymat
       (≥ {{ breakdowns[0].threshold }} votes) ; sinon, l'ensemble est masqué.
-      Elles reflètent le vote au moment où le profil a été renseigné.
     </p>
     <p class="meta">
       <strong>{{ provision.percentage }}%</strong> des votant·es ont partagé au
@@ -47,25 +56,27 @@
     {% for bd in breakdowns %}
     <h3>{{ bd.label }}</h3>
     {% if bd.shown %}
-    <table class="evolution">
-      <thead><tr>
-        <th>{{ bd.label }}</th><th>Pour</th><th>Contre</th><th>Abstention</th>
-        <th>Part ici</th>
-        <th>France{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
-      </tr></thead>
-      <tbody>
-        {% for row in bd.rows %}
-        <tr>
-          <td>{{ row.category }}</td>
-          <td>{{ row.counts['for'] }} ({{ row.percentages['for'] }}%)</td>
-          <td>{{ row.counts['against'] }} ({{ row.percentages['against'] }}%)</td>
-          <td>{{ row.counts['abstain'] }} ({{ row.percentages['abstain'] }}%)</td>
-          <td>{{ row.share }}%</td>
-          <td>{% if row.reference is not none %}{{ row.reference }}%{% else %}—{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="evolution">
+        <thead><tr>
+          <th>{{ bd.label }}</th><th>Pour</th><th>Contre</th><th>Abstention</th>
+          <th>Part ici</th>
+          <th>France{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
+        </tr></thead>
+        <tbody>
+          {% for row in bd.rows %}
+          <tr>
+            <td>{{ row.category }}</td>
+            <td>{{ row.counts['for'] }} ({{ row.percentages['for'] }}%)</td>
+            <td>{{ row.counts['against'] }} ({{ row.percentages['against'] }}%)</td>
+            <td>{{ row.counts['abstain'] }} ({{ row.percentages['abstain'] }}%)</td>
+            <td>{{ row.share }}%</td>
+            <td>{% if row.reference is not none %}{{ row.reference }}%{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     {% elif bd.reason == "below_threshold" %}
     <p class="meta">Masqué : la participation est encore trop faible pour afficher cette répartition sans risque de ré-identification.</p>
     {% else %}
@@ -87,6 +98,7 @@
       <a href="/loi/{{ law.slug }}/export.csv">Télécharger en CSV</a>
       <a href="/loi/{{ law.slug }}/export.json">Télécharger en JSON</a>
     </p>
+    <p class="meta">{{ export_note }}</p>
   </section>
 
   <p class="disclaimer-inline">⚠️ {{ DISCLAIMER }}</p>

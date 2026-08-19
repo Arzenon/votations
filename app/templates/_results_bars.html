@@ -1,19 +1,13 @@
-{# Simple, manipulation-resistant results: three percentages + total. #}
+{# Simple, manipulation-resistant results: three percentages + total.
+   Bar widths ride on a data attribute rather than an inline style, so the page
+   needs no 'unsafe-inline' in its Content-Security-Policy (see /static/app.js). #}
 <div class="results">
+  {% for key, label in (('for', 'Pour'), ('against', 'Contre'), ('abstain', 'Abstention')) %}
   <div class="bar-row">
-    <span class="bar-label">Pour</span>
-    <span class="bar"><span class="bar-fill for" style="width: {{ tally.percentages['for'] }}%"></span></span>
-    <span class="bar-pct">{{ tally.percentages['for'] }}% ({{ tally.counts['for'] }})</span>
+    <span class="bar-label">{{ label }}</span>
+    <span class="bar"><span class="bar-fill {{ key }}" data-pct="{{ tally.percentages[key] }}"></span></span>
+    <span class="bar-pct">{{ tally.percentages[key] }}% ({{ tally.counts[key] }})</span>
   </div>
-  <div class="bar-row">
-    <span class="bar-label">Contre</span>
-    <span class="bar"><span class="bar-fill against" style="width: {{ tally.percentages['against'] }}%"></span></span>
-    <span class="bar-pct">{{ tally.percentages['against'] }}% ({{ tally.counts['against'] }})</span>
-  </div>
-  <div class="bar-row">
-    <span class="bar-label">Abstention</span>
-    <span class="bar"><span class="bar-fill abstain" style="width: {{ tally.percentages['abstain'] }}%"></span></span>
-    <span class="bar-pct">{{ tally.percentages['abstain'] }}% ({{ tally.counts['abstain'] }})</span>
-  </div>
+  {% endfor %}
   <p class="total">Nombre total de votant·e·s : <strong>{{ tally.total }}</strong></p>
 </div>

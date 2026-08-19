@@ -37,10 +37,10 @@ SEANCE_URL = "https://www.assemblee-nationale.fr/dyn/{legislature}/comptes-rendu
 # Everything else — amendment-by-amendment discussion, points of order, voting
 # mechanics — is high volume and low argumentative content.
 ARGUMENT_SECTIONS = (
-    "PRESENTATION",        # rapporteur and government presenting the text
-    "MOTION",              # motion de rejet préalable / renvoi — argued against
-    "DISC_GENERALE",       # discussion générale
-    "DISC_ARTICLES_1_2",   # explications de vote (despite the name)
+    "PRESENTATION",  # rapporteur and government presenting the text
+    "MOTION",  # motion de rejet préalable / renvoi — argued against
+    "DISC_GENERALE",  # discussion générale
+    "DISC_ARTICLES_1_2",  # explications de vote (despite the name)
 )
 
 # Paragraph kinds to drop even inside those sections.
@@ -61,11 +61,11 @@ class DebatesFetchError(RuntimeError):
 class Speech:
     """One attributed intervention, quotable and linkable."""
 
-    speech_id: str        # stable within a request, referenced by the model
-    speaker: str          # "Mme Louise Morel"
-    quality: str          # "ministre délégué…", "rapporteure", "" for a deputy
-    chamber: str          # "Assemblée nationale"
-    section: str          # "Discussion générale"
+    speech_id: str  # stable within a request, referenced by the model
+    speaker: str  # "Mme Louise Morel"
+    quality: str  # "ministre délégué…", "rapporteure", "" for a deputy
+    chamber: str  # "Assemblée nationale"
+    section: str  # "Discussion générale"
     spoken_on: date | None
     text: str
     url: str
@@ -122,7 +122,8 @@ def _seance_date(compte_rendu: dict) -> date | None:
     if len(raw) < 8:
         return None
     try:
-        return datetime.strptime(raw[:8], "%Y%m%d").date()
+        # A calendar date with no time of day: the zone would be meaningless.
+        return datetime.strptime(raw[:8], "%Y%m%d").date()  # noqa: DTZ007
     except ValueError:
         return None
 
@@ -163,14 +164,19 @@ def _collect(node: object, out: list[dict], section_stack: list[str]) -> None:
     text = _as_text(node.get("texte"))
 
     # A point that opens an argumentative section names it for everything below.
-    if "point" in node or code.startswith(ARGUMENT_SECTIONS):
-        if code.startswith(ARGUMENT_SECTIONS) and text:
-            section_stack.append(text)
-            pushed = True
+    if text and code.startswith(ARGUMENT_SECTIONS):
+        section_stack.append(text)
+        pushed = True
 
     if "orateurs" in node and isinstance(node.get("texte"), str):
-        out.append({"attrs": attrs, "orateurs": node["orateurs"], "texte": node["texte"],
-                    "section": section_stack[-1] if section_stack else ""})
+        out.append(
+            {
+                "attrs": attrs,
+                "orateurs": node["orateurs"],
+                "texte": node["texte"],
+                "section": section_stack[-1] if section_stack else "",
+            }
+        )
 
     for key, value in node.items():
         if key not in ("@attributes", "orateurs", "texte"):
@@ -198,9 +204,7 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def speeches_from_record(
-    compte_rendu: dict, *, position: int | None, url: str
-) -> list[Speech]:
+def speeches_from_record(compte_rendu: dict, *, position: int | None, url: str) -> list[Speech]:
     """Extract the argued positions for one agenda item of one sitting."""
     sections = _speech_sections(compte_rendu)
     # With a single argued item, the position tag is not needed to disambiguate.

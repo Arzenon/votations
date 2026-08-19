@@ -25,6 +25,7 @@
 </p>
 
 {% if items %}
+<div class="table-scroll">
 <table class="admin-table">
   <thead>
     <tr><th>Promulguée le</th><th>Référence</th><th>Titre</th><th>Procédure</th><th>Statut</th><th>Actions</th></tr>
@@ -41,14 +42,14 @@
         {{ item.title }}
         <br>
         <small>
-          <a href="{{ item.dossier_url }}" rel="noopener" target="_blank">Dossier AN</a>
+          <a href="{{ item.dossier_url }}" rel="noopener noreferrer" target="_blank">Dossier AN</a>
           {% if item.legifrance_url %}
-            · <a href="{{ item.legifrance_url }}" rel="noopener" target="_blank">Légifrance</a>
+            · <a href="{{ item.legifrance_url }}" rel="noopener noreferrer" target="_blank">Légifrance</a>
           {% endif %}
         </small>
       </td>
       <td>{{ item.procedure }}</td>
-      <td><span class="status status-{{ item.status }}">{{ item.status }}</span></td>
+      <td><span class="status status-{{ item.status }}">{{ item.status | import_status }}</span></td>
       <td class="actions">
         {% if item.status == 'importe' %}
           {% if item.law_id %}<a href="/admin/lois/{{ item.law_id }}">Voir la votation</a>{% endif %}
@@ -69,6 +70,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p>Aucune loi en attente.</p>
 {% endif %}

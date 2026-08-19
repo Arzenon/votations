@@ -3,8 +3,8 @@ back with cell suppression (k-anonymity).
 
 Two responsibilities:
 
-1. ``record`` — fold a voter's optional age/sexe into the counters, **once**, with
-   no per-voter row and no token. Concurrency-safe via an upsert.
+1. ``record`` — fold a voter's optional age/sexe/région into the counters,
+   **once**, with no per-voter row and no token. Concurrency-safe via an upsert.
 2. ``breakdown`` — build a demographic × choice table for display/export, applying
    whole-table suppression so small cells can never be read or differenced out.
 """
@@ -20,9 +20,11 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import (
     DIMENSION_AGE,
+    DIMENSION_LABELS,
     DIMENSION_ORDER,
     DIMENSION_REGION,
     DIMENSION_SEXE,
+    DIMENSIONS,
     INSEE_REFERENCE,
     VALID_CATEGORIES,
     DemographicTally,
@@ -31,24 +33,36 @@ from app.models import (
     VoteChoice,
 )
 
-DIMENSIONS = (DIMENSION_AGE, DIMENSION_SEXE, DIMENSION_REGION)
-DIMENSION_LABELS = {
-    DIMENSION_AGE: "Tranche d'âge",
-    DIMENSION_SEXE: "Sexe",
-    DIMENSION_REGION: "Région",
-}
 
+def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, delta: int) -> None:
+    """Atomically move a counter cell by ``delta`` (INSERT … ON CONFLICT DO UPDATE).
 
-def _increment(db: Session, law_id: int, dimension: str, category: str, choice: str) -> None:
-    """Atomically add one to a counter cell (INSERT … ON CONFLICT DO UPDATE)."""
+    Counters never go below zero: a decrement for a cell that somehow does not
+    exist is clamped rather than creating a negative total that would then be
+    published.
+    """
     stmt = pg_insert(DemographicTally).values(
-        law_id=law_id, dimension=dimension, category=category, choice=choice, count=1
+        law_id=law_id,
+        dimension=dimension,
+        category=category,
+        choice=choice,
+        count=max(delta, 0),
     )
     stmt = stmt.on_conflict_do_update(
         constraint="uq_demo_cell",
-        set_={"count": DemographicTally.count + 1},
+        set_={"count": func.greatest(DemographicTally.count + delta, 0)},
     )
     db.execute(stmt)
+
+
+def _requested(age_bracket: str | None, sexe: str | None, region: str | None) -> list[tuple]:
+    """The (dimension, category) pairs actually supplied and valid."""
+    candidates = {
+        DIMENSION_AGE: age_bracket,
+        DIMENSION_SEXE: sexe,
+        DIMENSION_REGION: region,
+    }
+    return [(dim, cat) for dim, cat in candidates.items() if cat and cat in VALID_CATEGORIES[dim]]
 
 
 def record(
@@ -59,34 +73,62 @@ def record(
     age_bracket: str | None = None,
     sexe: str | None = None,
     region: str | None = None,
-) -> None:
+    previous: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Fold this voter's optional demographics into the counters, exactly once.
 
-    Invalid or empty values are ignored. Does nothing if this voter already
-    contributed (``vote.demographics_recorded``), which keeps a vote *change*
-    from double-counting. The vote's choice is captured here and not revised on
-    later changes — see module/README notes.
+    Invalid or empty values are ignored. A voter contributes their profile a
+    single time; if they later change their vote, the contribution is *moved* to
+    the new choice rather than left counted under the old one, so a breakdown
+    always describes the votes as they currently stand.
+
+    Moving it needs the categories, which the server does not store — they come
+    back from the voter's own browser as ``previous`` (see
+    :mod:`app.profile_cookie`). With no cookie, nothing moves and the behaviour is
+    the same as before: the contribution stays under the older choice.
+
+    Returns the categories now on file for this voter, for the caller to persist
+    on the device. An empty mapping means there is nothing to remember.
     """
     if vote.demographics_recorded:
-        return
+        return _move(db, vote=vote, choice=choice, previous=previous or {})
 
-    candidates = {
-        DIMENSION_AGE: age_bracket,
-        DIMENSION_SEXE: sexe,
-        DIMENSION_REGION: region,
-    }
-    provided = [
-        (dim, cat)
-        for dim, cat in candidates.items()
-        if cat and cat in VALID_CATEGORIES[dim]
-    ]
+    provided = _requested(age_bracket, sexe, region)
     if not provided:
-        return
+        return {}
 
     for dimension, category in provided:
-        _increment(db, vote.law_id, dimension, category, choice.value)
+        _add(db, vote.law_id, dimension, category, choice.value, +1)
     vote.demographics_recorded = True
+    vote.demographics_choice = choice.value
     db.commit()
+    return dict(provided)
+
+
+def _move(
+    db: Session, *, vote: Vote, choice: VoteChoice, previous: dict[str, str]
+) -> dict[str, str]:
+    """Re-file an existing contribution under a changed vote."""
+    was = vote.demographics_choice
+    if was == choice.value:
+        return previous
+    if was is None:
+        # Written before the choice was tracked: nothing can be moved safely.
+        vote.demographics_choice = choice.value
+        db.commit()
+        return previous
+
+    previous = {
+        dim: cat
+        for dim, cat in previous.items()
+        if dim in VALID_CATEGORIES and cat in VALID_CATEGORIES[dim]
+    }
+    for dimension, category in previous.items():
+        _add(db, vote.law_id, dimension, category, was, -1)
+        _add(db, vote.law_id, dimension, category, choice.value, +1)
+    vote.demographics_choice = choice.value
+    db.commit()
+    return previous
 
 
 @dataclass
@@ -116,37 +158,51 @@ class Breakdown:
 def get_reference(db: Session, dimension: str) -> tuple[dict[str, float], int | None]:
     """Reference shares for a dimension: cached INSEE values if present, else the
     curated fallback constant. Returns (mapping, source_year_or_None)."""
+    mapping, year = all_references(db).get(dimension, ({}, None))
+    return mapping, year
+
+
+def all_references(db: Session) -> dict[str, tuple[dict[str, float], int | None]]:
+    """Every dimension's reference shares, in one query."""
     rows = db.execute(
-        select(InseeReference.category, InseeReference.percentage, InseeReference.source_year)
-        .where(InseeReference.dimension == dimension)
+        select(
+            InseeReference.dimension,
+            InseeReference.category,
+            InseeReference.percentage,
+            InseeReference.source_year,
+        )
     ).all()
-    if rows:
-        return {cat: pct for cat, pct, _ in rows}, rows[0][2]
-    return INSEE_REFERENCE.get(dimension, {}), None
+    cached: dict[str, dict[str, float]] = {}
+    years: dict[str, int] = {}
+    for dimension, category, percentage, year in rows:
+        cached.setdefault(dimension, {})[category] = percentage
+        years.setdefault(dimension, year)
+
+    out: dict[str, tuple[dict[str, float], int | None]] = {}
+    for dimension in DIMENSIONS:
+        if dimension in cached:
+            out[dimension] = (cached[dimension], years.get(dimension))
+        else:
+            out[dimension] = (INSEE_REFERENCE.get(dimension, {}), None)
+    return out
 
 
-def breakdown(
-    db: Session, law_id: int, dimension: str, *, min_cell: int | None = None
+def _build(
+    dimension: str,
+    cells: dict[str, dict[str, int]],
+    *,
+    k: int,
+    reference: dict[str, float],
+    reference_year: int | None,
 ) -> Breakdown:
-    """Return the choice breakdown for one dimension, suppressed if too sparse.
+    """Assemble one dimension's table, applying the suppression rule.
 
     Suppression rule (whole-table gate): if **any** populated cell holds fewer
-    than ``min_cell`` votes, the entire breakdown is withheld. Nothing partial is
-    ever returned, so a small cell can neither be read directly nor reconstructed
-    by differencing against shown cells, totals, or the other dimension's table.
+    than ``k`` votes, the entire breakdown is withheld. Nothing partial is ever
+    returned, so a small cell can neither be read directly nor reconstructed by
+    differencing against shown cells, totals, or another dimension's table.
     """
-    k = min_cell if min_cell is not None else get_settings().min_cell_count
     label = DIMENSION_LABELS.get(dimension, dimension)
-
-    rows = db.execute(
-        select(DemographicTally.category, DemographicTally.choice, DemographicTally.count)
-        .where(DemographicTally.law_id == law_id, DemographicTally.dimension == dimension)
-    ).all()
-
-    cells: dict[str, dict[str, int]] = {}
-    for category, choice, count in rows:
-        cells.setdefault(category, {c.value: 0 for c in VoteChoice})[choice] = count
-
     populated = [n for cat in cells.values() for n in cat.values() if n > 0]
     if not populated:
         return Breakdown(dimension, label, shown=False, threshold=k, reason="empty")
@@ -154,7 +210,6 @@ def breakdown(
         return Breakdown(dimension, label, shown=False, threshold=k, reason="below_threshold")
 
     dimension_total = sum(populated)
-    reference, reference_year = get_reference(db, dimension)
     ordered = [c for c in DIMENSION_ORDER.get(dimension, sorted(cells)) if c in cells]
     out_rows: list[BreakdownRow] = []
     for category in ordered:
@@ -184,8 +239,51 @@ def breakdown(
     )
 
 
-def all_breakdowns(db: Session, law_id: int) -> list[Breakdown]:
-    return [breakdown(db, law_id, dim) for dim in DIMENSIONS]
+def _cells_by_dimension(db: Session, law_id: int) -> dict[str, dict[str, dict[str, int]]]:
+    """Every counter for a law, in one query, as {dimension: {category: {choice: n}}}."""
+    rows = db.execute(
+        select(
+            DemographicTally.dimension,
+            DemographicTally.category,
+            DemographicTally.choice,
+            DemographicTally.count,
+        ).where(DemographicTally.law_id == law_id)
+    ).all()
+    out: dict[str, dict[str, dict[str, int]]] = {}
+    for dimension, category, choice, count in rows:
+        by_category = out.setdefault(dimension, {})
+        by_category.setdefault(category, {c.value: 0 for c in VoteChoice})[choice] = count
+    return out
+
+
+def breakdown(
+    db: Session, law_id: int, dimension: str, *, min_cell: int | None = None
+) -> Breakdown:
+    """Return the choice breakdown for one dimension, suppressed if too sparse."""
+    k = min_cell if min_cell is not None else get_settings().min_cell_count
+    cells = _cells_by_dimension(db, law_id).get(dimension, {})
+    reference, year = get_reference(db, dimension)
+    return _build(dimension, cells, k=k, reference=reference, reference_year=year)
+
+
+def all_breakdowns(db: Session, law_id: int, *, min_cell: int | None = None) -> list[Breakdown]:
+    """Every dimension's breakdown — two queries in total, not two per dimension."""
+    k = min_cell if min_cell is not None else get_settings().min_cell_count
+    by_dimension = _cells_by_dimension(db, law_id)
+    references = all_references(db)
+    out = []
+    for dimension in DIMENSIONS:
+        reference, year = references.get(dimension, ({}, None))
+        out.append(
+            _build(
+                dimension,
+                by_dimension.get(dimension, {}),
+                k=k,
+                reference=reference,
+                reference_year=year,
+            )
+        )
+    return out
 
 
 @dataclass
@@ -199,16 +297,15 @@ def provision_rate(db: Session, law_id: int) -> ProvisionRate:
     """How many voters chose to share a profile — context for reading breakdowns.
 
     Derived from the existing ``demographics_recorded`` flag on votes; no extra
-    storage. ``with_profile`` counts voters who gave at least one attribute.
+    storage, and one query rather than two.
     """
-    total = db.scalar(select(func.count()).select_from(Vote).where(Vote.law_id == law_id)) or 0
-    with_profile = (
-        db.scalar(
-            select(func.count())
-            .select_from(Vote)
-            .where(Vote.law_id == law_id, Vote.demographics_recorded.is_(True))
-        )
-        or 0
-    )
+    total, with_profile = db.execute(
+        select(
+            func.count(),
+            func.count().filter(Vote.demographics_recorded.is_(True)),
+        ).where(Vote.law_id == law_id)
+    ).one()
+    total = total or 0
+    with_profile = with_profile or 0
     pct = round(100 * with_profile / total, 1) if total else 0.0
     return ProvisionRate(total_votes=total, with_profile=with_profile, percentage=pct)

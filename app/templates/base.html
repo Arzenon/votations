@@ -4,14 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Votations Françaises{% endblock %}</title>
+  <meta name="description" content="{% block description %}Donnez votre avis sur les lois adoptées par le Parlement : présentation neutre et sourcée, données ouvertes, aucune donnée personnelle collectée.{% endblock %}">
+  <meta property="og:site_name" content="Votations Françaises">
+  <meta property="og:title" content="{{ self.title() }}">
+  <meta property="og:description" content="{{ self.description() }}">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#main">Aller au contenu</a>
   <header class="site-header">
     <div class="container header-row">
       <a class="brand" href="/">Votations&nbsp;Françaises</a>
-      <nav class="nav">
+      <nav class="nav" aria-label="Navigation principale">
         <a href="/recherche">Rechercher</a>
         <a href="/connexion">{{ auth.login_label }}</a>
       </nav>

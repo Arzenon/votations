@@ -8,4 +8,4 @@ change to the voting flow. See ``base.py`` for the seam.
 from app.auth.anonymous import AnonymousProvider
 from app.auth.base import AuthProvider, get_auth_provider
 
-__all__ = ["AuthProvider", "AnonymousProvider", "get_auth_provider"]
+__all__ = ["AnonymousProvider", "AuthProvider", "get_auth_provider"]

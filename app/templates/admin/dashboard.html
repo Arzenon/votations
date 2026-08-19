@@ -8,16 +8,34 @@
   <a class="button" href="/admin/imports">Lois promulguées{% if pending_imports %} ({{ pending_imports }}){% endif %}</a>
 </p>
 
+{# The import job runs in its own container and retries forever, so a source that
+   moves (the export URL carries the legislature number) would otherwise fail in
+   silence. Say so here rather than nowhere. #}
+{% if import_is_stale %}
+<p class="disclaimer" role="status">
+  <strong>Import automatique en retard.</strong>
+  {% if last_import %}
+    Dernier import réussi le {{ last_import.strftime('%d/%m/%Y à %H:%M') }} (UTC),
+    soit plus de {{ import_stale_after_hours }} h.
+  {% else %}
+    Aucun import n'a encore abouti.
+  {% endif %}
+  Vérifiez le service <code>assemblee-refresh</code> et l'URL de l'export.
+</p>
+{% endif %}
+
 {% if laws %}
+<div class="table-scroll">
 <table class="admin-table">
   <thead>
     <tr><th>Titre</th><th>Statut</th><th>Clôture</th><th>Votes</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {% for law in laws %}
+    {% set state = law.status() %}
     <tr>
       <td><a href="/loi/{{ law.slug }}">{{ law.title }}</a></td>
-      <td><span class="status status-{{ law.status() }}">{{ law.status() }}</span></td>
+      <td><span class="status status-{{ state }}">{{ state | law_status }}</span></td>
       <td>{% if law.closes_at %}{{ law.closes_at.strftime('%d/%m/%Y %H:%M') }}{% else %}—{% endif %}</td>
       <td>
         {{ tallies[law.id].total }}
@@ -29,7 +47,7 @@
         <a href="/admin/lois/{{ law.id }}">Éditer</a>
         <a href="/loi/{{ law.slug }}/export.csv">Export</a>
         <form action="/admin/lois/{{ law.id }}/supprimer" method="post"
-              onsubmit="return confirm('Supprimer cette loi et tous ses votes ?');">
+              data-confirm="Supprimer cette loi et tous ses votes ?">
           <button type="submit" class="link-danger">Supprimer</button>
         </form>
       </td>
@@ -37,6 +55,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p>Aucune loi enregistrée.</p>
 {% endif %}

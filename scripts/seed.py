@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
-from app.db import SessionLocal
+from app.db import SessionLocal, utcnow
 from app.models import DemographicTally, Law, Vote, VoteChoice
 
 
 def _utc(days: int = 0, hours: int = 0) -> datetime:
-    return datetime.now(UTC) + timedelta(days=days, hours=hours)
+    return utcnow() + timedelta(days=days, hours=hours)
 
 
 SAMPLE_LAWS = [
@@ -213,6 +213,9 @@ def _seed_demographics(db, law: Law, data: dict) -> None:
     votes = db.query(Vote).filter_by(law_id=law.id).limit(n).all()
     for v in votes:
         v.demographics_recorded = True
+        # Which choice their profile was counted under, so that changing the vote
+        # moves the counters rather than leaving them stale.
+        v.demographics_choice = v.choice
 
 
 def main() -> None:
@@ -225,9 +228,10 @@ def main() -> None:
             existing = db.query(Law).filter_by(slug=spec["slug"]).first()
             if existing:
                 # Top up demographics if this law has none yet (idempotent).
-                if demographics and not db.query(DemographicTally).filter_by(
-                    law_id=existing.id
-                ).first():
+                if (
+                    demographics
+                    and not db.query(DemographicTally).filter_by(law_id=existing.id).first()
+                ):
                     _seed_demographics(db, existing, demographics)
                     print(f"↻ added demographics: {spec['slug']}")
                 else:

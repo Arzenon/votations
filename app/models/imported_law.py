@@ -12,7 +12,7 @@ Contains only officially published data (law numbers, titles, JO references) —
 no personal data.
 """
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
@@ -26,7 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db import Base
+from app.db import Base, utcnow
 
 # Provenance of a row. Only the Assemblée nationale export exists today; the
 # column is the seam for a later Légifrance/JORF source keyed on the same NOR.
@@ -38,16 +38,17 @@ STATUS_NEW = "nouveau"
 STATUS_IMPORTED = "importe"
 STATUS_IGNORED = "ignore"
 
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+# Lifecycle of the AI draft, which runs in the background because it downloads
+# Journal Officiel archives and calls a model — far longer than a request.
+DRAFT_IDLE = ""
+DRAFT_PENDING = "en_cours"
+DRAFT_READY = "pret"
+DRAFT_FAILED = "echec"
 
 
 class ImportedLaw(Base):
     __tablename__ = "imported_laws"
-    __table_args__ = (
-        UniqueConstraint("source", "dossier_uid", name="uq_imported_law_source_uid"),
-    )
+    __table_args__ = (UniqueConstraint("source", "dossier_uid", name="uq_imported_law_source_uid"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source: Mapped[str] = mapped_column(String(16), default=SOURCE_ASSEMBLEE)
@@ -81,9 +82,10 @@ class ImportedLaw(Base):
     # {summary_text, practical_changes, arguments_for, arguments_against, notes, eli_url}.
     # Generating is billable, so it happens once unless explicitly regenerated.
     draft: Mapped[dict | None] = mapped_column(JSON, default=None)
-    drafted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None
-    )
+    drafted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # "" | "en_cours" | "pret" | "echec" — drives the polling banner in the admin.
+    draft_status: Mapped[str] = mapped_column(String(16), default=DRAFT_IDLE)
+    draft_error: Mapped[str | None] = mapped_column(Text, default=None)
 
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

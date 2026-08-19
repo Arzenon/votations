@@ -1,7 +1,8 @@
 """Alembic migration environment.
 
-Reads the database URL from the application settings (DATABASE_URL) and uses the
-SQLAlchemy metadata from app.db.Base so that autogenerate sees all models.
+Reads the database URL from the application settings (DATABASE_URL) — unless the
+caller has already set one — and uses the SQLAlchemy metadata from app.db.Base so
+that autogenerate sees all models.
 """
 
 from logging.config import fileConfig
@@ -17,7 +18,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# A caller may point the migrations at another database (the test suite does).
+# Only fall back to the application settings when nothing has been set, so
+# `alembic upgrade` never silently migrates the wrong one.
+if not config.get_main_option("sqlalchemy.url", None):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
 
 

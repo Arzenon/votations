@@ -113,7 +113,7 @@ def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
         counted = client.messages.count_tokens(
             model=settings.ai_model, system=SYSTEM_PROMPT, messages=messages
         ).input_tokens
-    except Exception as exc:  # noqa: BLE001 - any SDK/transport failure is fatal here
+    except Exception as exc:
         raise AiDraftError(f"impossible de mesurer le texte : {exc}") from exc
 
     if counted > settings.ai_max_input_tokens:
@@ -131,7 +131,7 @@ def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
             output_config={"effort": settings.ai_effort},
             output_format=LawDraft,
         )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the admin as a message
+    except Exception as exc:
         raise AiDraftError(str(exc)) from exc
 
     draft = response.parsed_output
@@ -227,8 +227,7 @@ def _pool_prompt(law: LawText, speeches: list[Speech]) -> str:
     ]
     return (
         f"Loi : {law.title}\n\n"
-        f"Interventions en séance publique ({len(speeches)}) :\n\n"
-        + "\n\n".join(blocks)
+        f"Interventions en séance publique ({len(speeches)}) :\n\n" + "\n\n".join(blocks)
     )
 
 
@@ -295,12 +294,14 @@ def select_arguments(
 
     # Roughly 3.6 characters per token in French; leave room for the instructions.
     budget = int(settings.ai_max_input_tokens * 3.6 * 0.8)
-    pool, dropped = _fit_budget(speeches[: settings.ai_max_speeches * 4], budget)
+    pool, _ = _fit_budget(speeches[: settings.ai_max_speeches * 4], budget)
     if len(pool) > settings.ai_max_speeches:
         order = {s.speech_id: i for i, s in enumerate(pool)}
         longest = sorted(pool, key=lambda s: len(s.text), reverse=True)
         pool = sorted(longest[: settings.ai_max_speeches], key=lambda s: order[s.speech_id])
-        dropped = len(speeches) - len(pool)
+    # Counted once, against everything we were given: the pool is trimmed twice
+    # (a head slice, then the budget) and each step alone under-reports.
+    dropped = len(speeches) - len(pool)
     notes = []
     if dropped:
         notes.append(f"{dropped} intervention(s) écartée(s) faute de place dans la requête")
@@ -322,7 +323,7 @@ def select_arguments(
             output_config={"effort": settings.ai_effort},
             output_format=ArgumentSelection,
         )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the admin as a message
+    except Exception as exc:
         raise AiDraftError(str(exc)) from exc
 
     selection = response.parsed_output

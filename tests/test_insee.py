@@ -17,12 +17,21 @@ def _obs(dims: dict, value: float) -> dict:
 
 
 QUINQUENNAL = {
-    "Y15T19": 500.0, "Y20T24": 500.0,           # 18-24 ≈ 0.4*500 + 500 = 700
-    "Y25T29": 400.0, "Y30T34": 400.0,           # 25-34 = 800
-    "Y35T39": 300.0, "Y40T44": 300.0, "Y45T49": 300.0,  # 35-49 = 900
-    "Y50T54": 200.0, "Y55T59": 200.0, "Y60T64": 200.0,  # 50-64 = 600
-    "Y65T69": 100.0, "Y_GE95": 100.0,           # 65+ = 200
-    "Y_LT5": 999.0, "Y5T9": 999.0, "Y10T14": 999.0,  # minors — must be excluded
+    "Y15T19": 500.0,
+    "Y20T24": 500.0,  # 18-24 ≈ 0.4*500 + 500 = 700
+    "Y25T29": 400.0,
+    "Y30T34": 400.0,  # 25-34 = 800
+    "Y35T39": 300.0,
+    "Y40T44": 300.0,
+    "Y45T49": 300.0,  # 35-49 = 900
+    "Y50T54": 200.0,
+    "Y55T59": 200.0,
+    "Y60T64": 200.0,  # 50-64 = 600
+    "Y65T69": 100.0,
+    "Y_GE95": 100.0,  # 65+ = 200
+    "Y_LT5": 999.0,
+    "Y5T9": 999.0,
+    "Y10T14": 999.0,  # minors — must be excluded
 }
 
 
@@ -41,9 +50,7 @@ def fake_get(url: str) -> dict:
                     _obs({"SEX": "_T", "AGE": "_T"}, 1000.0),
                 ]
             }
-        return {
-            "observations": [_obs({"SEX": "_T", "AGE": a}, v) for a, v in QUINQUENNAL.items()]
-        }
+        return {"observations": [_obs({"SEX": "_T", "AGE": a}, v) for a, v in QUINQUENNAL.items()]}
     if level == "REG" and code in insee.REGION_CODE_TO_LABEL:
         pop = 200.0 if code == "11" else 100.0  # IDF bigger
         return {"observations": [_obs({"SEX": "_T", "AGE": "_T"}, pop)]}
@@ -65,7 +72,7 @@ def test_fetch_reference_parses_sex_age_and_region():
 
     region = data.values["region"]
     assert len(region) == len(insee.REGION_CODE_TO_LABEL)  # 13 metro, no overseas
-    assert abs(sum(region.values()) - 100.0) < 1.0         # normalised (rounding)
+    assert abs(sum(region.values()) - 100.0) < 1.0  # normalised (rounding)
     assert max(region, key=region.get) == "Île-de-France"  # the bigger one
     assert "Outre-mer" not in region
 

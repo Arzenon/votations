@@ -3,8 +3,21 @@
 {$SITE_DOMAIN} {
 	encode zstd gzip
 
+	# Refuse oversized bodies at the edge. Every form on the site posts a few
+	# kilobytes at most, so anything larger is a mistake or an attempt.
+	request_body {
+		max_size 256KB
+	}
+
 	# The app is not published outside the compose network: this is the only door.
-	reverse_proxy app:8000
+	reverse_proxy app:8000 {
+		# Overwrite rather than append. Caddy's default appends the peer address
+		# to whatever the caller sent, so a request carrying its own
+		# X-Forwarded-For would hand the app a forged client address — and the
+		# vote rate limit is keyed on exactly that.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
 
 	header {
 		# The site embeds nothing and is embedded nowhere.
@@ -12,6 +25,17 @@
 		X-Frame-Options DENY
 		Referrer-Policy same-origin
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Everything the pages need is served from this origin: no CDN, no
+		# analytics, no web fonts. Scripts and styles live in files, never inline
+		# (see /static/app.js), so no 'unsafe-inline' is required anywhere.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+
+		# No camera, microphone, geolocation or interest-cohort involvement.
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()"
+
+		# Caddy adds this by default; the software in use is nobody's business.
+		-Server
 	}
 
 	# Access logs record client IPs, which would pair addresses with vote

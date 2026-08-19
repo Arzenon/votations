@@ -11,11 +11,14 @@ from datetime import UTC, datetime
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db import Base
+from app.db import Base, utcnow
 
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+# Derived publication states. Stored nowhere: always computed from `published`
+# and the voting window, so a law opens and closes on the clock alone.
+STATUS_DRAFT = "draft"
+STATUS_SCHEDULED = "scheduled"
+STATUS_OPEN = "open"
+STATUS_CLOSED = "closed"
 
 
 class Law(Base):
@@ -41,24 +44,24 @@ class Law(Base):
     opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
     def status(self, now: datetime | None = None) -> str:
         """Derive status from publication flag and the voting window."""
-        now = now or _utcnow()
+        now = now or utcnow()
         if not self.published:
-            return "draft"
+            return STATUS_DRAFT
         if self.opens_at and now < _aware(self.opens_at):
-            return "scheduled"
+            return STATUS_SCHEDULED
         if self.closes_at and now >= _aware(self.closes_at):
-            return "closed"
-        return "open"
+            return STATUS_CLOSED
+        return STATUS_OPEN
 
     def is_open(self, now: datetime | None = None) -> bool:
-        return self.status(now) == "open"
+        return self.status(now) == STATUS_OPEN
 
 
 def _aware(dt: datetime) -> datetime:

@@ -184,3 +184,52 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
   margin: 0; font-style: italic; border-left: 2px solid var(--line); padding-left: 0.8rem;
 }
 .reserves .attrib { margin: 0.25rem 0 0 0.8rem; font-size: 0.85rem; color: var(--muted); }
+
+/* --- Accessibility ------------------------------------------------------- */
+
+/* A visible focus ring everywhere, so the site is usable from the keyboard.
+   :focus-visible only shows it for keyboard navigation, never on a mouse click. */
+:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Skip straight to the content past the header and the disclaimer banner. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--blue);
+  color: #fff;
+  padding: 0.6rem 1rem;
+  z-index: 10;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* Wide tables scroll inside their own box rather than pushing the page sideways. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hint {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Bar widths are painted by /static/app.js from data-pct: with no JavaScript the
+   percentages and counts beside each bar still carry the whole result. */
+.bar-fill {
+  width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

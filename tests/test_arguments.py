@@ -1,5 +1,6 @@
 """Selecting arguments from sitting records — and refusing anything unverifiable."""
 
+import contextlib
 from datetime import date
 
 from app import ai
@@ -9,9 +10,12 @@ from app.debates import Speech
 from app.legifrance import Article, LawText
 
 LAW = LawText(
-    nor="SFHX2609544L", law_code="2026-668",
+    nor="SFHX2609544L",
+    law_code="2026-668",
     title="LOI n° 2026-668 du 27 juillet 2026 portant diverses dispositions",
-    nature="LOI", signed_on=date(2026, 7, 27), published_on=date(2026, 7, 28),
+    nature="LOI",
+    signed_on=date(2026, 7, 27),
+    published_on=date(2026, 7, 28),
     eli_url="https://www.legifrance.gouv.fr/eli/loi/2026/7/27/2026-668/jo/texte",
     articles=[Article(num="1", text="Le code de la santé publique est ainsi modifié.")],
 )
@@ -29,12 +33,26 @@ QUOTE_FOR = "Il organise le dépistage précoce et fixe des objectifs mesurables
 QUOTE_AGAINST = "Nous ne pouvons pas voter des objectifs sans les moyens correspondants."
 
 SPEECHES = [
-    Speech(speech_id="cr-1", speaker="Mme Louise Morel", quality="rapporteure",
-           chamber="Assemblée nationale", section="Discussion générale",
-           spoken_on=date(2026, 4, 8), text=FOR_TEXT, url="https://an.fr/cr#1"),
-    Speech(speech_id="cr-2", speaker="M. Paul Vasseur", quality="",
-           chamber="Assemblée nationale", section="Discussion générale",
-           spoken_on=date(2026, 4, 8), text=AGAINST_TEXT, url="https://an.fr/cr#2"),
+    Speech(
+        speech_id="cr-1",
+        speaker="Mme Louise Morel",
+        quality="rapporteure",
+        chamber="Assemblée nationale",
+        section="Discussion générale",
+        spoken_on=date(2026, 4, 8),
+        text=FOR_TEXT,
+        url="https://an.fr/cr#1",
+    ),
+    Speech(
+        speech_id="cr-2",
+        speaker="M. Paul Vasseur",
+        quality="",
+        chamber="Assemblée nationale",
+        section="Discussion générale",
+        spoken_on=date(2026, 4, 8),
+        text=AGAINST_TEXT,
+        url="https://an.fr/cr#2",
+    ),
 ]
 
 
@@ -85,11 +103,12 @@ def test_a_paraphrase_is_rejected():
     """The whole design: a quote that is not in the speech cannot survive."""
     invented = "Ce texte est une avancée majeure pour la santé publique française."
     assert invented not in FOR_TEXT
-    client = _FakeClient(_sel(
-        [("cr-1", invented),
-         ("cr-1", QUOTE_FOR)],
-        [("cr-2", QUOTE_AGAINST)],
-    ))
+    client = _FakeClient(
+        _sel(
+            [("cr-1", invented), ("cr-1", QUOTE_FOR)],
+            [("cr-2", QUOTE_AGAINST)],
+        )
+    )
 
     out = select_arguments(LAW, SPEECHES, client=client)
 
@@ -101,20 +120,24 @@ def test_a_paraphrase_is_rejected():
 def test_a_real_quote_cannot_be_pinned_on_the_wrong_speaker():
     """The model supplies no names, so misattribution is not expressible."""
     # Quote genuinely from cr-2, but claimed as cr-1.
-    client = _FakeClient(_sel(
-        [("cr-1", "Ce texte ne prévoit aucun financement nouveau pour les hôpitaux")],
-        [("cr-2", QUOTE_AGAINST)],
-    ))
+    client = _FakeClient(
+        _sel(
+            [("cr-1", "Ce texte ne prévoit aucun financement nouveau pour les hôpitaux")],
+            [("cr-2", QUOTE_AGAINST)],
+        )
+    )
     out = select_arguments(LAW, SPEECHES, client=client)
     assert out.pour == []
     assert any("introuvable" in n for n in out.notes)
 
 
 def test_unknown_speech_id_is_rejected():
-    client = _FakeClient(_sel(
-        [("does-not-exist", "Il organise le dépistage précoce")],
-        [("cr-2", QUOTE_AGAINST)],
-    ))
+    client = _FakeClient(
+        _sel(
+            [("does-not-exist", "Il organise le dépistage précoce")],
+            [("cr-2", QUOTE_AGAINST)],
+        )
+    )
     out = select_arguments(LAW, SPEECHES, client=client)
     assert out.pour == []
     assert any("identifiant inconnu" in n for n in out.notes)
@@ -145,10 +168,12 @@ def test_a_unanimous_law_yields_an_empty_side_with_a_note():
 
 def test_a_supporters_misgiving_is_a_reserve_not_an_argument_against():
     """The wrinkle on a consensual law: criticism exists, opposition does not."""
-    client = _FakeClient(_sel(
-        pour=[("cr-1", QUOTE_FOR)],
-        reserves=[("cr-2", QUOTE_AGAINST)],
-    ))
+    client = _FakeClient(
+        _sel(
+            pour=[("cr-1", QUOTE_FOR)],
+            reserves=[("cr-2", QUOTE_AGAINST)],
+        )
+    )
     out = select_arguments(LAW, SPEECHES, client=client)
 
     assert out.contre == [], "a reservation must never be filed as opposition"
@@ -164,10 +189,12 @@ def test_a_supporters_misgiving_is_a_reserve_not_an_argument_against():
 
 
 def test_reserves_are_verified_verbatim_like_everything_else():
-    client = _FakeClient(_sel(
-        pour=[("cr-1", QUOTE_FOR)],
-        reserves=[("cr-2", "une réserve que personne n'a jamais formulée en séance")],
-    ))
+    client = _FakeClient(
+        _sel(
+            pour=[("cr-1", QUOTE_FOR)],
+            reserves=[("cr-2", "une réserve que personne n'a jamais formulée en séance")],
+        )
+    )
     out = select_arguments(LAW, SPEECHES, client=client)
     assert out.reserves == []
     assert any("introuvable" in n for n in out.notes)
@@ -180,11 +207,13 @@ def test_reserves_alone_are_enough_to_be_worth_showing():
 
 
 def test_real_opposition_still_takes_precedence_in_the_note():
-    client = _FakeClient(_sel(
-        pour=[("cr-1", QUOTE_FOR)],
-        contre=[("cr-2", QUOTE_AGAINST)],
-        reserves=[("cr-2", "Ce texte ne prévoit aucun financement nouveau pour les hôpitaux")],
-    ))
+    client = _FakeClient(
+        _sel(
+            pour=[("cr-1", QUOTE_FOR)],
+            contre=[("cr-2", QUOTE_AGAINST)],
+            reserves=[("cr-2", "Ce texte ne prévoit aucun financement nouveau pour les hôpitaux")],
+        )
+    )
     out = select_arguments(LAW, SPEECHES, client=client)
     assert out.is_symmetric
     assert len(out.reserves) == 1
@@ -218,11 +247,13 @@ def test_per_side_cap_is_enforced():
 def test_caps_default_to_the_configured_values():
     """Arguments are a pool to curate from; réserves stay tighter."""
     settings = get_settings()
-    client = _FakeClient(_sel(
-        pour=[("cr-1", QUOTE_FOR)] * 9,
-        contre=[("cr-2", QUOTE_AGAINST)] * 9,
-        reserves=[("cr-2", QUOTE_AGAINST)] * 9,
-    ))
+    client = _FakeClient(
+        _sel(
+            pour=[("cr-1", QUOTE_FOR)] * 9,
+            contre=[("cr-2", QUOTE_AGAINST)] * 9,
+            reserves=[("cr-2", QUOTE_AGAINST)] * 9,
+        )
+    )
     out = select_arguments(LAW, SPEECHES, client=client)
     assert len(out.pour) == settings.ai_arguments_per_side
     assert len(out.contre) == settings.ai_arguments_per_side
@@ -242,16 +273,21 @@ def test_the_model_is_told_the_numbers_are_ceilings_not_quotas():
 
 def test_oversized_pools_are_trimmed_and_reported():
     big = [
-        Speech(speech_id=f"cr-{i}", speaker=f"M. {i}", quality="",
-               chamber="Assemblée nationale", section="Discussion générale",
-               spoken_on=date(2026, 4, 8), text="mot " * 20000, url="u")
+        Speech(
+            speech_id=f"cr-{i}",
+            speaker=f"M. {i}",
+            quality="",
+            chamber="Assemblée nationale",
+            section="Discussion générale",
+            spoken_on=date(2026, 4, 8),
+            text="mot " * 20000,
+            url="u",
+        )
         for i in range(40)
     ]
     client = _FakeClient(_sel())
-    try:
+    with contextlib.suppress(AiDraftError):
         select_arguments(LAW, big, client=client)
-    except AiDraftError:
-        pass
     prompt = client.seen["messages"][0]["content"]
     assert len(prompt) < 700_000  # bounded, not the whole pool
 
@@ -261,7 +297,7 @@ def test_prompt_tells_the_model_to_copy_not_to_write():
     assert "copiée à l'identique" in system
     assert "Ne reformule pas" in system
     assert "liste « contre » vide" in system  # empty side is allowed
-    assert "`reserves`" in system                # the third category is explained
+    assert "`reserves`" in system  # the third category is explained
     assert "N'invente jamais d'identifiant" in system
 
 

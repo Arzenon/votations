@@ -20,7 +20,7 @@ def test_search_matches_summary_and_title(db_session):
 
 
 def test_search_status_filter(db_session, open_law, closed_law):
-    rows, total = laws_crud.search(db_session, status="closed")
+    rows, _ = laws_crud.search(db_session, status="closed")
     assert [law.slug for law in rows] == ["loi-close"]
 
 

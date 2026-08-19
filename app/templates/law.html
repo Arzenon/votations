@@ -1,25 +1,26 @@
 {% extends "base.html" %}
 {% block title %}{{ law.title }} — Votations Françaises{% endblock %}
+{% block description %}{{ (law.summary_text or law.title)[:180] }}{% endblock %}
 {% block content %}
 <article class="law">
   <p class="breadcrumb"><a href="/">← Toutes les votations</a></p>
-  <span class="status status-{{ status }}">{{ status }}</span>
+  <span class="status status-{{ status }}">{{ status | law_status }}</span>
   <h1>{{ law.title }}</h1>
   {% if law.official_ref %}
   <p class="official-ref">
     Référence : {{ law.official_ref }}
-    {% if law.legifrance_url %}— <a href="{{ law.legifrance_url }}" rel="noopener" target="_blank">Texte officiel (Légifrance)</a>{% endif %}
+    {% if law.legifrance_url %}— <a href="{{ law.legifrance_url }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)</a>{% endif %}
   </p>
   {% endif %}
 
   <section class="block">
     <h2>Ce que dit la loi</h2>
-    <p>{{ law.summary_text or "—" }}</p>
+    {% for para in law.summary_text | paragraphs %}<p>{{ para }}</p>{% else %}<p>—</p>{% endfor %}
   </section>
 
   <section class="block">
     <h2>Ce que ça change en pratique</h2>
-    <p>{{ law.practical_changes or "—" }}</p>
+    {% for para in law.practical_changes | paragraphs %}<p>{{ para }}</p>{% else %}<p>—</p>{% endfor %}
   </section>
 
   <div class="arguments">
@@ -33,7 +34,7 @@
           {% if arg.author or arg.source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener" target="_blank">source</a>{% endif %}
+            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
           </p>
           {% endif %}
         </li>
@@ -52,7 +53,7 @@
           {% if arg.author or arg.source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener" target="_blank">source</a>{% endif %}
+            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
           </p>
           {% endif %}
         </li>

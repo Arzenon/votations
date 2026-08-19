@@ -37,7 +37,17 @@ Tests et qualité (dans le conteneur) :
 ```bash
 docker compose run --rm app pytest
 docker compose run --rm app ruff check .
+docker compose run --rm app ruff format --check .
 ```
+
+L'outillage de test vit dans l'étage `dev` de l'image ; l'image de production n'en
+contient rien, tourne sous un utilisateur non privilégié et installe exactement
+les versions figées dans `requirements.lock`.
+
+La suite construit son schéma **par les migrations**, pas par `create_all` : une
+migration manquante casse donc les tests plutôt que la mise à jour en production,
+et `tests/test_migrations.py` vérifie en plus que le schéma migré correspond aux
+modèles et que la chaîne fait l'aller-retour.
 
 ## Démarrage sans Docker (optionnel)
 
@@ -57,9 +67,15 @@ uvicorn app.main:app --reload
 
 ```
 app/
-  main.py            Fabrique de l'application FastAPI
+  main.py            Fabrique FastAPI, pages d'erreur, robots.txt, sonde /sante
   config.py          Réglages (DATABASE_URL, SECRET_KEY, identifiants admin…)
-  db.py              Moteur SQLAlchemy + dépendance get_db
+  db.py              Moteur SQLAlchemy (paresseux), get_db, utcnow partagé
+  labels.py          Libellés français des états stockés en machine
+  security.py        Refus des requêtes inter-sites, assainissement des URL
+  ratelimit.py       Compteurs en mémoire (vote, connexions admin)
+  profile_cookie.py  Profil démographique facultatif, gardé côté navigateur
+  logging_config.py  Journalisation sans adresse IP
+  drafting.py        Le brouillon IA, exécuté en tâche de fond
   models/            Law, Vote, ImportedLaw (aucune donnée personnelle stockée)
   crud/              laws, votes, results (agrégats simples + export anonyme), imports
   auth/              Couche d'authentification enfichable (voir ci-dessous)
@@ -69,7 +85,7 @@ app/
   ai.py              Brouillon IA : blocs factuels + sélection d'arguments
   debates.py         Interventions attribuées en séance (données ouvertes AN)
   templates/         base, home, law, results, search, connexion, admin/*
-  static/            CSS minimal + htmx
+  static/            CSS minimal, htmx, app.js (rehaussement progressif)
 alembic/             Migrations
 tests/               pytest
 ```
@@ -80,7 +96,10 @@ Tout le code de vote ne dépend que de l'interface `AuthProvider`
 (`app/auth/base.py`) :
 
 - `get_voter_token(request, response)` → jeton **anonyme**, non identifiant,
-  utilisé uniquement pour « un vote par loi ».
+  utilisé uniquement pour « un vote par loi ». Il en *crée* un si nécessaire :
+  appelé au moment du vote, jamais à la lecture.
+- `peek_voter_token(request)` → le jeton que le navigateur porte déjà, ou `None`,
+  sans rien créer. C'est ce que lit la page d'une loi.
 - `login_url()` / `logout_url()` / `is_authenticated()` / `login_label`.
 
 La V1 utilise `AnonymousProvider` (jeton signé en cookie, hashé en base — aucune
@@ -93,9 +112,26 @@ bouton FranceConnect désactivé (« bientôt disponible »).
 
 Un vote ne stocke que `law_id`, `choice`, un jeton anonyme hashé, et un
 horodatage. L'export en accès libre (`/loi/{slug}/export.csv` et `.json`) ne
-contient **que** `law_id, choice, created_at` — aucun identifiant. La courbe
+contient **que** `law_id, choice, created_at` — aucun identifiant.
+
+**Le jeton n'est créé qu'au moment du vote**, jamais à la simple consultation :
+quelqu'un qui ne fait que lire une loi ne se voit poser aucun identifiant.
+
+**L'export ne révèle jamais plus que la page de résultats.** La courbe
 d'évolution n'est exposée qu'au-delà d'un volume minimal de votes
-(`MIN_BUCKET_VOLUME`) pour empêcher toute ré-identification.
+(`MIN_BUCKET_VOLUME`) pour empêcher toute ré-identification — et le même seuil
+gouverne l'export :
+
+- en dessous du seuil, l'export **ne contient aucun horodatage** ;
+- au-dessus, les horodatages sont **arrondis** (au jour par défaut,
+  `EXPORT_TIME_RESOLUTION`), à la résolution même de la courbe publiée ;
+- les lignes sont triées sur les seules colonnes publiées (date arrondie, puis
+  choix), et sur rien d'autre : l'ordre du fichier ne restitue donc pas la
+  séquence d'arrivée des votes.
+
+Publier l'instant exact de chaque vote reviendrait à publier la courbe que le
+seuil retient, à la résolution choisie par le lecteur — et permettrait à qui sait
+*quand* une personne a voté de lire *comment* elle a voté.
 
 ### Données démographiques agrégées (âge, sexe)
 
@@ -111,7 +147,16 @@ votant·e**. À la première participation, il est immédiatement ajouté à des
 - chaque votant·e n'alimente que des compteurs *marginaux* (âge **ou** sexe),
   jamais une case croisée âge×sexe, ce qui garde les valeurs stockées élevées ;
 - un drapeau booléen `demographics_recorded` sur le vote évite le double comptage
-  lors d'un changement de vote (le profil n'est compté qu'une fois).
+  lors d'un changement de vote (le profil n'est compté qu'une fois) ;
+- si la personne **change son vote**, sa contribution est *déplacée* vers le
+  nouveau choix au lieu de rester comptée sous l'ancien, de sorte qu'une
+  répartition décrit toujours les votes tels qu'ils sont. Déplacer une
+  contribution suppose de savoir *quelles catégories* elle concernait — ce que le
+  serveur refuse justement de stocker : ces catégories reviennent donc du
+  navigateur de la personne, dans un cookie signé (`vf_profil`), lu le temps
+  d'une requête et jamais enregistré. Le cookie ne contient que les catégories,
+  jamais le vote ; l'effacer laisse simplement l'ancienne contribution où elle
+  était.
 
 **Suppression de cellules (k-anonymat).** Une répartition n'est affichée ou
 exportée que si **chacune** de ses cases atteint `MIN_CELL_COUNT` (10 par défaut).
@@ -175,17 +220,28 @@ En cas d'indisponibilité de l'Assemblée nationale, l'import échoue **sans rie
 Import manuel : `python -m scripts.refresh_assemblee`.
 
 Réglages : `AN_DOSSIERS_URL` (le `17` de l'URL est la législature, à changer une
-fois par législature), `AN_IMPORT_SINCE` (ignorer les promulgations antérieures ;
-vide = tout l'historique) et `AN_REFRESH_INTERVAL` (cadence, 24 h par défaut).
+fois par législature), `AN_IMPORT_SINCE_DAYS` (fenêtre **glissante** — 365 jours
+par défaut — pour que l'import n'accumule pas d'arriéré au fil des années ; `0`
+prend tout l'historique), `AN_IMPORT_SINCE` (date absolue facultative, qui
+l'emporte sur la fenêtre) et `AN_REFRESH_INTERVAL` (cadence, 24 h par défaut).
+
+Le service de fond réessaie indéfiniment en cas d'échec, ce qui le rendrait
+silencieux si la source déménageait. Le tableau de bord de l'administration
+affiche donc la date du dernier import réussi et alerte au-delà de
+`AN_IMPORT_STALE_AFTER_HOURS`.
 
 ### Texte officiel des lois (Journal Officiel)
 
 `app/legifrance.py` récupère le **texte officiel** d'une loi promulguée à partir
 des archives quotidiennes du Journal Officiel publiées par la DILA
-(`echanges.dila.gouv.fr`, Licence Ouverte, sans authentification) :
+(`echanges.dila.gouv.fr`, Licence Ouverte, sans authentification). Le XML est lu
+via `defusedxml` et les membres d'archive démesurés sont écartés sans être lus :
+la source est publique et de confiance, mais quelques kilo-octets d'entités
+imbriquées suffiraient sinon à saturer la mémoire.
 
 ```python
 from app.legifrance import fetch_law_text
+
 loi = fetch_law_text(nor="SFHX2609544L", jo_date=date(2026, 7, 28))
 loi.title, loi.articles, loi.eli_url, loi.plain_text
 ```
@@ -209,8 +265,8 @@ Réglage : `JORF_DUMPS_URL`.
 
 ### Brouillon IA (facultatif)
 
-Depuis la page **Lois promulguées**, le bouton « Brouillon IA » récupère le texte
-officiel au Journal Officiel et propose un premier jet de **deux** blocs :
+Depuis le formulaire d'une loi importée, le bouton « Brouillon IA » récupère le
+texte officiel au Journal Officiel et propose un premier jet de **deux** blocs :
 
 - « Ce que dit la loi » — résumé factuel du texte officiel ;
 - « Ce que ça change en pratique » — conséquences concrètes, en langage accessible.
@@ -246,6 +302,17 @@ dans une catégorie à part, **affichées sous le formulaire à titre indicatif 
 jamais pré-remplies** dans les blocs d'arguments : à l'administrateur de décider
 s'il les reprend, en indiquant clairement la position de leur auteur. Elles
 obéissent à la même vérification mot pour mot que les arguments.
+
+**Le travail se fait en tâche de fond.** Un brouillon enchaîne le téléchargement
+d'archives du Journal Officiel (plusieurs mégaoctets, fouillées à la recherche
+d'un texte), un appel au modèle, la lecture des comptes rendus de séance, puis un
+second appel : plusieurs minutes, bien au-delà de ce qu'un navigateur ou un proxy
+inverse garde ouvert, et un fil d'exécution immobilisé pendant tout ce temps.
+L'administration se contente donc de **programmer** le travail et répond
+immédiatement ; le formulaire interroge `/admin/imports/{id}/brouillon/etat`
+jusqu'au résultat, et l'on peut continuer à saisir pendant ce temps. Un délai
+global (`AI_DRAFT_DEADLINE_SECONDS`) fait abandonner proprement plutôt que rester
+suspendu.
 
 Garde-fous :
 
@@ -286,9 +353,53 @@ beaucoup à lire pour un citoyen : réduisez avant d'enregistrer.
 Réglages : `ANTHROPIC_API_KEY`, `AI_MODEL` (défaut `claude-opus-5`),
 `AI_EFFORT` (défaut `medium` — à monter si les brouillons paraissent superficiels),
 `AI_MAX_INPUT_TOKENS`, `AI_MAX_SPEECHES` (interventions envoyées au modèle),
-`AI_ARGUMENTS_PER_SIDE`, `AI_RESERVES_MAX`.
+`AI_ARGUMENTS_PER_SIDE`, `AI_RESERVES_MAX`, `AI_DRAFT_DEADLINE_SECONDS`.
 
 Les séances où un texte a été discuté sont enregistrées à l'import (colonne
 `seances`) : la référence de la réunion et celle du point à l'ordre du jour. Une
 séance pouvant examiner plusieurs textes, c'est ce point qui garantit qu'aucun
 argument portant sur une autre loi ne se glisse dans la présentation.
+
+## Sécurité
+
+Ce que le code tient, et pourquoi — l'essentiel est documenté à l'endroit
+concerné, voici la carte :
+
+- **Requêtes inter-sites** (`app/security.py`). Le vote *et* l'administration
+  refusent un POST dont l'`Origin` (à défaut le `Referer`) n'est pas ce site. Pour
+  l'administration, les identifiants HTTP Basic voyagent quoi qu'il arrive avec une
+  requête inter-site ; pour le vote, `SameSite=Lax` retient bien un cookie existant
+  mais n'empêche pas d'en créer un neuf — n'importe quelle page pourrait sinon
+  transformer ses visiteurs en bulletins.
+- **Limitation de débit** (`app/ratelimit.py`). L'adresse cliente est lue à
+  `TRUSTED_PROXY_HOPS` entrées de la **fin** de `X-Forwarded-For` : les proxys
+  ajoutent à la suite, donc tout ce qui est à gauche a été écrit par l'appelant.
+  Lire à gauche revenait à laisser l'attaquant choisir sa propre clé de comptage.
+  Le Caddyfile réécrit l'en-tête plutôt que de l'allonger, et la table de suivi est
+  bornée : passé le plafond, on refuse au lieu de grandir.
+- **Connexions administrateur.** Comparaison à temps constant *et* limitation des
+  échecs : un couple d'identifiants statique sans verrouillage se devine à la
+  vitesse du réseau.
+- **URL stockées.** Les liens saisis dans l'administration (sources d'arguments,
+  lien Légifrance) sont restreints à `http`/`https` avant enregistrement : ils sont
+  rendus en `href` sur la page publique, et la V3 ouvre ce formulaire à tout
+  utilisateur authentifié.
+- **En-têtes.** Le Caddyfile pose une CSP stricte (`script-src 'self'`, aucun
+  `unsafe-inline`), HSTS, `nosniff`, `frame-ancestors 'none'` et une
+  `Permissions-Policy` fermée. Aucun script ni style en ligne dans les gabarits :
+  les largeurs de barres et les confirmations passent par `static/app.js`, qui
+  n'est qu'un rehaussement — tout fonctionne sans JavaScript.
+- **Surface exposée.** En production, `/docs`, `/redoc` et `/openapi.json` sont
+  désactivés : le schéma énumère toutes les routes d'administration.
+- **Image.** Utilisateur non privilégié, aucune dépendance de développement,
+  versions figées (`requirements.lock`), limites mémoire sur les services qui
+  décompressent des archives publiques.
+
+## Journaux
+
+Les journaux d'accès sont **désactivés** des deux côtés (uvicorn
+`--no-access-log`, Caddy `level ERROR`) : ils associeraient une adresse IP à
+l'horodatage d'un vote. `app/logging_config.py` fournit en échange une
+journalisation applicative qui, par construction, ne consigne **jamais** une
+adresse, un cookie ou un jeton de votant — seulement des identifiants de loi,
+d'import, et des classes d'erreur.

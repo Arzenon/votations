@@ -6,9 +6,11 @@
   neutre, données ouvertes, aucune donnée personnelle collectée.
 </p>
 
-<form class="search" action="/" method="get" role="search">
+{# One search, one page: the form posts to the dedicated search route rather
+   than duplicating a second implementation here. #}
+<form class="search" action="/recherche" method="get" role="search">
   <label for="q">Rechercher une loi</label>
-  <input type="search" id="q" name="q" value="{{ q }}" placeholder="Titre ou référence…">
+  <input type="search" id="q" name="q" placeholder="Titre ou référence…">
   <button type="submit">Rechercher</button>
 </form>
 
@@ -16,9 +18,10 @@
 {% if laws %}
 <ul class="law-list">
   {% for law in laws %}
+  {% set state = law.status() %}
   <li class="law-card">
     <a href="/loi/{{ law.slug }}">
-      <span class="status status-{{ law.status() }}">{{ law.status() }}</span>
+      <span class="status status-{{ state }}">{{ state | law_status }}</span>
       <h3>{{ law.title }}</h3>
       {% if law.summary_text %}<p>{{ law.summary_text[:200] }}{% if law.summary_text|length > 200 %}…{% endif %}</p>{% endif %}
       {% if law.closes_at %}<p class="meta">Clôture : {{ law.closes_at.strftime('%d/%m/%Y') }}</p>{% endif %}
