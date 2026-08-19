@@ -18,7 +18,7 @@ COPY docker ./docker
 
 # Editable install so a bind-mounted source (dev) is picked up live, and dev
 # extras so `pytest` can run inside the container.
-RUN pip install -e ".[dev]" && chmod +x docker/entrypoint.sh
+RUN pip install -e ".[dev]" && chmod +x docker/*.sh
 
 EXPOSE 8000
 

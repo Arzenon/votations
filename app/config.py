@@ -24,6 +24,23 @@ class Settings(BaseSettings):
     # unless every one of its cells holds at least this many votes.
     min_cell_count: int = 10
 
+    # INSEE reference data (annual refresh). The estimation-population dataset is
+    # open (no key required); a key is only supported for rate-limit purposes.
+    insee_melodi_base: str = "https://api.insee.fr/melodi"
+    insee_dataset: str = "DS_ESTIMATION_POPULATION"
+    insee_api_key: str = ""
+
+    # Assemblée nationale open data (daily import of promulgated laws). The `17`
+    # in the path is the legislature and changes once per legislature, which is
+    # why the whole URL is configurable. Licence Ouverte, no authentication.
+    an_dossiers_url: str = (
+        "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/"
+        "dossiers_legislatifs/Dossiers_Legislatifs.json.zip"
+    )
+    # Ignore promulgations older than this (ISO date). Empty imports the full
+    # backlog — 141 laws back to the 15th legislature at the time of writing.
+    an_import_since: str = "2026-01-01"
+
 
 @lru_cache
 def get_settings() -> Settings:

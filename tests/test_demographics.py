@@ -110,6 +110,50 @@ def test_breakdown_shown_above_threshold(open_law, db_session):
     assert first.percentages["for"] == round(100 * 40 / 82, 1)
 
 
+def test_region_recorded_as_marginal(open_law, db_session):
+    vote = votes_crud.cast_vote(db_session, open_law, "tok-r", VoteChoice.FOR)
+    demo_crud.record(
+        db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="35-49", region="Bretagne"
+    )
+    assert _cell(db_session, open_law.id, "region", "Bretagne", "for").count == 1
+    # No joint age×region cell is ever created — only independent marginals.
+    dims = {d.dimension for d in db_session.query(DemographicTally).all()}
+    assert dims == {"age", "region"}
+
+
+def test_provision_rate(open_law, db_session):
+    for i in range(4):
+        votes_crud.cast_vote(db_session, open_law, f"p{i}", VoteChoice.FOR)
+    # Two of the four share a profile.
+    v = votes_crud.cast_vote(db_session, open_law, "p0", VoteChoice.FOR)
+    demo_crud.record(db_session, vote=v, choice=VoteChoice.FOR, sexe="femme")
+    v = votes_crud.cast_vote(db_session, open_law, "p1", VoteChoice.FOR)
+    demo_crud.record(db_session, vote=v, choice=VoteChoice.FOR, sexe="homme")
+
+    rate = demo_crud.provision_rate(db_session, open_law.id)
+    assert rate.total_votes == 4
+    assert rate.with_profile == 2
+    assert rate.percentage == 50.0
+
+
+def test_breakdown_includes_share_and_reference(open_law, db_session):
+    _seed_cells(
+        db_session,
+        open_law.id,
+        "sexe",
+        {
+            "femme": {"for": 30, "against": 20, "abstain": 10},  # 60
+            "homme": {"for": 25, "against": 10, "abstain": 10},  # 45
+        },
+    )
+    bd = demo_crud.breakdown(db_session, open_law.id, "sexe")
+    assert bd.shown is True
+    assert bd.dimension_total == 105
+    femme = bd.rows[0]
+    assert femme.share == round(100 * 60 / 105, 1)
+    assert femme.reference == 51.5  # from INSEE_REFERENCE
+
+
 def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session):
     _seed_cells(
         db_session,

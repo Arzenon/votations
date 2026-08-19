@@ -22,6 +22,7 @@ from app.db import Base
 # Dimension keys.
 DIMENSION_AGE = "age"
 DIMENSION_SEXE = "sexe"
+DIMENSION_REGION = "region"
 
 
 class AgeBracket(enum.StrEnum):
@@ -38,16 +39,72 @@ class Sexe(enum.StrEnum):
     AUTRE = "autre"
 
 
+class Region(enum.StrEnum):
+    # Ordered by population (largest first) — used as display order too.
+    IDF = "Île-de-France"
+    ARA = "Auvergne-Rhône-Alpes"
+    HDF = "Hauts-de-France"
+    NAQ = "Nouvelle-Aquitaine"
+    OCC = "Occitanie"
+    GES = "Grand Est"
+    PACA = "Provence-Alpes-Côte d'Azur"
+    PDL = "Pays de la Loire"
+    BRE = "Bretagne"
+    NOR = "Normandie"
+    BFC = "Bourgogne-Franche-Comté"
+    CVL = "Centre-Val de Loire"
+    COR = "Corse"
+    OM = "Outre-mer"
+
+
 # Canonical display order per dimension.
 DIMENSION_ORDER = {
     DIMENSION_AGE: [b.value for b in AgeBracket],
     DIMENSION_SEXE: [s.value for s in Sexe],
+    DIMENSION_REGION: [r.value for r in Region],
 }
 
 # Allowed (dimension, category) pairs, used to validate incoming form values.
 VALID_CATEGORIES = {
     DIMENSION_AGE: {b.value for b in AgeBracket},
     DIMENSION_SEXE: {s.value for s in Sexe},
+    DIMENSION_REGION: {r.value for r in Region},
+}
+
+# Approximate national reference shares (%), used only to show how far the
+# self-selected sample diverges from the population — never to weight results.
+# Sources: ordres de grandeur INSEE (population adulte pour l'âge, population
+# totale pour le sexe et la région). Volontairement approximatifs.
+INSEE_REFERENCE = {
+    # Fallback only — kept close to the INSEE-derived adult shares (18+).
+    DIMENSION_AGE: {
+        "18-24": 10.2,
+        "25-34": 14.6,
+        "35-49": 23.5,
+        "50-64": 24.0,
+        "65+": 27.8,
+    },
+    DIMENSION_SEXE: {
+        "femme": 51.5,
+        "homme": 48.5,
+        # "autre" n'est pas mesuré par l'INSEE → pas de référence.
+    },
+    DIMENSION_REGION: {
+        "Île-de-France": 18.3,
+        "Auvergne-Rhône-Alpes": 12.1,
+        "Hauts-de-France": 9.0,
+        "Nouvelle-Aquitaine": 9.0,
+        "Occitanie": 9.0,
+        "Grand Est": 8.2,
+        "Provence-Alpes-Côte d'Azur": 7.6,
+        "Pays de la Loire": 5.8,
+        "Bretagne": 5.1,
+        "Normandie": 4.9,
+        "Bourgogne-Franche-Comté": 4.2,
+        "Centre-Val de Loire": 3.8,
+        "Corse": 0.5,
+        "Outre-mer": 3.3,
+    },
 }
 
 

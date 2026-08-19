@@ -42,6 +42,17 @@ def test_admin_requires_auth(client):
     assert client.get("/admin").status_code == 401
 
 
+def test_admin_challenge_carries_a_realm(client):
+    """RFC 7617 requires `realm`; without it Firefox never shows a login prompt."""
+    # No credentials at all — the challenge comes from FastAPI's HTTPBasic.
+    r = client.get("/admin")
+    assert r.headers["www-authenticate"] == 'Basic realm="Votations"'
+    # Wrong credentials — the challenge comes from require_admin.
+    r = client.get("/admin", headers=_basic("admin", "definitely-wrong"))
+    assert r.status_code == 401
+    assert r.headers["www-authenticate"] == 'Basic realm="Votations"'
+
+
 def test_admin_accepts_configured_credentials(client):
     r = client.get("/admin", headers=_admin_auth())
     assert r.status_code == 200

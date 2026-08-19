@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Lois promulguées — Administration{% endblock %}
+{% block content %}
+<p class="breadcrumb"><a href="/admin">← Administration</a></p>
+<h1>Lois promulguées</h1>
+
+<p class="disclaimer">
+  Importé automatiquement chaque jour depuis les données ouvertes de l'Assemblée
+  nationale (Licence Ouverte). Ces lois ne sont <strong>pas</strong> publiées sur le
+  site : la présentation neutre en quatre blocs est rédigée et validée par une
+  personne avant toute mise au vote.
+</p>
+
+<p>
+  {% if statut == 'tous' %}
+    <a class="button" href="/admin/imports">Voir seulement les nouvelles</a>
+  {% else %}
+    <a class="button" href="/admin/imports?statut=tous">Voir tout l'historique</a>
+  {% endif %}
+</p>
+
+{% if items %}
+<table class="admin-table">
+  <thead>
+    <tr><th>Promulguée le</th><th>Référence</th><th>Titre</th><th>Procédure</th><th>Statut</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ item.promulgated_on.strftime('%d/%m/%Y') }}</td>
+      <td>
+        LOI n° {{ item.law_code }}
+        {% if item.jo_number %}<br><small>JO n° {{ item.jo_number }}</small>{% endif %}
+      </td>
+      <td>
+        {{ item.title }}
+        <br>
+        <small>
+          <a href="{{ item.dossier_url }}" rel="noopener" target="_blank">Dossier AN</a>
+          {% if item.legifrance_url %}
+            · <a href="{{ item.legifrance_url }}" rel="noopener" target="_blank">Légifrance</a>
+          {% endif %}
+        </small>
+      </td>
+      <td>{{ item.procedure }}</td>
+      <td><span class="status status-{{ item.status }}">{{ item.status }}</span></td>
+      <td class="actions">
+        {% if item.status == 'importe' %}
+          {% if item.law_id %}<a href="/admin/lois/{{ item.law_id }}">Voir la votation</a>{% endif %}
+        {% else %}
+          <a href="/admin/lois/nouvelle?import_id={{ item.id }}">Créer la votation</a>
+          {% if item.status == 'ignore' %}
+            <form action="/admin/imports/{{ item.id }}/restaurer" method="post">
+              <button type="submit" class="link-danger">Restaurer</button>
+            </form>
+          {% else %}
+            <form action="/admin/imports/{{ item.id }}/ignorer" method="post">
+              <button type="submit" class="link-danger">Ignorer</button>
+            </form>
+          {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Aucune loi en attente.</p>
+{% endif %}
+{% endblock %}

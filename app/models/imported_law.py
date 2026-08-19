@@ -1,0 +1,69 @@
+"""Laws discovered automatically in the Assemblée nationale open data.
+
+A staging area, not a publication surface. ``scripts/refresh_assemblee.py`` fills
+this table daily with every promulgated law found in the official export; an
+administrator then reviews each row and, for the ones worth submitting to a vote,
+creates the corresponding :class:`~app.models.law.Law` by hand. Nothing here is
+ever visible publicly, and no row becomes a law without that human step — the
+neutral 4-block presentation is written and validated by a person, as the project
+charter requires.
+
+Contains only officially published data (law numbers, titles, JO references) —
+no personal data.
+"""
+
+from datetime import UTC, date, datetime
+
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db import Base
+
+# Provenance of a row. Only the Assemblée nationale export exists today; the
+# column is the seam for a later Légifrance/JORF source keyed on the same NOR.
+SOURCE_ASSEMBLEE = "assemblee"
+
+# Review state. A row starts as "nouveau"; the admin either turns it into a law
+# ("importe", with law_id set) or sets it aside ("ignore").
+STATUS_NEW = "nouveau"
+STATUS_IMPORTED = "importe"
+STATUS_IGNORED = "ignore"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+class ImportedLaw(Base):
+    __tablename__ = "imported_laws"
+    __table_args__ = (
+        UniqueConstraint("source", "dossier_uid", name="uq_imported_law_source_uid"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(16), default=SOURCE_ASSEMBLEE)
+    dossier_uid: Mapped[str] = mapped_column(String(32), index=True)
+
+    legislature: Mapped[str] = mapped_column(String(8), default="")
+    procedure: Mapped[str] = mapped_column(String(100), default="")
+    title: Mapped[str] = mapped_column(String(1000))
+    law_title: Mapped[str] = mapped_column(Text, default="")
+    law_code: Mapped[str] = mapped_column(String(32))
+
+    # Official publication references.
+    promulgated_on: Mapped[date] = mapped_column(Date, index=True)
+    jo_date: Mapped[date | None] = mapped_column(Date, default=None)
+    jo_number: Mapped[str | None] = mapped_column(String(32), default=None)
+    # NOR reference — the join key to Légifrance/JORF.
+    nor: Mapped[str | None] = mapped_column(String(32), default=None)
+    legifrance_url: Mapped[str | None] = mapped_column(String(1000), default=None)
+    dossier_url: Mapped[str] = mapped_column(String(1000), default="")
+
+    # Review state, owned by the admin and never overwritten by the import job.
+    status: Mapped[str] = mapped_column(String(16), default=STATUS_NEW)
+    law_id: Mapped[int | None] = mapped_column(
+        ForeignKey("laws.id", ondelete="SET NULL"), default=None
+    )
+
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

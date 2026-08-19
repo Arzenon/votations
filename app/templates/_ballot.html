@@ -16,7 +16,7 @@
     </fieldset>
 
     {% if not demographics_locked %}
-    <details class="demographics-optional">
+    <details class="demographics-optional" open>
       <summary>Informations facultatives et anonymes (optionnel)</summary>
       <p class="meta">
         Ces informations ne sont jamais stockées par personne : elles sont
@@ -34,6 +34,12 @@
         <select name="sexe">
           <option value="">Ne pas renseigner</option>
           {% for s in sexes %}<option value="{{ s }}">{{ s|capitalize }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="demo-field">Région
+        <select name="region">
+          <option value="">Ne pas renseigner</option>
+          {% for r in regions %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
         </select>
       </label>
     </details>

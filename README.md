@@ -52,10 +52,11 @@ app/
   main.py            Fabrique de l'application FastAPI
   config.py          Réglages (DATABASE_URL, SECRET_KEY, identifiants admin…)
   db.py              Moteur SQLAlchemy + dépendance get_db
-  models/            Law, Vote (aucune donnée personnelle stockée)
-  crud/              laws, votes, results (agrégats simples + export anonyme)
+  models/            Law, Vote, ImportedLaw (aucune donnée personnelle stockée)
+  crud/              laws, votes, results (agrégats simples + export anonyme), imports
   auth/              Couche d'authentification enfichable (voir ci-dessous)
   routes/            public, admin, auth
+  assemblee.py       Import des lois promulguées (données ouvertes AN)
   templates/         base, home, law, results, search, connexion, admin/*
   static/            CSS minimal + htmx
 alembic/             Migrations
@@ -106,3 +107,62 @@ exportée que si **chacune** de ses cases atteint `MIN_CELL_COUNT` (10 par défa
 Dès qu'une case est en dessous, toute la répartition est masquée — rien de
 partiel n'est jamais publié, de sorte qu'une petite valeur ne peut être ni lue ni
 recalculée par différence (avec les autres cases, un total, ou l'autre dimension).
+
+**Dimensions disponibles.** `age`, `sexe`, `region` (13 régions métropolitaines +
+Outre-mer). Chacune est un compteur **marginal indépendant** : on n'enregistre
+jamais de croisement entre deux dimensions (p. ex. âge × région), ce qui
+maintiendrait des cases trop petites. Ajouter une dimension = ajouter une valeur
+de `dimension`, sans changement de schéma.
+
+**Représentativité.** Chaque répartition affiche, à côté de la part observée, la
+part nationale issue de l'INSEE — *uniquement* pour visualiser l'écart de
+l'échantillon auto-sélectionné. Les résultats ne sont **jamais** repondérés.
+
+Les valeurs de référence sont rafraîchies chaque année depuis l'**API Melodi**
+ouverte de l'INSEE (jeu de données `DS_ESTIMATION_POPULATION`, estimations de
+population au 1ᵉʳ janvier), par le service `insee-refresh` de docker-compose :
+
+- **sexe**, **âge** et **région** (13 régions métropolitaines) sont calculés à
+  partir des effectifs INSEE de l'année courante ; l'année source est affichée
+  (« INSEE 2026 »).
+- **âge** : les tranches du site sont des sommes de groupes quinquennaux INSEE,
+  restreintes aux adultes (18+). Seule la tranche 18-24 est approchée (les 18-19
+  ans = 2/5 du groupe 15-19) ; les autres sont des unions exactes.
+- En cas d'indisponibilité de l'INSEE (ou de schéma modifié), le rafraîchissement
+  échoue **sans rien écraser** : l'app continue de servir les dernières valeurs en
+  cache, ou la constante de repli `INSEE_REFERENCE`. Aucune page n'appelle l'INSEE
+  en direct. Rafraîchissement manuel : `python -m scripts.refresh_insee`.
+
+**Taux de renseignement.** La page de résultats indique quelle proportion des
+votant·es a partagé au moins une information de profil (dérivé du drapeau
+`demographics_recorded`, sans stockage supplémentaire), pour lire les
+répartitions en connaissance de cause.
+
+## Import automatique des lois promulguées
+
+Les lois ne sont plus saisies à la main : un service `assemblee-refresh` télécharge
+chaque jour l'export **Dossiers législatifs** des données ouvertes de l'Assemblée
+nationale (Licence Ouverte, sans authentification) et en extrait toutes les lois
+effectivement **promulguées** — celles qui portent un numéro officiel et une
+référence au Journal Officiel.
+
+Ce que l'import récupère, pour chaque loi : le titre du dossier, le numéro
+(`LOI n° 2026-532`), la date de promulgation, la date et le numéro du JO, la
+référence NOR et le lien Légifrance.
+
+**Rien n'est publié automatiquement.** Les lois importées atterrissent dans une
+table de préparation, visible seulement dans l'administration (**Lois
+promulguées**). L'administrateur décide loi par loi : « Créer la votation »
+pré-remplit le formulaire avec les seuls éléments factuels (titre, référence
+officielle, lien Légifrance), ou « Ignorer » écarte la loi. Les quatre blocs de
+présentation neutre restent vides : ils sont rédigés et validés par une personne,
+comme l'exige la charte du projet. Une décision d'ignorer une loi n'est jamais
+réécrite par les imports suivants.
+
+En cas d'indisponibilité de l'Assemblée nationale, l'import échoue **sans rien
+écraser** ; l'administration continue d'afficher la dernière liste connue.
+Import manuel : `python -m scripts.refresh_assemblee`.
+
+Réglages : `AN_DOSSIERS_URL` (le `17` de l'URL est la législature, à changer une
+fois par législature), `AN_IMPORT_SINCE` (ignorer les promulgations antérieures ;
+vide = tout l'historique) et `AN_REFRESH_INTERVAL` (cadence, 24 h par défaut).

@@ -2,7 +2,10 @@
 {% block title %}Administration — Votations Françaises{% endblock %}
 {% block content %}
 <h1>Administration</h1>
-<p><a class="button" href="/admin/lois/nouvelle">+ Nouvelle loi</a></p>
+<p>
+  <a class="button" href="/admin/lois/nouvelle">+ Nouvelle loi</a>
+  <a class="button" href="/admin/imports">Lois promulguées{% if pending_imports %} ({{ pending_imports }}){% endif %}</a>
+</p>
 
 {% if laws %}
 <table class="admin-table">

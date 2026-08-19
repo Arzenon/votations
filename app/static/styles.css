@@ -73,6 +73,10 @@ button:disabled, .button:disabled { background: #b6bdc9; cursor: not-allowed; }
 .status-closed { background: #fde7e7; color: var(--against); }
 .status-scheduled { background: #fff0d6; color: #8a5a00; }
 .status-draft { background: #eceff3; color: var(--muted); }
+/* Imported-law review states */
+.status-nouveau { background: #fff0d6; color: #8a5a00; }
+.status-importe { background: #e3f4e4; color: var(--for); }
+.status-ignore { background: #eceff3; color: var(--muted); }
 
 /* Law page blocks */
 .block { background: #fff; border: 1px solid var(--line); border-radius: var(--radius);

@@ -16,13 +16,18 @@ from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.crud import votes as votes_crud
 from app.db import get_db
-from app.models import AgeBracket, Sexe, VoteChoice
+from app.models import AgeBracket, Region, Sexe, VoteChoice
 from app.templating import templates
 
 router = APIRouter()
 
 AGE_BRACKETS = [b.value for b in AgeBracket]
 SEXES = [s.value for s in Sexe]
+REGIONS = [r.value for r in Region]
+
+
+def _demographic_form_context() -> dict:
+    return {"age_brackets": AGE_BRACKETS, "sexes": SEXES, "regions": REGIONS}
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -88,9 +93,8 @@ def law_page(
             "tally": tally,
             "evolution": evolution,
             "choices": list(VoteChoice),
-            "age_brackets": AGE_BRACKETS,
-            "sexes": SEXES,
             "demographics_locked": bool(existing and existing.demographics_recorded),
+            **_demographic_form_context(),
         },
     )
     # Carry over any Set-Cookie the auth provider issued.
@@ -107,6 +111,7 @@ def cast_vote(
     choice: str = Form(...),
     age_bracket: str = Form(""),
     sexe: str = Form(""),
+    region: str = Form(""),
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
@@ -128,7 +133,9 @@ def cast_vote(
         return RedirectResponse(f"/loi/{slug}", status_code=303)
 
     # Optional, anonymous: folded once into aggregate counters (no per-voter row).
-    demo_crud.record(db, vote=vote, choice=vote_choice, age_bracket=age_bracket, sexe=sexe)
+    demo_crud.record(
+        db, vote=vote, choice=vote_choice, age_bracket=age_bracket, sexe=sexe, region=region
+    )
 
     tally = results_crud.tally(db, law.id)
 
@@ -143,9 +150,8 @@ def cast_vote(
                 "existing_choice": vote_choice.value,
                 "tally": tally,
                 "choices": list(VoteChoice),
-                "age_brackets": AGE_BRACKETS,
-                "sexes": SEXES,
                 "demographics_locked": vote.demographics_recorded,
+                **_demographic_form_context(),
             },
         )
         for key, value in response.raw_headers:
@@ -174,6 +180,7 @@ def results_page(request: Request, slug: str, db: Session = Depends(get_db)):
             "tally": results_crud.tally(db, law.id),
             "evolution": results_crud.evolution(db, law.id),
             "breakdowns": demo_crud.all_breakdowns(db, law.id),
+            "provision": demo_crud.provision_rate(db, law.id),
         },
     )
 
@@ -208,18 +215,32 @@ def export_json(slug: str, db: Session = Depends(get_db)):
                 {
                     "dimension": bd.dimension,
                     "rows": [
-                        {"category": r.category, "counts": r.counts} for r in bd.rows
+                        {
+                            "category": r.category,
+                            "counts": r.counts,
+                            "share_pct": r.share,
+                            "reference_pct": r.reference,
+                        }
+                        for r in bd.rows
                     ],
                 }
             )
+    provision = demo_crud.provision_rate(db, law.id)
     return JSONResponse(
         {
             "law": {"id": law.id, "slug": law.slug, "title": law.title},
             "votes": results_crud.export_rows(db, law.id),
             "demographics": demographics,
+            "profile_provision": {
+                "total_votes": provision.total_votes,
+                "with_profile": provision.with_profile,
+                "percentage": provision.percentage,
+            },
             "demographics_note": (
                 "Répartitions agrégées uniquement, masquées sous le seuil "
-                "d'anonymat. Aucune ligne par votant·e."
+                "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
+                "de grandeur national INSEE (approx.), jamais utilisé pour "
+                "repondérer."
             ),
         }
     )

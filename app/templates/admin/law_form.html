@@ -1,21 +1,23 @@
 {% extends "base.html" %}
 {% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} — Administration{% endblock %}
 {% block content %}
+{# `law` when editing, `prefill` when creating from a staged import; `f` is whichever applies. #}
+{% set f = law or prefill %}
 <p class="breadcrumb"><a href="/admin">← Administration</a></p>
 <h1>{% if law %}Éditer la loi{% else %}Nouvelle loi{% endif %}</h1>
 
 <form class="law-form" method="post"
       action="{% if law %}/admin/lois/{{ law.id }}{% else %}/admin/lois{% endif %}">
   <label>Titre
-    <input type="text" name="title" required value="{{ law.title if law else '' }}">
+    <input type="text" name="title" required value="{{ f.title if f else '' }}">
   </label>
 
   <label>Référence officielle (JO / Légifrance)
-    <input type="text" name="official_ref" value="{{ law.official_ref if law and law.official_ref else '' }}">
+    <input type="text" name="official_ref" value="{{ (law.official_ref or '') if law else (prefill_ref or '') }}">
   </label>
 
   <label>URL Légifrance
-    <input type="url" name="legifrance_url" value="{{ law.legifrance_url if law and law.legifrance_url else '' }}">
+    <input type="url" name="legifrance_url" value="{{ (f.legifrance_url or '') if f else '' }}">
   </label>
 
   <label>Ce que dit la loi
@@ -49,6 +51,8 @@
     <input type="checkbox" name="published" value="1" {% if law and law.published %}checked{% endif %}>
     Publiée (visible publiquement)
   </label>
+
+  {% if prefill %}<input type="hidden" name="import_id" value="{{ prefill.id }}">{% endif %}
 
   <button type="submit">Enregistrer</button>
 </form>

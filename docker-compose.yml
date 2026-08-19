@@ -41,5 +41,40 @@ services:
     command:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
+  # Annual refresh of INSEE reference shares (containerised cron). Reuses the app
+  # image but bypasses the app entrypoint (no migrations/seed) — it only loops the
+  # refresh job. Writes into the shared DB; the app reads the cached values.
+  insee-refresh:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
+      INSEE_REFRESH_INTERVAL: "2592000"   # 30 days
+      # INSEE_API_KEY: ""                 # optional; the dataset is open
+    entrypoint: ["./docker/insee_cron.sh"]
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+
+  # Daily import of newly promulgated laws from the Assemblée nationale open data
+  # (containerised cron). Reuses the app image but bypasses the app entrypoint (no
+  # migrations/seed) — it only loops the import job. Rows land in a staging table
+  # and are never published without an admin action.
+  assemblee-refresh:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
+      AN_REFRESH_INTERVAL: "86400"        # 24 hours
+      # AN_IMPORT_SINCE: "2026-01-01"     # empty imports the full backlog
+    entrypoint: ["./docker/assemblee_cron.sh"]
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+
 volumes:
   pgdata:

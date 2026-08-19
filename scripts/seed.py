@@ -117,6 +117,13 @@ SAMPLE_LAWS = [
                 "femme": {"for": 110, "against": 92, "abstain": 25},
                 "homme": {"for": 103, "against": 81, "abstain": 18},
             },
+            "region": {
+                "Île-de-France": {"for": 30, "against": 14, "abstain": 11},
+                "Auvergne-Rhône-Alpes": {"for": 24, "against": 22, "abstain": 10},
+                "Nouvelle-Aquitaine": {"for": 18, "against": 28, "abstain": 10},
+                "Occitanie": {"for": 16, "against": 30, "abstain": 12},
+                "Hauts-de-France": {"for": 14, "against": 26, "abstain": 11},
+            },
         },
     },
     {
@@ -195,6 +202,17 @@ def _seed_demographics(db, law: Law, data: dict) -> None:
                         count=count,
                     )
                 )
+
+    # Keep the profile-provision rate coherent with the seeded counters: mark
+    # `n` votes as having shared a profile, where n is the largest dimension total
+    # (i.e. assume everyone who shared anything shared at least their age).
+    n = max(
+        sum(c for choices in categories.values() for c in choices.values())
+        for categories in data.values()
+    )
+    votes = db.query(Vote).filter_by(law_id=law.id).limit(n).all()
+    for v in votes:
+        v.demographics_recorded = True
 
 
 def main() -> None:
