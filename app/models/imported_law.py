@@ -14,7 +14,16 @@ no personal data.
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -58,11 +67,22 @@ class ImportedLaw(Base):
     nor: Mapped[str | None] = mapped_column(String(32), default=None)
     legifrance_url: Mapped[str | None] = mapped_column(String(1000), default=None)
     dossier_url: Mapped[str] = mapped_column(String(1000), default="")
+    # Sittings where the text was debated: [{"reunion_ref", "odj_ref", "date"}].
+    # The join key to the comptes rendus, for sourcing attributed arguments.
+    seances: Mapped[list] = mapped_column(JSON, default=list)
 
     # Review state, owned by the admin and never overwritten by the import job.
     status: Mapped[str] = mapped_column(String(16), default=STATUS_NEW)
     law_id: Mapped[int | None] = mapped_column(
         ForeignKey("laws.id", ondelete="SET NULL"), default=None
+    )
+
+    # The last AI draft produced for this law, kept so reopening it costs nothing:
+    # {summary_text, practical_changes, arguments_for, arguments_against, notes, eli_url}.
+    # Generating is billable, so it happens once unless explicitly regenerated.
+    draft: Mapped[dict | None] = mapped_column(JSON, default=None)
+    drafted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
     )
 
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

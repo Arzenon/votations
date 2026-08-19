@@ -1,59 +1,133 @@
 {% extends "base.html" %}
+{% block body_class %}admin-wide{% endblock %}
 {% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} — Administration{% endblock %}
 {% block content %}
-{# `law` when editing, `prefill` when creating from a staged import; `f` is whichever applies. #}
-{% set f = law or prefill %}
-<p class="breadcrumb"><a href="/admin">← Administration</a></p>
+<p class="breadcrumb">
+  <a href="/admin">← Administration</a>
+  {% if prefill %} · <a href="/admin/imports">Lois promulguées</a>{% endif %}
+</p>
+{% if prefill and ai_enabled %}
+{# Above the fold: the draft is the first thing you want on a freshly imported law.
+   `form=` attaches these to the form below, so they still post what is already
+   typed — the draft route only fills fields left empty. #}
+<div class="draft-actions">
+  <button type="submit" class="secondary" form="law-form" formnovalidate
+          formaction="/admin/imports/{{ prefill.id }}/brouillon">
+    {% if has_draft %}Revoir le brouillon IA{% else %}Proposer un brouillon IA{% endif %}
+  </button>
+  {% if has_draft %}
+    <button type="submit" class="secondary" form="law-form" formnovalidate
+            name="regenerer" value="1"
+            formaction="/admin/imports/{{ prefill.id }}/brouillon"
+            onclick="return confirm('Régénérer appelle le modèle et sera facturé. Continuer ?');">
+      Régénérer
+    </button>
+  {% endif %}
+</div>
+{% endif %}
+
 <h1>{% if law %}Éditer la loi{% else %}Nouvelle loi{% endif %}</h1>
 
-<form class="law-form" method="post"
+{% if prefill %}
+<p class="sources">
+  <strong>LOI n° {{ prefill.law_code }}</strong>
+  — promulguée le {{ prefill.promulgated_on.strftime('%d/%m/%Y') }}
+  {% if prefill.jo_number %}· JO n° {{ prefill.jo_number }}{% endif %}
+  <br>
+  <a href="{{ prefill.dossier_url }}" rel="noopener" target="_blank">Dossier Assemblée nationale</a>
+  {% if values.legifrance_url %}
+    · <a href="{{ values.legifrance_url }}" rel="noopener" target="_blank">Texte sur Légifrance</a>
+  {% endif %}
+  {% if prefill.seances %}· {{ prefill.seances | length }} séance(s) publique(s){% endif %}
+</p>
+{% endif %}
+
+{% if drafted_at %}
+<p class="disclaimer">
+  <strong>Brouillon généré par IA</strong> le {{ drafted_at.strftime('%d/%m/%Y à %H:%M') }},
+  conservé pour ne pas être refacturé. Les blocs factuels sont rédigés à partir du texte
+  officiel ; les arguments sont <strong>cités mot pour mot</strong> des comptes rendus de
+  séance, auteur et lien compris. Rien n'a été vérifié : relisez avant publication.
+</p>
+{% endif %}
+
+{% if argument_notes %}
+<ul class="disclaimer">
+  {% for note in argument_notes %}<li>{{ note }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if reserves %}
+<section class="reserves">
+  <h2>Réserves exprimées</h2>
+  <p>
+    Critiques du texte formulées par des orateurs qui ne s'y sont
+    <strong>pas opposés</strong>. Ce ne sont pas des arguments d'opposants : elles ne
+    sont pas pré-remplies dans le formulaire. Reprenez-les si vous le jugez utile, en
+    indiquant clairement la position de leur auteur.
+  </p>
+  <ul>
+    {% for r in reserves %}
+    <li>
+      <blockquote>« {{ r.text }} »</blockquote>
+      <p class="attrib">
+        {{ r.author }}
+        {% if r.source %}· <a href="{{ r.source }}" rel="noopener" target="_blank">compte rendu</a>{% endif %}
+      </p>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<form class="law-form" id="law-form" method="post"
       action="{% if law %}/admin/lois/{{ law.id }}{% else %}/admin/lois{% endif %}">
   <label>Titre
-    <input type="text" name="title" required value="{{ f.title if f else '' }}">
+    <input type="text" name="title" required value="{{ values.title }}">
   </label>
 
   <label>Référence officielle (JO / Légifrance)
-    <input type="text" name="official_ref" value="{{ (law.official_ref or '') if law else (prefill_ref or '') }}">
+    <input type="text" name="official_ref" value="{{ values.official_ref }}">
   </label>
 
   <label>URL Légifrance
-    <input type="url" name="legifrance_url" value="{{ (f.legifrance_url or '') if f else '' }}">
+    <input type="url" name="legifrance_url" value="{{ values.legifrance_url }}">
   </label>
 
   <label>Ce que dit la loi
-    <textarea name="summary_text" rows="4">{{ law.summary_text if law else '' }}</textarea>
+    <textarea name="summary_text" rows="10">{{ values.summary_text }}</textarea>
   </label>
 
   <label>Ce que ça change en pratique
-    <textarea name="practical_changes" rows="4">{{ law.practical_changes if law else '' }}</textarea>
+    <textarea name="practical_changes" rows="10">{{ values.practical_changes }}</textarea>
   </label>
 
   <label>Arguments des partisans (JSON : [{"text":"…","author":"…","source":"…"}])
-    <textarea name="arguments_for" rows="4">{{ law.arguments_for | tojson if law else '[]' }}</textarea>
+    <textarea name="arguments_for" rows="10">{{ values.arguments_for | readable_json }}</textarea>
   </label>
 
   <label>Arguments des opposants (JSON : [{"text":"…","author":"…","source":"…"}])
-    <textarea name="arguments_against" rows="4">{{ law.arguments_against | tojson if law else '[]' }}</textarea>
+    <textarea name="arguments_against" rows="10">{{ values.arguments_against | readable_json }}</textarea>
   </label>
 
   <div class="form-row">
     <label>Ouverture du vote
-      <input type="datetime-local" name="opens_at"
-             value="{{ law.opens_at.strftime('%Y-%m-%dT%H:%M') if law and law.opens_at else '' }}">
+      <input type="datetime-local" name="opens_at" value="{{ values.opens_at }}">
     </label>
     <label>Clôture du vote
-      <input type="datetime-local" name="closes_at"
-             value="{{ law.closes_at.strftime('%Y-%m-%dT%H:%M') if law and law.closes_at else '' }}">
+      <input type="datetime-local" name="closes_at" value="{{ values.closes_at }}">
     </label>
   </div>
 
   <label class="checkbox">
-    <input type="checkbox" name="published" value="1" {% if law and law.published %}checked{% endif %}>
+    <input type="checkbox" name="published" value="1" {% if values.published %}checked{% endif %}>
     Publiée (visible publiquement)
   </label>
 
   {% if prefill %}<input type="hidden" name="import_id" value="{{ prefill.id }}">{% endif %}
 
-  <button type="submit">Enregistrer</button>
+  <div class="form-actions">
+    <button type="submit">Enregistrer</button>
+  </div>
 </form>
 {% endblock %}

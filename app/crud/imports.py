@@ -31,6 +31,7 @@ _REFRESHED = (
     "nor",
     "legifrance_url",
     "dossier_url",
+    "seances",
 )
 
 
@@ -95,6 +96,15 @@ def set_status(
 ) -> ImportedLaw:
     item.status = status
     item.law_id = law_id
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def save_draft(db: Session, item: ImportedLaw, *, draft: dict) -> ImportedLaw:
+    """Keep a generated draft so reopening it never bills a second time."""
+    item.draft = draft
+    item.drafted_at = datetime.now(UTC)
     db.commit()
     db.refresh(item)
     return item

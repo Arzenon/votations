@@ -41,6 +41,34 @@ class Settings(BaseSettings):
     # backlog — 141 laws back to the 15th legislature at the time of writing.
     an_import_since: str = "2026-01-01"
 
+    # Journal Officiel open data (DILA). Daily incremental archives of the JO,
+    # Licence Ouverte and no authentication; used to fetch the official text of a
+    # promulgated law on demand, keyed on its NOR. Only ~13 months are retained.
+    jorf_dumps_url: str = "https://echanges.dila.gouv.fr/OPENDATA/JORFSIMPLE/"
+
+    # AI-assisted drafting of the two factual presentation blocks. Optional: with
+    # no key the feature is simply absent from the admin. Drafts are never
+    # generated automatically and never stored — a human edits and validates.
+    anthropic_api_key: str = ""
+    ai_model: str = "claude-opus-5"
+    # Refuse to send anything larger, rather than silently spending on an outlier
+    # (a loi de finances can be far bigger than an ordinary law).
+    ai_max_input_tokens: int = 150000
+    # Thinking tokens bill as output. Summarising and quoting do not need deep
+    # reasoning, so "medium" roughly halves the cost of a draft; raise it if the
+    # drafts read as shallow.
+    ai_effort: str = "medium"
+    # Interventions sent when selecting arguments. The biggest debates run to 86
+    # speeches; the longest are the substantive ones, so a cap trims cost far more
+    # than it trims quality.
+    ai_max_speeches: int = 40
+    # Candidate arguments proposed per side. These are a pool to choose from, not
+    # what gets published: extra quotes cost output tokens only (cents), while a
+    # public page with five arguments a side is a lot to read. Curate before saving.
+    ai_arguments_per_side: int = 5
+    # Réserves are supplementary information, so they stay tighter.
+    ai_reserves_max: int = 3
+
 
 @lru_cache
 def get_settings() -> Settings:

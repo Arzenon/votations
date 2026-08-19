@@ -15,11 +15,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
+from app.ai import AiDraftError, LawDraft, SelectedArguments, generate_draft, select_arguments
 from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import get_db
+from app.debates import DebatesFetchError, fetch_speeches
+from app.legifrance import LegifranceFetchError, fetch_law_text
 from app.models import STATUS_IGNORED, STATUS_IMPORTED, STATUS_NEW
 from app.templating import templates
 
@@ -89,6 +92,76 @@ def _official_ref(item) -> str:
     return f"LOI n° {item.law_code} du {_french_date(item.promulgated_on)}"
 
 
+def _dt_local(value: datetime | None) -> str:
+    return value.strftime("%Y-%m-%dT%H:%M") if value else ""
+
+
+def _form_values(
+    *,
+    law=None,
+    prefill=None,
+    draft: LawDraft | None = None,
+    arguments: SelectedArguments | None = None,
+    typed: dict | None = None,
+    eli_url: str = "",
+) -> dict:
+    """What each field of the law form should show.
+
+    Precedence is always: what the admin typed, then an AI draft, then the staged
+    import, then empty — so regenerating a draft never discards edits in progress.
+    """
+    typed = {k: v for k, v in (typed or {}).items() if v}
+    if law is not None:
+        base = {
+            "title": law.title,
+            "official_ref": law.official_ref or "",
+            "legifrance_url": law.legifrance_url or "",
+            "summary_text": law.summary_text,
+            "practical_changes": law.practical_changes,
+            "arguments_for": law.arguments_for,
+            "arguments_against": law.arguments_against,
+            "opens_at": _dt_local(law.opens_at),
+            "closes_at": _dt_local(law.closes_at),
+            "published": law.published,
+        }
+    else:
+        base = {
+            "title": prefill.title if prefill else "",
+            "official_ref": _official_ref(prefill) if prefill else "",
+            # The Journal Officiel's ELI link outlives the one the AN publishes.
+            "legifrance_url": eli_url or (prefill.legifrance_url if prefill else "") or "",
+            "summary_text": draft.summary_text if draft else "",
+            "practical_changes": draft.practical_changes if draft else "",
+            "arguments_for": arguments.pour if arguments else [],
+            "arguments_against": arguments.contre if arguments else [],
+            "opens_at": "",
+            "closes_at": "",
+            "published": False,
+        }
+    base.update(typed)
+    return base
+
+
+def _cached_draft(item):
+    """Rehydrate a stored draft. Returns (draft, arguments, notes, eli_url)."""
+    cached = getattr(item, "draft", None) if item else None
+    if not cached:
+        return None, None, [], ""
+    return (
+        LawDraft(
+            summary_text=cached.get("summary_text", ""),
+            practical_changes=cached.get("practical_changes", ""),
+        ),
+        SelectedArguments(
+            pour=cached.get("arguments_for") or [],
+            contre=cached.get("arguments_against") or [],
+            reserves=cached.get("reserves") or [],
+        ),
+        list(cached.get("notes") or []),
+        cached.get("eli_url") or "",
+    )
+
+
 @router.get("", response_class=HTMLResponse)
 def dashboard(request: Request, _: str = Depends(require_admin), db: Session = Depends(get_db)):
     items = laws_crud.list_all(db)
@@ -113,13 +186,23 @@ def new_law_form(
     prefill = imports_crud.get_by_id(db, import_id) if import_id else None
     if import_id and prefill is None:
         raise HTTPException(404)
+    # A draft already generated for this law is shown straight away: it has been
+    # paid for, and hiding it behind another click helps nobody.
+    draft, arguments, notes, eli_url = _cached_draft(prefill)
     return templates.TemplateResponse(
         request,
         "admin/law_form.html",
         {
             "law": None,
             "prefill": prefill,
-            "prefill_ref": _official_ref(prefill) if prefill else "",
+            "values": _form_values(
+                prefill=prefill, draft=draft, arguments=arguments, eli_url=eli_url
+            ),
+            "drafted_at": prefill.drafted_at if prefill else None,
+            "argument_notes": notes,
+            "reserves": arguments.reserves if arguments else [],
+            "has_draft": bool(prefill and prefill.draft),
+            "ai_enabled": bool(get_settings().anthropic_api_key),
         },
     )
 
@@ -132,7 +215,18 @@ def edit_law_form(
     if law is None:
         raise HTTPException(404)
     return templates.TemplateResponse(
-        request, "admin/law_form.html", {"law": law, "prefill": None, "prefill_ref": ""}
+        request,
+        "admin/law_form.html",
+        {
+            "law": law,
+            "prefill": None,
+            "values": _form_values(law=law),
+            "drafted_at": None,
+            "argument_notes": [],
+            "reserves": [],
+            "has_draft": False,
+            "ai_enabled": False,
+        },
     )
 
 
@@ -221,6 +315,7 @@ def delete_law(law_id: int, _: str = Depends(require_admin), db: Session = Depen
 def imports_list(
     request: Request,
     statut: str = "nouveau",
+    error: str | None = None,
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -234,6 +329,8 @@ def imports_list(
             "items": items,
             "statut": statut,
             "pending_imports": imports_crud.count_new(db),
+            "ai_enabled": bool(get_settings().anthropic_api_key),
+            "error": error,
         },
     )
 
@@ -258,3 +355,99 @@ def restore_import(
         raise HTTPException(404)
     imports_crud.set_status(db, item, status=STATUS_NEW)
     return RedirectResponse("/admin/imports?statut=tous", status_code=303)
+
+
+@router.post("/imports/{item_id}/brouillon", response_class=HTMLResponse)
+def draft_import(
+    request: Request,
+    item_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+    regenerer: str = Form(""),
+    title: str = Form(""),
+    summary_text: str = Form(""),
+    practical_changes: str = Form(""),
+    arguments_for: str = Form(""),
+    arguments_against: str = Form(""),
+    opens_at: str = Form(""),
+    closes_at: str = Form(""),
+):
+    """Draft the presentation from the official text and the sitting records.
+
+    Generating is billable, so a draft is produced once and stored on the staged
+    row; reopening it costs nothing. Only « Régénérer » calls the model again.
+    """
+    item = imports_crud.get_by_id(db, item_id)
+    if item is None:
+        raise HTTPException(404)
+
+    typed = {
+        "title": title.strip(),
+        "summary_text": summary_text.strip(),
+        "practical_changes": practical_changes.strip(),
+        "arguments_for": _parse_arguments(arguments_for),
+        "arguments_against": _parse_arguments(arguments_against),
+        "opens_at": opens_at,
+        "closes_at": closes_at,
+    }
+
+    def render(draft, arguments, notes, eli_url):
+        return templates.TemplateResponse(
+            request,
+            "admin/law_form.html",
+            {
+                "law": None,
+                "prefill": item,
+                "values": _form_values(
+                    prefill=item, draft=draft, arguments=arguments,
+                    typed=typed, eli_url=eli_url,
+                ),
+                "drafted_at": item.drafted_at,
+                "argument_notes": notes,
+                "reserves": arguments.reserves if arguments else [],
+                "has_draft": bool(item.draft),
+                "ai_enabled": bool(get_settings().anthropic_api_key),
+            },
+        )
+
+    def failed(message: str):
+        # Keep the admin on the form with their work intact, rather than bouncing
+        # them back to the list and losing it.
+        return render(None, None, [message], "")
+
+    if item.draft and not regenerer:
+        return render(*_cached_draft(item))
+
+    if not (item.nor and item.jo_date):
+        return failed(f"LOI n° {item.law_code} : référence NOR ou date JO manquante.")
+    try:
+        law_text = fetch_law_text(item.nor, item.jo_date)
+        draft = generate_draft(law_text)
+    except (LegifranceFetchError, AiDraftError) as exc:
+        return failed(f"LOI n° {item.law_code} : {exc}")
+
+    # Arguments are best-effort: the factual blocks are worth having on their own,
+    # so a sitting record that cannot be read must not lose them.
+    arguments, notes = None, []
+    if not item.seances:
+        notes.append(
+            "Aucune séance publique enregistrée pour ce texte : les arguments sont "
+            "à rédiger et à sourcer à la main."
+        )
+    else:
+        try:
+            arguments = select_arguments(law_text, fetch_speeches(item.seances))
+            notes = list(arguments.notes)
+        except (DebatesFetchError, AiDraftError) as exc:
+            notes.append(f"Arguments non proposés : {exc}")
+
+    imports_crud.save_draft(db, item, draft={
+        "summary_text": draft.summary_text,
+        "practical_changes": draft.practical_changes,
+        "arguments_for": arguments.pour if arguments else [],
+        "arguments_against": arguments.contre if arguments else [],
+        "reserves": arguments.reserves if arguments else [],
+        "notes": notes,
+        "eli_url": law_text.eli_url or "",
+    })
+    return render(draft, arguments, notes, law_text.eli_url or "")

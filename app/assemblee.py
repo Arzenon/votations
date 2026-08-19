@@ -21,7 +21,7 @@ import io
 import json
 import zipfile
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 import httpx
@@ -35,6 +35,11 @@ DOSSIER_PREFIX = "json/dossierParlementaire/"
 # The act that records promulgation and carries the law number and JO reference.
 # A sibling "PROM" act exists but its dateActe is always null.
 PROMULGATION_ACTE = "PROM-PUB"
+
+# Acts recording a sitting where the text was discussed. Each carries the sitting
+# (reunionRef) and the agenda item within it (odjRef) — together they identify
+# which part of which compte rendu concerns this law.
+SEANCE_ACTE = "AN1-DEBATS-SEANCE"
 
 AN_DOSSIER_URL_TEMPLATE = "https://www.assemblee-nationale.fr/dyn/{legislature}/dossiers/{uid}"
 
@@ -59,6 +64,9 @@ class PromulgatedLaw:
     nor: str | None       # NOR reference — the join key to Légifrance
     legifrance_url: str | None
     dossier_url: str
+    # [{"reunion_ref": ..., "odj_ref": ...}] — the sittings where the text was
+    # debated, in chronological order. Empty for a text adopted without debate.
+    seances: list[dict] = field(default_factory=list)
 
 
 Getter = Callable[[str], bytes]
@@ -91,6 +99,23 @@ def _iter_actes(node: object) -> Iterator[dict]:
         yield acte
         # `actesLegislatifs` may be present but null, so coalesce before indexing.
         yield from _iter_actes((acte.get("actesLegislatifs") or {}).get("acteLegislatif"))
+
+
+def _seances(dossier: dict) -> list[dict]:
+    """Sittings where the text was discussed, oldest first, without duplicates."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict] = []
+    actes = dossier.get("actesLegislatifs") or {}
+    for acte in _iter_actes(actes.get("acteLegislatif")):
+        if acte.get("codeActe") != SEANCE_ACTE:
+            continue
+        reunion, odj = acte.get("reunionRef"), acte.get("odjRef")
+        if not (reunion and odj) or (reunion, odj) in seen:
+            continue
+        seen.add((reunion, odj))
+        out.append({"reunion_ref": reunion, "odj_ref": odj, "date": acte.get("dateActe") or ""})
+    out.sort(key=lambda s: s["date"])
+    return out
 
 
 def _find_promulgation(dossier: dict) -> dict | None:
@@ -134,6 +159,7 @@ def _build(dossier: dict, acte: dict) -> PromulgatedLaw | None:
         nor=info_jo.get("referenceNOR"),
         legifrance_url=info_jo.get("urlLegifrance"),
         dossier_url=AN_DOSSIER_URL_TEMPLATE.format(legislature=legislature, uid=uid),
+        seances=_seances(dossier),
     )
 
 

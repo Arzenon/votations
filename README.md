@@ -57,6 +57,9 @@ app/
   auth/              Couche d'authentification enfichable (voir ci-dessous)
   routes/            public, admin, auth
   assemblee.py       Import des lois promulguées (données ouvertes AN)
+  legifrance.py      Texte officiel d'une loi (données ouvertes JO/DILA)
+  ai.py              Brouillon IA : blocs factuels + sélection d'arguments
+  debates.py         Interventions attribuées en séance (données ouvertes AN)
   templates/         base, home, law, results, search, connexion, admin/*
   static/            CSS minimal + htmx
 alembic/             Migrations
@@ -166,3 +169,118 @@ Import manuel : `python -m scripts.refresh_assemblee`.
 Réglages : `AN_DOSSIERS_URL` (le `17` de l'URL est la législature, à changer une
 fois par législature), `AN_IMPORT_SINCE` (ignorer les promulgations antérieures ;
 vide = tout l'historique) et `AN_REFRESH_INTERVAL` (cadence, 24 h par défaut).
+
+### Texte officiel des lois (Journal Officiel)
+
+`app/legifrance.py` récupère le **texte officiel** d'une loi promulguée à partir
+des archives quotidiennes du Journal Officiel publiées par la DILA
+(`echanges.dila.gouv.fr`, Licence Ouverte, sans authentification) :
+
+```python
+from app.legifrance import fetch_law_text
+loi = fetch_law_text(nor="SFHX2609544L", jo_date=date(2026, 7, 28))
+loi.title, loi.articles, loi.eli_url, loi.plain_text
+```
+
+La clé de jointure est le **NOR**, déjà stocké par l'import de l'Assemblée
+nationale ; la date de publication au JO indique quelle archive quotidienne
+télécharger. Les archives du matin (quelques centaines de ko) contiennent
+généralement les textes du jour ; à défaut, celle du soir puis celle du lendemain
+sont essayées.
+
+Le texte n'est **jamais stocké** : une loi peut atteindre 230 000 caractères, et
+il est récupérable à la demande en moins d'une seconde. La fonction renvoie aussi
+l'URL ELI canonique (`.../eli/loi/2026/7/27/2026-668/jo/texte`), plus durable que
+le lien hérité fourni par l'Assemblée nationale.
+
+Limite connue : les archives quotidiennes ne remontent qu'à environ treize mois.
+Au-delà, il faudrait l'archive de base complète (~1 Go) ou l'API Légifrance via
+PISTE (qui exige un compte et des identifiants OAuth).
+
+Réglage : `JORF_DUMPS_URL`.
+
+### Brouillon IA (facultatif)
+
+Depuis la page **Lois promulguées**, le bouton « Brouillon IA » récupère le texte
+officiel au Journal Officiel et propose un premier jet de **deux** blocs :
+
+- « Ce que dit la loi » — résumé factuel du texte officiel ;
+- « Ce que ça change en pratique » — conséquences concrètes, en langage accessible.
+
+Le même bouton propose aussi les **arguments des partisans et des opposants**,
+mais d'une manière radicalement différente : ils ne sont pas rédigés, ils sont
+**cités**. Le Journal Officiel ne contient aucun matériau argumentatif, mais les
+comptes rendus des séances publiques en contiennent — des positions défendues par
+des parlementaires nommés, en séance, dans un document public.
+
+Le modèle ne rédige rien : il renvoie l'identifiant d'une intervention et le
+passage qu'il prétend en avoir copié. Le passage est ensuite **vérifié caractère
+par caractère** contre l'intervention citée ; s'il ne s'y trouve pas, il est
+écarté. Une citation inventée échoue à une comparaison de chaînes avant que
+quiconque la voie.
+
+L'attribution ne vient jamais du modèle : l'orateur, la date et le lien sont
+recopiés depuis le compte rendu récupéré. Le modèle ne peut donc pas attribuer
+une vraie citation à la mauvaise personne, puisqu'il ne fournit aucun nom.
+
+**Le déséquilibre est signalé, jamais comblé.** Certains textes — les
+ratifications de traités en particulier — sont adoptés sans opposition. Renvoyer
+un bloc « contre » vide avec une note est exact ; fabriquer une objection pour
+remplir la case ne l'est pas. L'écart est signalé à l'administrateur, qui
+tranche.
+
+**Les réserves sont distinguées des oppositions.** Un texte peut être adopté sans
+qu'aucun orateur ne s'y oppose, tout en étant critiqué par des parlementaires qui
+le votent malgré tout (« nous voterons ce texte, mais il manque les moyens »).
+Classer ces critiques en « arguments des opposants » trahirait leurs auteurs ; les
+taire priverait le lecteur d'une information réelle. Elles sont donc extraites
+dans une catégorie à part, **affichées sous le formulaire à titre indicatif et
+jamais pré-remplies** dans les blocs d'arguments : à l'administrateur de décider
+s'il les reprend, en indiquant clairement la position de leur auteur. Elles
+obéissent à la même vérification mot pour mot que les arguments.
+
+Garde-fous :
+
+- **Déclenchement manuel uniquement.** Aucun brouillon n'est généré par le cron ;
+  la dépense suit les clics, jamais l'import.
+- **Un brouillon n'est facturé qu'une fois.** Il est conservé sur la loi importée
+  (colonne `draft`) et réaffiché tel quel à chaque réouverture, y compris après un
+  redémarrage. Seul le bouton « Régénérer », qui demande confirmation, rappelle le
+  modèle.
+- **Vos saisies l'emportent.** Un champ déjà rempli à la main n'est jamais écrasé
+  par un brouillon ; seuls les champs vides sont complétés.
+- **Publication séparée.** Le brouillon reste sur le formulaire : il n'entre dans
+  la table des lois que si vous l'enregistrez, après relecture.
+- **Rien n'est publié.** Le formulaire arrive avec « Publiée » décoché, et un
+  bandeau rappelle que le texte n'a pas été vérifié.
+- **Taille mesurée avant l'appel** (`AI_MAX_INPUT_TOKENS`) : un texte hors norme
+  est refusé plutôt que facturé silencieusement ; le corpus des interventions est
+  tronqué à la même limite, et la troncature est signalée.
+- **Les arguments sont facultatifs** : si les comptes rendus sont illisibles ou
+  si le texte n'a fait l'objet d'aucune séance, les blocs factuels sont tout de
+  même proposés, avec une note expliquant l'absence.
+- **Sans `ANTHROPIC_API_KEY`, la fonctionnalité est absente** : le bouton ne
+  s'affiche pas et aucun appel n'est possible.
+
+Ordre de grandeur, mesuré : un brouillon complet enchaîne deux appels (résumé
+factuel, puis sélection d'arguments) et les jetons de raisonnement sont facturés en
+sortie. Une loi médiane revient à quelques dizaines de centimes ; la plus
+volumineuse du corpus (programmation militaire : 232 000 caractères de texte et 86
+interventions) a coûté **1,20 $** avant réglage. `AI_EFFORT=medium` et
+`AI_MAX_SPEECHES` ramènent nettement ce plafond, et le cache garantit qu'une loi
+n'est facturée qu'une fois.
+
+Les arguments proposés sont un **vivier à trier**, pas ce qui sera publié :
+`AI_ARGUMENTS_PER_SIDE` (défaut 5) est un plafond, atteint seulement si les débats
+fournissent autant de passages réellement argumentés. Cinq arguments par camp font
+beaucoup à lire pour un citoyen : réduisez avant d'enregistrer.
+
+Réglages : `ANTHROPIC_API_KEY`, `AI_MODEL` (défaut `claude-opus-5`),
+`AI_EFFORT` (défaut `medium` — à monter si les brouillons paraissent superficiels),
+`AI_MAX_INPUT_TOKENS`, `AI_MAX_SPEECHES` (interventions envoyées au modèle),
+`AI_ARGUMENTS_PER_SIDE`, `AI_RESERVES_MAX`.
+
+Les séances où un texte a été discuté sont enregistrées à l'import (colonne
+`seances`) : la référence de la réunion et celle du point à l'ordre du jour. Une
+séance pouvant examiner plusieurs textes, c'est ce point qui garantit qu'aucun
+argument portant sur une autre loi ne se glisse dans la présentation.

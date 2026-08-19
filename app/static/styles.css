@@ -140,3 +140,47 @@ th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(
 @media (max-width: 640px) {
   .arguments, .law-form .form-row { grid-template-columns: 1fr; }
 }
+
+
+/* --- Administration: use the full window width ---------------------------- */
+/* The admin edits long legal text and JSON side by side, so the reading-width
+   cap that suits public pages only gets in the way here. */
+body.admin-wide .container { max-width: none; padding: 0 1.5rem; }
+body.admin-wide .law-form { max-width: none; }
+body.admin-wide .admin-table { width: 100%; }
+body.admin-wide textarea { width: 100%; resize: vertical; }
+
+/* Provenance strip above the law form. */
+.sources {
+  background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.7rem 0.9rem; font-size: 0.92rem; line-height: 1.7;
+}
+.sources a { white-space: nowrap; }
+
+/* Drafting actions sit above the title, where you reach for them first. */
+.draft-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.6rem 0 0.2rem; }
+.draft-actions button { font-size: 0.95rem; }
+
+/* Save next to the drafting actions. */
+.form-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.draft-actions button.secondary,
+.form-actions button.secondary {
+  background: #fff; color: var(--blue); border: 1px solid var(--blue);
+}
+.draft-actions button.secondary:hover,
+.form-actions button.secondary:hover { background: #eef2fb; }
+
+
+/* Reservations: shown for information, deliberately not editable and never
+   pre-filled into the argument blocks — a supporter's misgiving is not opposition. */
+.reserves {
+  background: #fff; border: 1px solid var(--line); border-left: 3px solid #8a5a00;
+  border-radius: var(--radius); padding: 0.9rem 1.1rem; margin: 1rem 0;
+}
+.reserves h2 { margin: 0 0 0.3rem; font-size: 1.05rem; }
+.reserves > p { margin: 0 0 0.7rem; font-size: 0.9rem; color: var(--muted); }
+.reserves ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.8rem; }
+.reserves blockquote {
+  margin: 0; font-style: italic; border-left: 2px solid var(--line); padding-left: 0.8rem;
+}
+.reserves .attrib { margin: 0.25rem 0 0 0.8rem; font-size: 0.85rem; color: var(--muted); }

@@ -28,6 +28,9 @@ services:
       ADMIN_PASSWORD: change-me
       MIN_BUCKET_VOLUME: "50"
       MIN_CELL_COUNT: "10"
+      # Optional: enables the AI draft button in the admin. Read from your .env
+      # (or the host environment); with no key the feature is simply absent.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       # Seed sample laws on startup (set to 0 to disable).
       SEED_ON_START: "1"
     ports:
