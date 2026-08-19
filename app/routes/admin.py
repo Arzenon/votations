@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import secrets
 from datetime import date, datetime
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -26,7 +27,39 @@ from app.legifrance import LegifranceFetchError, fetch_law_text
 from app.models import STATUS_IGNORED, STATUS_IMPORTED, STATUS_NEW
 from app.templating import templates
 
-router = APIRouter(prefix="/admin")
+
+def _origin(url: str) -> tuple[str, str]:
+    """(scheme, host:port) — the only part of a URL that identifies a site."""
+    parts = urlsplit(url)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
+def require_same_origin(request: Request) -> None:
+    """Reject state-changing admin requests that came from another site.
+
+    HTTP Basic credentials are attached by the browser on cross-site requests
+    regardless of SameSite, so a page the admin visits while authenticated could
+    otherwise POST here — deleting a law and its votes. Comparing the request's
+    own host to Origin (falling back to Referer) closes that without a session
+    rewrite. Requests with neither header are not browser form posts (curl, the
+    test client) and are left alone.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    stated = request.headers.get("origin") or request.headers.get("referer")
+    if not stated:
+        return
+    # Compare parsed origins, never string prefixes: "http://site.evil.example"
+    # starts with "http://site" and would otherwise sail through.
+    if _origin(stated) != _origin(str(request.base_url)):
+        raise HTTPException(
+            status_code=403,
+            detail="Requête refusée : elle ne provient pas de ce site.",
+        )
+
+
+# Every admin route inherits the check; it is a no-op on reads.
+router = APIRouter(prefix="/admin", dependencies=[Depends(require_same_origin)])
 
 # RFC 7617 makes `realm` mandatory in a Basic challenge. Chrome tolerates its
 # absence and prompts anyway; Firefox does not, and shows the bare 401 body

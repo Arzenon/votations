@@ -1,0 +1,115 @@
+# Production stack. Differs from docker-compose.yml deliberately:
+#   · no bind mounts and no --reload — the image you built is what runs
+#   · no seeding — sample laws must never reach a live civic platform
+#   · Postgres is not published; only Caddy is reachable from outside
+#   · every service restarts on its own, and the app declares a healthcheck
+#
+# Secrets come from the environment (or a .env beside this file, which is
+# gitignored). See DEPLOY.md — the app refuses to start on placeholder values.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: votations
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}
+      POSTGRES_DB: votations
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U votations"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
+      SECRET_KEY: ${SECRET_KEY:?définissez SECRET_KEY — voir DEPLOY.md}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?définissez ADMIN_PASSWORD}
+      COOKIE_SECURE: "true"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      MIN_BUCKET_VOLUME: "50"
+      MIN_CELL_COUNT: "10"
+      # SEED_ON_START is deliberately absent: it defaults to 0.
+    # --no-access-log: uvicorn's access log records the client IP of every
+    # request, which would pair addresses with vote timestamps in the logs.
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+       "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/sante', timeout=4).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?définissez SITE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  insee-refresh:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
+      INSEE_REFRESH_INTERVAL: "2592000"
+    entrypoint: ["./docker/insee_cron.sh"]
+
+  assemblee-refresh:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
+      AN_REFRESH_INTERVAL: "86400"
+    entrypoint: ["./docker/assemblee_cron.sh"]
+
+  # Daily dump of the only irreplaceable data on the platform: the votes.
+  # Uses the Postgres image because it already ships pg_dump.
+  db-backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: votations
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: votations
+      BACKUP_INTERVAL: "86400"     # 24 h
+      BACKUP_KEEP_DAYS: "14"
+    volumes:
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - backups:/backups
+    entrypoint: ["sh", "/usr/local/bin/backup.sh", "loop"]
+
+volumes:
+  pgdata:
+  backups:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,23 @@
+# Terminates TLS and forwards to the app. Caddy obtains and renews the
+# certificate on its own; the domain must already resolve to this host.
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	# The app is not published outside the compose network: this is the only door.
+	reverse_proxy app:8000
+
+	header {
+		# The site embeds nothing and is embedded nowhere.
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy same-origin
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	# Access logs record client IPs, which would pair addresses with vote
+	# timestamps. Errors only.
+	log {
+		output stderr
+		level ERROR
+	}
+}

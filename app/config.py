@@ -12,12 +12,23 @@ class Settings(BaseSettings):
     # point at the `db` service; the default targets a local Postgres on :5432.
     database_url: str = "postgresql+psycopg://votations:votations@localhost:5432/votations"
 
+    # "development" keeps the local stack and the tests permissive. Setting
+    # "production" turns on the startup checks below, secure cookies and rate limits.
+    environment: str = "development"
+
     secret_key: str = "dev-insecure-secret-change-me"
 
     admin_username: str = "admin"
     admin_password: str = "admin"
 
     # Anti re-identification: hide time-bucketed breakdowns below this many votes.
+    # Send the voter cookie over HTTPS only. Off locally, forced on in production.
+    cookie_secure: bool = False
+
+    # Vote rate limit: at most this many votes from one address per window.
+    vote_rate_limit: int = 20
+    vote_rate_window_seconds: int = 300
+
     min_bucket_volume: int = 50
 
     # Cell-suppression threshold (k-anonymity): a demographic breakdown is hidden
@@ -68,6 +79,44 @@ class Settings(BaseSettings):
     ai_arguments_per_side: int = 5
     # Réserves are supplementary information, so they stay tighter.
     ai_reserves_max: int = 3
+
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() == "production"
+
+
+class InsecureConfiguration(RuntimeError):
+    """Raised at startup when production is about to run on development defaults."""
+
+
+def check_production_config(settings: Settings) -> None:
+    """Refuse to serve real votes on placeholder secrets.
+
+    The voter cookie is signed with SECRET_KEY: on the shipped default anyone can
+    forge a voter token and vote without limit, which makes every published
+    percentage meaningless. Failing loudly at boot beats discovering that later.
+    """
+    if not settings.is_production:
+        return
+
+    problems = []
+    if "change-me" in settings.secret_key or "insecure" in settings.secret_key:
+        problems.append("SECRET_KEY is still a placeholder — voter cookies would be forgeable")
+    elif len(settings.secret_key) < 32:
+        problems.append("SECRET_KEY is shorter than 32 characters")
+    if settings.admin_password in ("admin", "change-me", ""):
+        problems.append("ADMIN_PASSWORD is still a placeholder")
+    if not settings.cookie_secure:
+        problems.append("COOKIE_SECURE must be true behind HTTPS")
+
+    if problems:
+        raise InsecureConfiguration(
+            "Configuration de production incomplète :\n  - "
+            + "\n  - ".join(problems)
+            + "\n\nVoir DEPLOY.md. Pour générer une clé :\n"
+            "  python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+        )
 
 
 @lru_cache

@@ -42,6 +42,8 @@ class AnonymousProvider:
                 max_age=_COOKIE_MAX_AGE,
                 httponly=True,
                 samesite="lax",
+                # HTTPS-only in production; plain HTTP locally would drop it.
+                secure=get_settings().cookie_secure,
             )
         return self._hash(raw)
 

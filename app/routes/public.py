@@ -10,7 +10,9 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
+from app import ratelimit
 from app.auth.base import AuthProvider, get_auth_provider
+from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
@@ -118,6 +120,16 @@ def cast_vote(
     law = laws_crud.get_by_slug(db, slug)
     if law is None or not law.published:
         return _not_found(request)
+
+    # A fresh cookie is a fresh voter, so without this a script can add votes as
+    # fast as it can open connections. Counters are held in memory only.
+    settings = get_settings()
+    if ratelimit.too_many(
+        request,
+        limit=settings.vote_rate_limit,
+        window_seconds=settings.vote_rate_window_seconds,
+    ):
+        return _too_many_votes(request)
 
     try:
         vote_choice = VoteChoice(choice)
@@ -243,6 +255,22 @@ def export_json(slug: str, db: Session = Depends(get_db)):
                 "repondérer."
             ),
         }
+    )
+
+
+def _too_many_votes(request: Request) -> HTMLResponse:
+    """Politely refuse a burst without explaining the exact threshold."""
+    return templates.TemplateResponse(
+        request,
+        "erreur.html",
+        {
+            "titre": "Trop de votes en peu de temps",
+            "message": (
+                "Trop de votes ont été envoyés depuis votre connexion en quelques "
+                "minutes. Réessayez dans un instant."
+            ),
+        },
+        status_code=429,
     )
 
 

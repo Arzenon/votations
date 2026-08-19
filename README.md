@@ -11,6 +11,14 @@ personnelle).
   fonctionne sans JavaScript)
 - **Base de données** : PostgreSQL (SQLAlchemy 2 + Alembic).
 
+## Mise en production
+
+`docker-compose.yml` est le fichier de **développement**. Pour un déploiement réel,
+voir **[DEPLOY.md](DEPLOY.md)** : secrets, choix d'hébergement, TLS, sauvegardes
+quotidiennes et hygiène des journaux. L'application refuse de démarrer en
+production tant que `SECRET_KEY` ou `ADMIN_PASSWORD` gardent leur valeur
+d'exemple.
+
 ## Démarrage (Docker — recommandé)
 
 Tout tourne dans Docker : PostgreSQL + l'application. Au démarrage, le conteneur
