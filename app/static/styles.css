@@ -4,9 +4,15 @@
   --line: #e2e6ed;
   --bg: #f7f8fa;
   --blue: #1d3a8a;
-  --for: #2e7d32;
+  /* Measured against the pale pill backgrounds below, not against white:
+     #2e7d32 on #e3f4e4 came to 4.47, just under the 4.5 AA needs for the
+     small text in a status pill. */
+  --for: #2b7530;
   --against: #c62828;
-  --abstain: #8a8a8a;
+  /* Only ever a graphical mark (a bar, a line, a swatch), so 3:1 is the bar it
+     has to clear — but 3.45 was uncomfortably close, and the chart lines read
+     better a shade darker. */
+  --abstain: #7a7a7a;
   --radius: 8px;
   --maxw: 880px;
 }
@@ -256,3 +262,60 @@ table.revisions td { vertical-align: top; }
 .legal table code { font-size: 0.85em; }
 .unfilled { color: var(--against); font-style: italic; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
+
+/* ---- Evolution curve (server-rendered SVG, no JS) ------------------------ */
+.chart { margin: 0 0 0.75rem; }
+.evolution-chart { display: block; max-width: 100%; height: auto; }
+.evolution-chart .grid { stroke: var(--line); stroke-width: 1; }
+.evolution-chart .axis-line { stroke: #c9cfd8; stroke-width: 1; }
+.evolution-chart .axis { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.evolution-chart .line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.evolution-chart .area { stroke: none; opacity: 0.10; }
+.evolution-chart .dot { stroke: #fff; stroke-width: 1.5; }
+.line-for, .dot-for { stroke: var(--for); }
+.line-against, .dot-against { stroke: var(--against); }
+.line-abstain, .dot-abstain { stroke: var(--abstain); }
+.dot-for { fill: var(--for); }
+.dot-against { fill: var(--against); }
+.dot-abstain { fill: var(--abstain); }
+.area-for { fill: var(--for); }
+.area-against { fill: var(--against); }
+.area-abstain { fill: var(--abstain); }
+
+.chart-legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem;
+  font-size: 0.88rem; color: var(--muted); margin: 0.25rem 0 0; }
+.legend-item { display: inline-flex; align-items: center; gap: 0.4rem; }
+.swatch { width: 0.85rem; height: 0.2rem; border-radius: 2px; display: inline-block; }
+.swatch-for { background: var(--for); }
+.swatch-against { background: var(--against); }
+.swatch-abstain { background: var(--abstain); }
+.chart-data { margin-top: 0.75rem; }
+.chart-data summary { cursor: pointer; font-size: 0.9rem; color: var(--blue); }
+
+/* Visible to screen readers, not on screen. For table captions and the like,
+   where the heading above already gives a sighted reader the context. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Admin preview of an unpublished law. */
+.preview-bar { background: #1d3a8a; color: #fff; padding: 0.6rem 0; font-size: 0.9rem; }
+.preview-bar a { color: #fff; }
+.preview-bar .container { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: center; }
+
+/* ---- Keyboard and pointer targets ---------------------------------------
+   The universal :focus-visible rule above already draws the ring; what is left
+   is the ballot, where the radio itself is a small target inside a large label.
+
+   Radio and checkbox targets are small; give the whole label a hit area and a
+   ring, so the choice is selectable without precision aiming. */
+.choice { display: block; padding: 0.35rem 0.5rem; border-radius: var(--radius); }
+.choice:hover { background: #eef2fb; }
+.choice:focus-within { outline: 3px solid var(--blue); outline-offset: 1px; }
+
+/* Honour a stated preference for less movement. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

@@ -9,6 +9,15 @@
   <meta property="og:title" content="{{ self.title() }}">
   <meta property="og:description" content="{{ self.description() }}">
   <meta property="og:type" content="website">
+  {# Absolute URL, as the Open Graph spec requires — a relative one is ignored by
+     every scraper. `asset_url` fingerprints it so a redesign is picked up rather
+     than served from a social network's cache for ever. #}
+  <meta property="og:image" content="{{ request.base_url|string|trim('/') }}{{ asset_url('og.png') }}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Votations Françaises — donnez votre avis sur les lois adoptées par le Parlement">
+  <meta property="og:locale" content="fr_FR">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
   <script src="{{ asset_url('app.js') }}" defer></script>
@@ -28,6 +37,16 @@
       </nav>
     </div>
   </header>
+
+  {% if preview %}
+  <div class="preview-bar" role="status">
+    <div class="container">
+      <strong>Aperçu</strong>
+      <span>Cette page n'est pas publiée : personne d'autre ne peut la voir, et le vote est désactivé.</span>
+      <a href="/admin/lois/{{ law.id }}">← Retour à l'édition</a>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="disclaimer" role="note">
     <div class="container">⚠️ {{ DISCLAIMER }}</div>

@@ -5,8 +5,11 @@
   {% for key, label in (('for', 'Pour'), ('against', 'Contre'), ('abstain', 'Abstention')) %}
   <div class="bar-row">
     <span class="bar-label">{{ label }}</span>
-    <span class="bar"><span class="bar-fill {{ key }}" data-pct="{{ tally.percentages[key] }}"></span></span>
-    <span class="bar-pct">{{ tally.percentages[key] }}% ({{ tally.counts[key] }})</span>
+    {# The bar is a picture of the number beside it, and its width is painted by
+       app.js. Hidden from assistive technology so the figure is announced once,
+       from the text — which is also what a reader gets with JavaScript off. #}
+    <span class="bar" aria-hidden="true"><span class="bar-fill {{ key }}" data-pct="{{ tally.percentages[key] }}"></span></span>
+    <span class="bar-pct">{{ tally.percentages[key] }}% ({{ tally.counts[key] }} votes)</span>
   </div>
   {% endfor %}
   <p class="total">Nombre total de votant·e·s : <strong>{{ tally.total }}</strong></p>

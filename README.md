@@ -415,6 +415,15 @@ concerné, voici la carte :
   n'est qu'un rehaussement — tout fonctionne sans JavaScript.
 - **Surface exposée.** En production, `/docs`, `/redoc` et `/openapi.json` sont
   désactivés : le schéma énumère toutes les routes d'administration.
+- **Carte de partage.** `app/static/og.png` est un fichier statique, généré une
+  fois par `scripts/make_og_image.py`. Pillow sert à le fabriquer et n'est *pas*
+  une dépendance de l'application — voir l'en-tête du script.
+- **Recherche.** Plein texte français (`to_tsvector('french', …)`) sur le titre et
+  le résumé, avec le dernier mot traité comme préfixe : « retrait » trouve
+  « retraites ». La référence officielle garde une comparaison littérale, parce
+  qu'on y cherche un numéro et non des mots. L'index d'expression est déclaré sur
+  le modèle *et* créé par la migration ; les deux doivent rester équivalents ou
+  Postgres cesse silencieusement de s'en servir.
 - **Image.** Utilisateur non privilégié, aucune dépendance de développement,
   versions figées **et empreintées** (`requirements.lock`, installé avec
   `--require-hashes`), limites mémoire sur les services qui décompressent des
@@ -423,6 +432,29 @@ concerné, voici la carte :
   ASCII et l'application refuse de démarrer autrement : Starlette décode l'en-tête
   HTTP Basic en ASCII, donc un mot de passe accentué ne peut jamais correspondre —
   il n'aurait fait qu'enfermer dehors l'administrateur, sans explication.
+
+## Accessibilité
+
+Le site doit être utilisable par des personnes qui ne sont pas à l'aise avec le
+numérique — c'est une exigence de la charte, pas une option. Ce qui est en place :
+
+- contraste vérifié au ratio AA du WCAG sur chaque couple texte/fond, y compris
+  les pastilles de statut (le vert a été assombri : il tombait à 4,47 pour 4,5
+  requis) ;
+- anneau de focus visible partout, en `:focus-visible` pour ne pas encombrer la
+  souris, et lien d'évitement en tête de page ;
+- les tableaux nomment leurs lignes et leurs colonnes (`scope`), avec une légende
+  lue par les lecteurs d'écran ;
+- la courbe d'évolution est une image accompagnée d'une phrase qui la décrit, et
+  les chiffres restent disponibles en dessous ;
+- les barres de résultats sont masquées aux lecteurs d'écran : leur largeur est
+  décorative, le pourcentage est écrit à côté ;
+- les liens ouvrant un onglet le disent ;
+- `prefers-reduced-motion` est respecté.
+
+Ce qui reste à faire : un audit par une personne utilisant réellement un lecteur
+d'écran. La liste ci-dessus décrit ce qui a été corrigé, pas une conformité RGAA
+vérifiée.
 
 ## Journaux
 

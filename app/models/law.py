@@ -8,13 +8,25 @@ that every claim is sourced and attributed, and symmetry can be enforced.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, utcnow
 
 # Derived publication states. Stored nowhere: always computed from `published`
 # and the voting window, so a law opens and closes on the clock alone.
+# What the public search matches on. One template rendered two ways so the index
+# and the query can never drift apart: CREATE INDEX reads the columns unqualified,
+# while a query qualifies them to stay unambiguous if a join is ever added.
+# Postgres matches expression indexes on the parsed tree, so both forms hit it.
+#
+# `coalesce` and `||` rather than `concat_ws`: an index expression must be
+# IMMUTABLE, and `concat_ws` is not. The two-argument `to_tsvector` is — the
+# one-argument form reads a session setting and would not be.
+_SEARCH_BODY = "coalesce({p}title, '') || ' ' || coalesce({p}summary_text, '')"
+SEARCH_VECTOR_SQL = f"to_tsvector('french'::regconfig, {_SEARCH_BODY.format(p='')})"
+SEARCH_VECTOR_QUERY_SQL = f"to_tsvector('french'::regconfig, {_SEARCH_BODY.format(p='laws.')})"
+
 STATUS_DRAFT = "draft"
 STATUS_SCHEDULED = "scheduled"
 STATUS_OPEN = "open"
@@ -23,6 +35,9 @@ STATUS_CLOSED = "closed"
 
 class Law(Base):
     __tablename__ = "laws"
+    __table_args__ = (
+        Index("ix_laws_fts", text(SEARCH_VECTOR_SQL), postgresql_using="gin"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
@@ -71,9 +86,17 @@ class Law(Base):
 
     def status(self, now: datetime | None = None) -> str:
         """Derive status from publication flag and the voting window."""
-        now = now or utcnow()
         if not self.published:
             return STATUS_DRAFT
+        return self.scheduled_status(now)
+
+    def scheduled_status(self, now: datetime | None = None) -> str:
+        """The status the voting window alone implies, ignoring publication.
+
+        What an administrator needs in order to preview a draft: "how would this
+        look once published" is a question about the window, not about the flag.
+        """
+        now = now or utcnow()
         if self.opens_at and now < _aware(self.opens_at):
             return STATUS_SCHEDULED
         if self.closes_at and now >= _aware(self.closes_at):

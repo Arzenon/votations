@@ -6,6 +6,7 @@ import csv
 import io
 import json
 from collections.abc import Iterator
+from xml.sax.saxutils import escape
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import (
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app import profile_cookie, ratelimit
 from app.auth.base import AuthProvider, get_auth_provider
+from app.charts import build_evolution_chart
 from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import laws as laws_crud
@@ -222,6 +224,7 @@ def results_page(request: Request, slug: str, db: Session = Depends(get_db)):
     # One count of this law's votes, shared by everything below that needs it.
     # Four separate COUNT(*)s used to answer the same question per render.
     tally = results_crud.tally(db, law.id)
+    evolution = results_crud.evolution(db, law.id, total=tally.total)
     return templates.TemplateResponse(
         request,
         "results.html",
@@ -229,7 +232,8 @@ def results_page(request: Request, slug: str, db: Session = Depends(get_db)):
             "law": law,
             "status": law.status(),
             "tally": tally,
-            "evolution": results_crud.evolution(db, law.id, total=tally.total),
+            "evolution": evolution,
+            "chart": build_evolution_chart(evolution),
             "breakdowns": demo_crud.all_breakdowns(db, law.id),
             "provision": demo_crud.provision_rate(db, law.id),
             "export_note": results_crud.export_note(db, law.id, total=tally.total),
@@ -383,6 +387,36 @@ def legal_notice(request: Request):
         request,
         "mentions_legales.html",
         {**fields, "complete": all(fields.values())},
+    )
+
+
+@router.get("/sitemap.xml", include_in_schema=False)
+def sitemap(request: Request, db: Session = Depends(get_db)):
+    """Every public URL, for search engines.
+
+    Built from the same query the home page uses, so an archived or unpublished
+    law can never appear here — a sitemap that lists a 404 is worse than none.
+    """
+    base = str(request.base_url).rstrip("/")
+    static_pages = ["/", "/recherche", "/connexion", "/vie-privee", "/mentions-legales"]
+    urls = [(f"{base}{path}", None) for path in static_pages]
+    for law in laws_crud.list_published(db, limit=5000):
+        moment = (law.updated_at or law.created_at).date().isoformat()
+        urls.append((f"{base}/loi/{law.slug}", moment))
+        urls.append((f"{base}/loi/{law.slug}/resultats", moment))
+
+    body = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, lastmod in urls:
+        entry = f"<url><loc>{escape(loc)}</loc>"
+        if lastmod:
+            entry += f"<lastmod>{lastmod}</lastmod>"
+        body.append(entry + "</url>")
+    body.append("</urlset>")
+    return Response(
+        "\n".join(body),
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 

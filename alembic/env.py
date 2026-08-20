@@ -12,7 +12,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app import models  # noqa: F401  (import registers all models on Base.metadata)
 from app.config import get_settings
-from app.db import Base
+from app.db import Base, include_object
 
 config = context.config
 if config.config_file_name is not None:
@@ -32,6 +32,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -48,6 +49,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

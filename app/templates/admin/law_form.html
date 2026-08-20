@@ -152,6 +152,10 @@
 
   <div class="form-actions">
     <button type="submit">Enregistrer</button>
+    {% if law %}
+    <a class="button secondary" href="/admin/lois/{{ law.id }}/apercu" target="_blank"
+       rel="noopener">Aperçu public ↗</a>
+    {% endif %}
   </div>
 </form>
 

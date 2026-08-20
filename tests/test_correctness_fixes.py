@@ -279,18 +279,33 @@ def test_search_by_status_filters_correctly(db_session, open_law, closed_law):
     assert [law.slug for law in closed] == [closed_law.slug]
 
 
-def test_a_wildcard_typed_in_the_box_is_searched_for_literally(db_session):
+def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
+    """LIKE wildcards must not survive into the query as wildcards.
+
+    Search is full-text now, so punctuation is not indexed and a bare « % » finds
+    nothing rather than finding the law that contains one. What matters is
+    unchanged and still asserted: neither wildcard can be used to match the whole
+    corpus, and the words around them are searched as words.
+    """
     db_session.add(Law(slug="pourcent", title="Loi 100 % renouvelable", published=True))
     db_session.add(Law(slug="autre", title="Loi ordinaire", published=True))
     db_session.commit()
-    _, total, _pages = laws_crud.search(db_session, query="100 %")
+
+    hits, total, _pages = laws_crud.search(db_session, query="100 %")
     assert total == 1
-    # A bare "%" is a character to look for, not "match everything".
-    hits, count, _pages = laws_crud.search(db_session, query="%")
-    assert count == 1
     assert hits[0].slug == "pourcent"
-    # "_" is the other LIKE wildcard: it must not stand for any character.
-    assert laws_crud.search(db_session, query="Loi_ordinaire")[1] == 0
+
+    # A bare "%" is not "match everything".
+    assert laws_crud.search(db_session, query="%")[1] == 0
+
+    # The official reference is still matched with LIKE, so both wildcards have
+    # to stay literal there: "2026_214" must not match "2026-214".
+    db_session.add(
+        Law(slug="ref", title="Texte référencé", official_ref="LOI n° 2026-214", published=True)
+    )
+    db_session.commit()
+    assert laws_crud.search(db_session, query="2026-214")[1] == 1
+    assert laws_crud.search(db_session, query="2026_214")[1] == 0
 
 
 # --- Query counts -------------------------------------------------------------

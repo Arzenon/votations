@@ -50,7 +50,9 @@
     </details>
     {% endif %}
 
-    <button type="submit">{% if existing_choice %}Modifier mon vote{% else %}Voter{% endif %}</button>
+    <button type="submit" {% if preview %}disabled aria-disabled="true"{% endif %}>
+      {%- if preview %}Voter (aperçu){% elif existing_choice %}Modifier mon vote{% else %}Voter{% endif -%}
+    </button>
     {% if existing_choice %}<p class="vote-confirm">Votre vote a été enregistré. Vous pouvez le modifier tant que la votation est ouverte.</p>{% endif %}
   </form>
   {% else %}

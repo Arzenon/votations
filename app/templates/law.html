@@ -11,7 +11,7 @@
   <p class="official-ref">
     Référence : {{ law.official_ref }}
     {% set officiel = law.legifrance_url | safe_href %}
-    {% if officiel %}— <a href="{{ officiel }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)</a>{% endif %}
+    {% if officiel %}— <a href="{{ officiel }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)<span class="visually-hidden"> (nouvel onglet)</span></a>{% endif %}
   </p>
   {% endif %}
 
@@ -37,7 +37,7 @@
           {% if arg.author or source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
+            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
           </p>
           {% endif %}
         </li>
@@ -57,7 +57,7 @@
           {% if arg.author or source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
+            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
           </p>
           {% endif %}
         </li>

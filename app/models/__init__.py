@@ -28,6 +28,8 @@ from app.models.imported_law import (
 )
 from app.models.insee import InseeReference
 from app.models.law import (
+    SEARCH_VECTOR_QUERY_SQL,
+    SEARCH_VECTOR_SQL,
     STATUS_CLOSED,
     STATUS_DRAFT,
     STATUS_OPEN,
@@ -50,6 +52,8 @@ __all__ = [
     "DRAFT_PENDING",
     "DRAFT_READY",
     "INSEE_REFERENCE",
+    "SEARCH_VECTOR_QUERY_SQL",
+    "SEARCH_VECTOR_SQL",
     "SOURCE_ASSEMBLEE",
     "STATUS_CLOSED",
     "STATUS_DRAFT",

@@ -15,14 +15,17 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
 
 from alembic import command
-from app.db import Base
+from app.db import Base, include_object
 from tests.conftest import TEST_DATABASE_URL, alembic_config
 
 
 def test_the_migrated_schema_matches_the_models(engine):
     """Catch drift the moment a model changes without a migration."""
     with engine.connect() as connection:
-        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        context = MigrationContext.configure(
+            connection,
+            opts={"compare_type": True, "include_object": include_object},
+        )
         differences = compare_metadata(context, Base.metadata)
     assert differences == [], (
         "les modèles et les migrations divergent — générez une révision :\n  "
@@ -60,5 +63,8 @@ def test_the_chain_downgrades_and_upgrades_again(engine):
         pytest.fail(f"la chaîne de migrations ne fait pas l'aller-retour : {exc}")
 
     with engine.connect() as connection:
-        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        context = MigrationContext.configure(
+            connection,
+            opts={"compare_type": True, "include_object": include_object},
+        )
         assert compare_metadata(context, Base.metadata) == []

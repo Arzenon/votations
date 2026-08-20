@@ -7,12 +7,14 @@ import re
 import unicodedata
 from datetime import datetime
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, func, literal, literal_column, or_, select
+from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.orm import Session
 
 from app.db import utcnow
 from app.labels import french_datetime
 from app.models import (
+    SEARCH_VECTOR_QUERY_SQL,
     STATUS_CLOSED,
     STATUS_OPEN,
     STATUS_SCHEDULED,
@@ -108,13 +110,58 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+# Characters that mean something to `to_tsquery` and nothing to a visitor.
+_TSQUERY_NOISE = re.compile(r"[^\w\s-]", flags=re.UNICODE)
+
+
+def _tsquery(query: str) -> str:
+    """Turn what someone typed into a French tsquery, last word as a prefix.
+
+    ``réforme des retraites`` becomes ``réforme & des & retraite:*`` — every word
+    required, the last one open-ended so the results narrow as you type rather
+    than vanishing on the way to a complete word. Stemming is what makes
+    « retraite » find « retraites », and the French dictionary drops the
+    stop-words on its own, so « des » costs nothing.
+
+    Punctuation is stripped rather than escaped: a visitor typing an apostrophe
+    or a colon means it as text, and `to_tsquery` would read it as syntax and
+    fail the whole query.
+    """
+    words = _TSQUERY_NOISE.sub(" ", query).split()
+    if not words:
+        return ""
+    *rest, last = words
+    return " & ".join([*rest, f"{last}:*"])
+
+
+#: The columns the full-text index covers. `official_ref` is deliberately absent:
+#: « LOI n° 2026-214 » is looked up as a string, not as prose, so it keeps a plain
+#: substring match alongside.
+#:
+#: The same expression the index is built on — defined beside the table, so the
+#: two cannot drift and quietly leave every search on a sequential scan.
+_SEARCH_VECTOR = literal_column(SEARCH_VECTOR_QUERY_SQL)
+
+
 def _apply_search(stmt: Select, query: str) -> Select:
+    """Full-text over the prose, substring over the reference.
+
+    Two mechanisms because there are two kinds of search: people look for a
+    *subject* in the title and summary, where stemming helps, and for a *number*
+    in the official reference, where it would only get in the way.
+    """
     like = f"%{_escape_like(query)}%"
+    reference = Law.official_ref.ilike(like, escape="\\")
+
+    terms = _tsquery(query)
+    if not terms:
+        return stmt.where(reference)
     return stmt.where(
         or_(
-            Law.title.ilike(like, escape="\\"),
-            Law.official_ref.ilike(like, escape="\\"),
-            Law.summary_text.ilike(like, escape="\\"),
+            _SEARCH_VECTOR.op("@@")(
+                func.to_tsquery(literal("french", type_=REGCONFIG), terms)
+            ),
+            reference,
         )
     )
 

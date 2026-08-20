@@ -30,6 +30,10 @@ Disallow: /loi/*/export.json
 Allow: /
 """
 
+# Appended at request time: the sitemap has to be an absolute URL, and only the
+# request knows the site's own origin.
+SITEMAP_LINE = "Sitemap: {base}/sitemap.xml\n"
+
 # A tricolour ballot mark, inline so the tab icon costs no extra request and no
 # third-party host.
 FAVICON_SVG = (
@@ -185,8 +189,12 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
-    def robots() -> PlainTextResponse:
-        return PlainTextResponse(ROBOTS_TXT, headers={"Cache-Control": "public, max-age=86400"})
+    def robots(request: Request) -> PlainTextResponse:
+        base = str(request.base_url).rstrip("/")
+        return PlainTextResponse(
+            ROBOTS_TXT + SITEMAP_LINE.format(base=base),
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:

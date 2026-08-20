@@ -18,23 +18,65 @@
 
   <section class="block">
     <h2>Évolution des votes</h2>
-    {% if evolution %}
-    <div class="table-scroll">
-      <table class="evolution">
-        <thead><tr><th>Période</th><th>Pour</th><th>Contre</th><th>Abstention</th></tr></thead>
-        <tbody>
-          {% for bucket in evolution %}
-          <tr>
-            <td>{{ bucket.label }}</td>
-            <td>{{ bucket.counts['for'] }}</td>
-            <td>{{ bucket.counts['against'] }}</td>
-            <td>{{ bucket.counts['abstain'] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <p class="meta">La courbe d'évolution permet de détecter d'éventuelles campagnes de mobilisation organisée.</p>
+    {% if chart %}
+    <figure class="chart">
+      {# role="img" + title/desc: the curve is a picture of the table below it,
+         so a screen reader gets one sentence rather than 300 path commands. #}
+      <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" width="100%"
+           role="img" aria-labelledby="evo-titre evo-desc" class="evolution-chart">
+        <title id="evo-titre">Évolution des votes, jour par jour</title>
+        <desc id="evo-desc">{{ chart.description }}</desc>
+
+        {% for y, value in chart.y_ticks %}
+        <line class="grid" x1="{{ chart.plot_left }}" y1="{{ y }}"
+              x2="{{ chart.plot_right }}" y2="{{ y }}"></line>
+        <text class="axis" x="{{ chart.plot_left - 10 }}" y="{{ y + 4 }}"
+              text-anchor="end">{{ value }}</text>
+        {% endfor %}
+
+        {% for x, label in chart.x_ticks %}
+        <text class="axis" x="{{ x }}" y="{{ chart.plot_bottom + 20 }}"
+              text-anchor="middle">{{ label }}</text>
+        {% endfor %}
+
+        <line class="axis-line" x1="{{ chart.plot_left }}" y1="{{ chart.plot_bottom }}"
+              x2="{{ chart.plot_right }}" y2="{{ chart.plot_bottom }}"></line>
+
+        {% for serie in chart.series %}
+        {% if serie.area %}<path class="area area-{{ serie.key }}" d="{{ serie.area }}"></path>{% endif %}
+        <path class="line line-{{ serie.key }}" d="{{ serie.line }}"></path>
+        {% for x, y in serie.dots %}
+        <circle class="dot dot-{{ serie.key }}" cx="{{ x }}" cy="{{ y }}" r="3"></circle>
+        {% endfor %}
+        {% endfor %}
+      </svg>
+      <figcaption class="chart-legend">
+        {% for serie in chart.series %}
+        <span class="legend-item"><span class="swatch swatch-{{ serie.key }}"></span>{{ serie.label }} ({{ serie.total }})</span>
+        {% endfor %}
+      </figcaption>
+    </figure>
+    <p class="meta">Une mobilisation organisée se voit ici : elle laisse un pic sur une journée.</p>
+
+    <details class="chart-data">
+      <summary>Voir les chiffres jour par jour</summary>
+      <div class="table-scroll">
+        <table class="evolution">
+          <caption class="visually-hidden">Nombre de votes par jour et par choix</caption>
+          <thead><tr><th scope="col">Période</th><th scope="col">Pour</th><th scope="col">Contre</th><th scope="col">Abstention</th></tr></thead>
+          <tbody>
+            {% for bucket in evolution %}
+            <tr>
+              <th scope="row">{{ bucket.label }}</th>
+              <td>{{ bucket.counts['for'] }}</td>
+              <td>{{ bucket.counts['against'] }}</td>
+              <td>{{ bucket.counts['abstain'] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
     {% else %}
     <p class="meta">L'évolution dans le temps sera affichée lorsque le nombre de votes sera suffisant pour garantir l'anonymat.</p>
     {% endif %}
@@ -58,15 +100,16 @@
     {% if bd.shown %}
     <div class="table-scroll">
       <table class="evolution">
+        <caption class="visually-hidden">Répartition des votes par {{ bd.label | lower }}</caption>
         <thead><tr>
-          <th>{{ bd.label }}</th><th>Pour</th><th>Contre</th><th>Abstention</th>
-          <th>Part ici</th>
-          <th>France{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
+          <th scope="col">{{ bd.label }}</th><th scope="col">Pour</th><th scope="col">Contre</th><th scope="col">Abstention</th>
+          <th scope="col">Part ici</th>
+          <th scope="col">France{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
         </tr></thead>
         <tbody>
           {% for row in bd.rows %}
           <tr>
-            <td>{{ row.category }}</td>
+            <th scope="row">{{ row.category }}</th>
             <td>{{ row.counts['for'] }} ({{ row.percentages['for'] }}%)</td>
             <td>{{ row.counts['against'] }} ({{ row.percentages['against'] }}%)</td>
             <td>{{ row.counts['abstain'] }} ({{ row.percentages['abstain'] }}%)</td>
@@ -101,11 +144,12 @@
     </p>
     <div class="table-scroll">
       <table class="evolution revisions">
-        <thead><tr><th>Date</th><th>Bloc modifié</th><th>Avant</th><th>Après</th></tr></thead>
+        <caption class="visually-hidden">Modifications apportées depuis la publication</caption>
+        <thead><tr><th scope="col">Date</th><th scope="col">Bloc modifié</th><th scope="col">Avant</th><th scope="col">Après</th></tr></thead>
         <tbody>
           {% for rev in revisions %}
           <tr>
-            <td>{{ rev.changed_at | french_datetime }}</td>
+            <th scope="row">{{ rev.changed_at | french_datetime }}</th>
             <td>{{ rev.field | field_label }}</td>
             <td class="revision-value">{{ rev.old_value or '—' }}</td>
             <td class="revision-value">{{ rev.new_value or '—' }}</td>

@@ -13,7 +13,16 @@ from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import get_db
-from app.models import DRAFT_FAILED, STATUS_IMPORTED
+from app.models import (
+    DIMENSION_AGE,
+    DIMENSION_ORDER,
+    DIMENSION_REGION,
+    DIMENSION_SEXE,
+    DRAFT_FAILED,
+    STATUS_IMPORTED,
+    STATUS_OPEN,
+    VoteChoice,
+)
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form
 from app.routes.admin.guard import require_admin
@@ -152,6 +161,44 @@ def update_law(
         raise HTTPException(404)
     laws_crud.update(db, law, **form.columns())
     return RedirectResponse("/admin", status_code=303)
+
+
+@router.get("/lois/{law_id}/apercu", response_class=HTMLResponse)
+def preview_law(
+    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+):
+    """The public page of a law, as it will look once published.
+
+    Renders the real public template rather than an approximation, because the
+    whole point is to catch what the real one does — a summary that reads badly
+    in paragraphs, an argument block left empty, a title that wraps awkwardly.
+    Publishing to see your own work was the only way to check it before this.
+
+    The ballot is shown in the state the voting window implies, with its submit
+    button disabled: nothing here can accept a vote, and the vote route would
+    refuse one anyway since the law is not public.
+    """
+    law = laws_crud.get_by_id(db, law_id)
+    if law is None:
+        raise HTTPException(404)
+    status = law.scheduled_status()
+    return templates.TemplateResponse(
+        request,
+        "law.html",
+        {
+            "law": law,
+            "status": status,
+            "existing_choice": None,
+            "tally": results_crud.tally(db, law.id) if status != STATUS_OPEN else None,
+            "choices": list(VoteChoice),
+            "demographics_locked": False,
+            "revision_count": laws_crud.count_revisions(db, law.id),
+            "preview": True,
+            "age_brackets": DIMENSION_ORDER[DIMENSION_AGE],
+            "sexes": DIMENSION_ORDER[DIMENSION_SEXE],
+            "regions": DIMENSION_ORDER[DIMENSION_REGION],
+        },
+    )
 
 
 @router.get("/lois/{law_id}/archiver", response_class=HTMLResponse)

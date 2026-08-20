@@ -634,3 +634,221 @@ def test_the_legal_pages_never_invent_an_identity(client, monkeypatch):
     page = client.get("/mentions-legales").text
     for invented in ("example.org", "SAS", "@", "rue "):
         assert invented not in page.split("<footer")[0]
+
+
+# --- Courbe d'évolution -------------------------------------------------------
+
+
+def _bucket(label, **counts):
+    from app.crud.results import EvolutionBucket
+
+    full = {"for": 0, "against": 0, "abstain": 0, **counts}
+    return EvolutionBucket(label=label, counts=full)
+
+
+def test_the_chart_stays_inside_its_plot_area():
+    """A smoothed curve must never draw a day below zero votes."""
+    import re
+
+    from app.charts import build_evolution_chart
+
+    # A spike between two quiet days is what makes a naive spline overshoot.
+    chart = build_evolution_chart(
+        [
+            _bucket("2026-05-01", **{"for": 1}),
+            _bucket("2026-05-02", **{"for": 40}),
+            _bucket("2026-05-03", **{"for": 1}),
+            _bucket("2026-05-04", **{"for": 2}),
+        ]
+    )
+    assert chart is not None
+    for serie in chart.series:
+        ys = [float(v) for v in re.findall(r"[-\d.]+ ([-\d.]+)", serie.line)]
+        assert min(ys) >= chart.plot_top - 0.01, "la courbe sort par le haut"
+        assert max(ys) <= chart.plot_bottom + 0.01, "la courbe passe sous zéro"
+
+
+def test_the_chart_axis_stops_on_a_round_number():
+    from app.charts import build_evolution_chart
+
+    chart = build_evolution_chart([_bucket("2026-05-01", **{"for": 37})])
+    assert chart.max_value == 40
+    assert [v for _y, v in chart.y_ticks] == [0, 10, 20, 30, 40]
+
+
+def test_the_chart_thins_its_date_labels():
+    """Whatever the span, the dates must stay far enough apart to be read."""
+    from app.charts import build_evolution_chart
+
+    for days in (2, 7, 20, 30, 45, 120):
+        chart = build_evolution_chart(
+            [_bucket(f"2026-05-{(i % 28) + 1:02}") for i in range(days)]
+        )
+        assert len(chart.x_ticks) <= 8, f"{days} jours : trop d'étiquettes"
+        gaps = [
+            chart.x_ticks[i + 1][0] - chart.x_ticks[i][0]
+            for i in range(len(chart.x_ticks) - 1)
+        ]
+        assert not gaps or min(gaps) > 40, f"{days} jours : étiquettes trop serrées"
+    assert chart.x_ticks[0][1] == "01/05"
+
+
+def test_the_chart_describes_itself_for_a_screen_reader():
+    from app.charts import build_evolution_chart
+
+    chart = build_evolution_chart(
+        [_bucket("2026-05-01", **{"for": 3}), _bucket("2026-05-02", **{"for": 5})]
+    )
+    assert "01/05" in chart.description
+    assert "Pour : 8 votes" in chart.description
+
+
+def test_the_results_page_draws_the_curve(client, open_law, db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 2, raising=False)
+    for _ in range(4):
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+        client.cookies.clear()
+
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "<svg" in page
+    assert 'role="img"' in page
+    assert "Évolution des votes, jour par jour" in page
+    # The figures stay available underneath, not replaced by the picture.
+    assert "Voir les chiffres jour par jour" in page
+
+
+# --- Aperçu d'une loi non publiée --------------------------------------------
+
+
+def test_an_unpublished_law_can_be_previewed_by_the_admin(client, db_session):
+    law = _law(db_session, slug="loi-brouillon-apercu", title="Brouillon", published=False)
+    assert client.get(f"/loi/{law.slug}").status_code == 404
+
+    page = client.get(f"/admin/lois/{law.id}/apercu", headers=_admin())
+    assert page.status_code == 200
+    assert "Brouillon" in page.text
+    assert "Aperçu" in page.text
+    assert "n'est pas publiée" in page.text
+
+
+def test_the_preview_shows_the_ballot_but_cannot_vote(client, db_session):
+    law = _law(db_session, slug="loi-apercu-vote", published=False)
+    page = client.get(f"/admin/lois/{law.id}/apercu", headers=_admin()).text
+    assert "Votre vote" in page, "le bulletin doit être visible tel qu'il sera"
+    assert "disabled" in page
+
+    # And the real vote route still refuses, preview or not.
+    assert client.post(f"/loi/{law.slug}/vote", data={"choice": "for"}).status_code == 404
+
+
+def test_the_preview_needs_the_admin_password(client, db_session):
+    law = _law(db_session, slug="loi-apercu-prive", published=False)
+    assert client.get(f"/admin/lois/{law.id}/apercu").status_code == 401
+
+
+# --- Recherche plein texte ----------------------------------------------------
+
+
+def test_search_finds_a_plural_from_the_singular(client, db_session):
+    _law(db_session, slug="loi-retraites", title="Réforme des retraites", summary_text="Texte.")
+    assert laws_crud.search(db_session, query="retraite")[1] == 1
+    assert laws_crud.search(db_session, query="retraites")[1] == 1
+
+
+def test_search_matches_a_word_still_being_typed(client, db_session):
+    _law(db_session, slug="loi-logement", title="Encadrement des loyers", summary_text="Texte.")
+    assert laws_crud.search(db_session, query="loye")[1] == 1
+    assert laws_crud.search(db_session, query="encadr")[1] == 1
+
+
+def test_search_still_finds_a_law_by_its_official_number(client, db_session):
+    _law(db_session, slug="loi-num", title="Un texte", official_ref="LOI n° 2026-214")
+    assert laws_crud.search(db_session, query="2026-214")[1] == 1
+
+
+def test_search_requires_every_word(client, db_session):
+    _law(db_session, slug="loi-a1", title="Réforme des retraites", summary_text="Texte.")
+    _law(db_session, slug="loi-b1", title="Réforme du logement", summary_text="Texte.")
+    assert laws_crud.search(db_session, query="réforme")[1] == 2
+    assert laws_crud.search(db_session, query="réforme retraite")[1] == 1
+
+
+def test_search_ignores_punctuation_a_visitor_types(client, db_session):
+    """`to_tsquery` would treat these as syntax and fail the whole query."""
+    _law(db_session, slug="loi-ponct", title="Loi sur l'eau", summary_text="Texte.")
+    for query in ("l'eau", "eau !", "(eau)", "eau & | :"):
+        assert laws_crud.search(db_session, query=query)[1] == 1, query
+
+
+# --- Sitemap ------------------------------------------------------------------
+
+
+def test_the_sitemap_lists_published_laws_only(client, db_session, open_law):
+    hidden = _law(db_session, slug="loi-cachee", title="Cachée", published=False)
+    body = client.get("/sitemap.xml").text
+    assert body.startswith("<?xml")
+    assert f"/loi/{open_law.slug}</loc>" in body
+    assert f"/loi/{open_law.slug}/resultats</loc>" in body
+    assert hidden.slug not in body
+    assert "/vie-privee</loc>" in body
+
+
+def test_an_archived_law_leaves_the_sitemap(client, db_session, open_law):
+    client.post(f"/admin/lois/{open_law.id}/archiver", headers=_admin(), follow_redirects=False)
+    assert open_law.slug not in client.get("/sitemap.xml").text
+
+
+def test_robots_points_at_the_sitemap(client):
+    assert "Sitemap: http://testserver/sitemap.xml" in client.get("/robots.txt").text
+
+
+# --- Carte de partage ---------------------------------------------------------
+
+
+def test_the_share_card_is_declared_with_an_absolute_url(client):
+    """Open Graph ignores a relative image URL."""
+    page = client.get("/").text
+    assert 'property="og:image" content="http://testserver/static/og.png?v=' in page
+    assert 'name="twitter:card" content="summary_large_image"' in page
+    assert 'property="og:image:alt"' in page
+
+
+def test_the_share_card_exists_and_is_the_right_size(client):
+    from app.templating import STATIC_DIR
+
+    png = STATIC_DIR / "og.png"
+    assert png.exists()
+    header = png.read_bytes()[:24]
+    assert header[:8] == b"\x89PNG\r\n\x1a\n"
+    width = int.from_bytes(header[16:20], "big")
+    height = int.from_bytes(header[20:24], "big")
+    assert (width, height) == (1200, 630)
+
+
+# --- Accessibilité ------------------------------------------------------------
+
+
+def test_result_bars_are_hidden_from_screen_readers(client, closed_law):
+    """The bar is a picture of the number beside it; announcing both repeats it."""
+    page = client.get(f"/loi/{closed_law.slug}").text
+    assert 'class="bar" aria-hidden="true"' in page
+
+
+def test_data_tables_name_their_rows_and_columns(client, open_law, db_session, monkeypatch):
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 1, raising=False)
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert 'scope="col"' in page
+    assert 'scope="row"' in page
+
+
+def test_links_that_open_a_new_tab_say_so(client, db_session):
+    law = _law(
+        db_session,
+        slug="loi-liens",
+        official_ref="LOI n° 2026-1",
+        legifrance_url="https://example.org/loi",
+        arguments_for=[{"text": "t", "author": "A", "source": "https://example.org/s"}],
+    )
+    page = client.get(f"/loi/{law.slug}").text
+    assert "(nouvel onglet)" in page

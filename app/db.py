@@ -14,6 +14,19 @@ class Base(DeclarativeBase):
     pass
 
 
+# Alembic renders a functional index expression as opaque text and cannot compare
+# two of them, so autogenerate reports a spurious drop-and-recreate for these on
+# every run — which would make the drift check cry wolf until nobody reads it.
+# They are written by hand in their migration instead. Anything *not* named here
+# is still compared, so real drift is still caught.
+UNCOMPARABLE_INDEXES = frozenset({"ix_laws_fts"})
+
+
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    """Autogenerate filter, shared by `alembic/env.py` and the migration tests."""
+    return not (type_ == "index" and name in UNCOMPARABLE_INDEXES)
+
+
 def utcnow() -> datetime:
     """The single source of "now" for every timestamp column."""
     return datetime.now(UTC)
