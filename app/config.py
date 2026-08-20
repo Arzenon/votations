@@ -88,6 +88,18 @@ class Settings(BaseSettings):
     # that anyone who knows when a person voted learns how they voted.
     export_time_resolution: Literal["day", "hour", "exact"] = "day"
 
+    # Mentions légales (LCEN art. 6-III). Every French public-facing site must
+    # name its publisher and its host. Kept in the environment rather than in the
+    # template so deploying does not mean editing HTML — and so that a fork or a
+    # second instance fills in its own identity instead of inheriting someone
+    # else's. Left empty the page says so plainly, which is the right failure:
+    # visibly incomplete beats confidently wrong about who is responsible.
+    legal_editor: str = ""
+    legal_editor_address: str = ""
+    legal_publication_director: str = ""
+    legal_contact_email: str = ""
+    legal_host: str = ""
+
     # INSEE reference data (annual refresh). The estimation-population dataset is
     # open (no key required); a key is only supported for rate-limit purposes.
     insee_melodi_base: str = "https://api.insee.fr/melodi"

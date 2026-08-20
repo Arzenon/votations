@@ -576,3 +576,61 @@ def test_the_representativeness_warning_appears_once_per_page(client, open_law):
 
     for url in ("/", f"/loi/{open_law.slug}", f"/loi/{open_law.slug}/resultats"):
         assert client.get(url).text.count(str(escape(DISCLAIMER))) == 1
+
+
+# --- Pages légales ------------------------------------------------------------
+
+
+def test_the_privacy_page_lists_both_cookies_by_name(client):
+    page = client.get("/vie-privee").text
+    assert "vf_voter" in page
+    assert "vf_profil" in page
+    assert "article 82" in page  # pourquoi il n'y a pas de bandeau
+
+
+def test_the_legal_pages_are_linked_from_every_page(client, open_law):
+    for url in ("/", f"/loi/{open_law.slug}", "/connexion"):
+        page = client.get(url).text
+        assert 'href="/vie-privee"' in page
+        assert 'href="/mentions-legales"' in page
+
+
+def test_missing_legal_identity_is_shown_as_missing(client, monkeypatch):
+    """A plausible placeholder would be worse than an empty field on this page."""
+    settings = get_settings()
+    for field in ("legal_editor", "legal_editor_address", "legal_host"):
+        monkeypatch.setattr(settings, field, "", raising=False)
+    page = client.get("/mentions-legales").text
+    assert "Cette page est incomplète" in page
+    assert "non renseigné" in page
+
+
+def test_a_filled_legal_identity_is_shown_without_the_warning(client, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "legal_editor", "Association Votations", raising=False)
+    monkeypatch.setattr(settings, "legal_editor_address", "1 rue de la Paix, Paris", raising=False)
+    monkeypatch.setattr(settings, "legal_publication_director", "A. Dupont", raising=False)
+    monkeypatch.setattr(settings, "legal_contact_email", "contact@example.org", raising=False)
+    monkeypatch.setattr(settings, "legal_host", "OVH SAS, Roubaix", raising=False)
+
+    page = client.get("/mentions-legales").text
+    assert "Cette page est incomplète" not in page
+    assert "Association Votations" in page
+    assert "OVH SAS, Roubaix" in page
+    assert "non renseigné" not in page
+
+
+def test_the_legal_pages_never_invent_an_identity(client, monkeypatch):
+    """Nothing plausible may appear where a real name is missing."""
+    settings = get_settings()
+    for field in (
+        "legal_editor",
+        "legal_editor_address",
+        "legal_publication_director",
+        "legal_contact_email",
+        "legal_host",
+    ):
+        monkeypatch.setattr(settings, field, "", raising=False)
+    page = client.get("/mentions-legales").text
+    for invented in ("example.org", "SAS", "@", "rue "):
+        assert invented not in page.split("<footer")[0]

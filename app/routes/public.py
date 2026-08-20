@@ -1,4 +1,4 @@
-"""Public-facing routes: home, law/vote page, results, export, search."""
+"""Public-facing routes: home, law/vote page, results, export, search, legal pages."""
 
 from __future__ import annotations
 
@@ -349,6 +349,40 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
         document(),
         media_type="application/json; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="votations-{slug}.json"'},
+    )
+
+
+@router.get("/vie-privee", response_class=HTMLResponse)
+def privacy(request: Request):
+    """What is stored, where, and for how long.
+
+    Kept as an ordinary page rather than a consent banner: both cookies this site
+    sets are exempt from consent under article 82 of the loi Informatique et
+    Libertés — they are written only when someone votes, and the vote cannot work
+    without them — so the obligation here is to inform, not to ask.
+    """
+    return templates.TemplateResponse(
+        request,
+        "vie_privee.html",
+        {"contact_email": get_settings().legal_contact_email},
+    )
+
+
+@router.get("/mentions-legales", response_class=HTMLResponse)
+def legal_notice(request: Request):
+    """Publisher, publication director and host — mandatory under LCEN art. 6-III."""
+    settings = get_settings()
+    fields = {
+        "editor": settings.legal_editor,
+        "editor_address": settings.legal_editor_address,
+        "publication_director": settings.legal_publication_director,
+        "contact_email": settings.legal_contact_email,
+        "host": settings.legal_host,
+    }
+    return templates.TemplateResponse(
+        request,
+        "mentions_legales.html",
+        {**fields, "complete": all(fields.values())},
     )
 
 

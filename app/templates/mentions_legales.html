@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Mentions légales — Votations Françaises{% endblock %}
+{% block description %}Éditeur, directeur de la publication, hébergeur et sources des données de Votations Françaises.{% endblock %}
+{% block content %}
+{# Identité de l'éditeur : lue dans la configuration, jamais écrite en dur ici.
+   Un champ vide s'affiche comme manquant plutôt que d'être inventé — sur une
+   page dont l'objet est précisément de dire qui est responsable, une valeur de
+   remplissage plausible serait pire qu'une case vide. #}
+<article class="law legal">
+  <h1>Mentions légales</h1>
+
+  {% if not complete %}
+  <p class="disclaimer" role="status">
+    <strong>Cette page est incomplète.</strong> Les informations manquantes sont
+    signalées ci-dessous. Elles sont obligatoires pour un site ouvert au public
+    (loi pour la confiance dans l'économie numérique, article 6-III) et se
+    renseignent dans la configuration du site.
+  </p>
+  {% endif %}
+
+  <section class="block">
+    <h2>Éditeur du site</h2>
+    {% if editor %}
+    <p>{{ editor }}</p>
+    {% else %}
+    <p class="unfilled">Éditeur non renseigné.</p>
+    {% endif %}
+    {% if editor_address %}
+    <p>{{ editor_address }}</p>
+    {% else %}
+    <p class="unfilled">Adresse non renseignée.</p>
+    {% endif %}
+    {% if contact_email %}
+    <p>Contact : <a href="mailto:{{ contact_email }}">{{ contact_email }}</a></p>
+    {% else %}
+    <p class="unfilled">Adresse de contact non renseignée.</p>
+    {% endif %}
+  </section>
+
+  <section class="block">
+    <h2>Directeur de la publication</h2>
+    {% if publication_director %}
+    <p>{{ publication_director }}</p>
+    {% else %}
+    <p class="unfilled">Directeur de la publication non renseigné.</p>
+    {% endif %}
+  </section>
+
+  <section class="block">
+    <h2>Hébergement</h2>
+    {% if host %}
+    <p>{{ host }}</p>
+    {% else %}
+    <p class="unfilled">Hébergeur non renseigné.</p>
+    {% endif %}
+  </section>
+
+  <section class="block">
+    <h2>D'où viennent les données</h2>
+    <p>
+      Les lois soumises au vote proviennent des données ouvertes publiées par les
+      institutions, sous <a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence/" rel="noopener noreferrer" target="_blank">Licence Ouverte</a> :
+    </p>
+    <ul>
+      <li>
+        <a href="https://data.assemblee-nationale.fr/" rel="noopener noreferrer" target="_blank">Assemblée nationale</a> —
+        dossiers législatifs et comptes rendus de séance publique, d'où sont tirés
+        les textes promulgués et les prises de position citées.
+      </li>
+      <li>
+        <a href="https://echanges.dila.gouv.fr/OPENDATA/" rel="noopener noreferrer" target="_blank">Direction de l'information légale et administrative</a> —
+        texte officiel des lois publié au <em>Journal officiel</em>.
+      </li>
+      <li>
+        <a href="https://www.insee.fr/" rel="noopener noreferrer" target="_blank">INSEE</a> —
+        estimations de population, utilisées seulement pour montrer l'écart entre
+        les personnes qui participent et la population française.
+      </li>
+    </ul>
+    <p class="meta">
+      Ces institutions publient les données ; elles n'ont aucun lien avec ce site
+      et n'en approuvent pas le contenu.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Présentation des lois</h2>
+    <p>
+      Les résumés et la mise en forme des arguments sont rédigés pour ce site, à
+      partir du texte officiel et des débats parlementaires. Une partie du travail
+      de rédaction est assistée par un modèle de langage, puis relue et validée par
+      une personne avant publication. Les arguments sont cités mot pour mot, avec
+      leur auteur et un lien vers le compte rendu d'où ils sont tirés, afin que
+      chacun puisse vérifier.
+    </p>
+    <p>
+      Ce travail comporte des choix : quelles lois sont soumises au vote, ce qu'un
+      résumé retient, quels passages des débats sont cités. Ces choix sont faits
+      avec le souci de représenter le plus fidèlement possible les positions en
+      présence, et les sources sont données pour que vous puissiez les contrôler à
+      tout moment.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Résultats publiés</h2>
+    <p>
+      Les résultats de chaque votation sont téléchargeables librement depuis la
+      page de résultats correspondante, sous une forme anonymisée. Ils peuvent être
+      réutilisés, y compris pour contester les conclusions qu'on pourrait en tirer.
+      Voir <a href="/vie-privee">Vie privée et cookies</a> pour ce que ces fichiers
+      contiennent et ce qu'ils omettent.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Signaler une erreur</h2>
+    <p>
+      Une erreur dans le résumé d'une loi, une citation mal attribuée, un lien
+      rompu : {% if contact_email %}écrivez à <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.
+      {% else %}aucune adresse de contact n'est renseignée pour le moment.{% endif %}
+      Toute correction apportée à une loi déjà publiée est enregistrée et affichée
+      sur sa page de résultats, avec la version précédente.
+    </p>
+  </section>
+</article>
+{% endblock %}

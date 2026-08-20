@@ -245,3 +245,14 @@ table.revisions td { vertical-align: top; }
 .danger-zone h2 { margin-top: 0; font-size: 1.05rem; }
 .confirm-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 1.5rem; }
 .button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+
+/* Legal pages: long prose, read once, so a comfortable measure matters more
+   than density. `.unfilled` marks a mandatory field nobody has filled in — it
+   has to look wrong, because a plausible-looking placeholder would be worse. */
+.legal { max-width: 44rem; }
+.legal ul { padding-left: 1.2rem; }
+.legal li { margin-bottom: 0.4rem; }
+.legal .lede { font-size: 1.05rem; color: var(--muted); }
+.legal table code { font-size: 0.85em; }
+.unfilled { color: var(--against); font-style: italic; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }

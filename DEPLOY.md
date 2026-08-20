@@ -84,6 +84,36 @@ doivent bien être comptés ensemble.
 
 ---
 
+### Mentions légales
+
+Un site français ouvert au public doit dire qui l'édite et qui l'héberge (LCEN,
+article 6-III). Ces informations se règlent dans l'environnement, pas dans un
+gabarit :
+
+```bash
+LEGAL_EDITOR="Association Votations Françaises"
+LEGAL_EDITOR_ADDRESS="12 rue de l'Exemple, 75000 Paris"
+LEGAL_PUBLICATION_DIRECTOR="Prénom Nom"
+LEGAL_CONTACT_EMAIL="contact@exemple.fr"
+LEGAL_HOST="OVH SAS, 2 rue Kellermann, 59100 Roubaix, France"
+```
+
+Tant qu'elles sont vides, `/mentions-legales` affiche « Cette page est
+incomplète » et signale chaque champ manquant. C'est volontaire : sur la page qui
+dit qui est responsable du site, une valeur de remplissage crédible serait pire
+qu'une case vide. À renseigner avant d'ouvrir au public.
+
+Deux pages en découlent, liées depuis le pied de page de toutes les pages :
+`/mentions-legales` et `/vie-privee`. La seconde décrit les deux cookies, ce que
+le serveur conserve, et pourquoi il n'y a pas de bandeau de consentement — les
+deux cookies relèvent de l'exemption de l'article 82 de la loi Informatique et
+Libertés (strictement nécessaires à un service expressément demandé).
+
+**Elle décrit la configuration de production fournie ici.** Si vous réactivez les
+journaux d'accès, ajoutez un outil de mesure d'audience ou une ressource servie
+par un tiers, cette page devient fausse et doit être corrigée — et, dans le cas
+d'un traceur non exempté, un vrai bandeau de consentement devient obligatoire.
+
 ## 3. Démarrer
 
 ```bash

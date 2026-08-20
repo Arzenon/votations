@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Vie privée et cookies — Votations Françaises{% endblock %}
+{% block description %}Ce que Votations Françaises enregistre sur votre appareil et sur ses serveurs, et ce qu'il n'enregistre pas.{% endblock %}
+{% block content %}
+{# Écrite pour être vérifiable plutôt que rassurante : chaque affirmation ici
+   correspond à quelque chose qu'un lecteur peut retrouver dans le code ou dans
+   l'export en accès libre. D'où l'absence de formules du type « nous respectons
+   votre vie privée » : elles ne s'observent pas. #}
+<article class="law legal">
+  <h1>Vie privée et cookies</h1>
+
+  <p class="lede">
+    Cette page décrit exactement ce qui est enregistré, où, et pendant combien de
+    temps.
+  </p>
+
+  <section class="block">
+    <h2>En résumé</h2>
+    <ul>
+      <li>Lire le site n'enregistre rien : aucun cookie n'est déposé tant que vous ne votez pas.</li>
+      <li>Voter dépose un jeton aléatoire dans votre navigateur, pour éviter qu'une même personne vote deux fois sur la même loi.</li>
+      <li>Le serveur conserve votre choix, la loi concernée et la date — sans votre adresse IP.</li>
+      <li>Aucun service tiers n'est présent sur ce site : ni mesure d'audience, ni publicité, ni bouton de réseau social.</li>
+    </ul>
+  </section>
+
+  <section class="block">
+    <h2>Ce qui est déposé dans votre navigateur</h2>
+    <div class="table-scroll">
+      <table class="evolution">
+        <thead>
+          <tr><th>Nom</th><th>Déposé</th><th>Contenu</th><th>Durée</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>vf_voter</code></td>
+            <td>au moment où vous votez, jamais avant</td>
+            <td>
+              Un identifiant aléatoire, signé. Il ne contient ni votre nom, ni
+              votre vote, et n'est relié à aucune information vous concernant. Le
+              serveur n'en conserve qu'une empreinte : même en accédant à la base
+              de données, ce cookie ne peut pas y être retrouvé.
+            </td>
+            <td>un an</td>
+          </tr>
+          <tr>
+            <td><code>vf_profil</code></td>
+            <td>seulement si vous renseignez une information de profil</td>
+            <td>
+              Les catégories que vous avez indiquées (tranche d'âge, sexe,
+              région), loi par loi. <strong>Jamais votre vote.</strong> Il sert
+              uniquement à corriger les compteurs si vous changez d'avis : sans
+              lui, votre ancienne réponse resterait comptée.
+            </td>
+            <td>un an</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta">
+      Ces deux cookies sont déposés par ce site seul. Aucun tiers n'y a accès et
+      aucun autre cookie n'est utilisé.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Pourquoi il n'y a pas de bandeau cookies</h2>
+    <p>
+      La loi française impose de recueillir votre consentement avant de déposer un
+      cookie — <em>sauf</em> lorsque celui-ci est strictement nécessaire à un
+      service que vous avez vous-même demandé (article 82 de la loi Informatique
+      et Libertés). C'est le cas des deux cookies ci-dessus : ils ne sont déposés
+      qu'au moment où vous votez, et le vote ne peut pas fonctionner sans eux.
+    </p>
+    <p>
+      Vous demander une autorisation que la loi n'exige pas reviendrait à vous
+      laisser croire que vous pouvez refuser. Vous le pouvez, en bloquant les
+      cookies dans votre navigateur — mais le vote cesserait alors de fonctionner,
+      et un bandeau qui ne change rien n'est qu'un obstacle de plus.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Ce que le serveur conserve</h2>
+    <p>Pour chaque vote, une ligne contenant quatre choses :</p>
+    <ul>
+      <li>la loi concernée ;</li>
+      <li>le choix exprimé (pour, contre, abstention) ;</li>
+      <li>la date et l'heure ;</li>
+      <li>l'empreinte du jeton déposé dans votre navigateur, qui sert à vérifier que vous n'avez pas déjà voté sur cette loi.</li>
+    </ul>
+    <p>
+      Les informations de profil que vous choisissez de donner ne sont
+      <strong>pas</strong> enregistrées à côté de votre vote. Elles sont ajoutées à
+      des compteurs collectifs — « sur cette loi, N personnes de 35 à 49 ans ont
+      voté pour » — puis oubliées. Aucune ligne, nulle part, ne relie une personne
+      à la fois à son profil et à son vote.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Ce qui n'est pas collecté</h2>
+    <ul>
+      <li>Aucune création de compte, aucune adresse électronique, aucun nom.</li>
+      <li>Aucune adresse IP dans les journaux : ils sont désactivés des deux côtés, précisément parce qu'ils associeraient une adresse à l'heure d'un vote.</li>
+      <li>Aucune mesure d'audience, aucun traceur publicitaire, aucune ressource chargée depuis un autre domaine.</li>
+      <li>Aucune donnée de navigation ni de localisation.</li>
+    </ul>
+    <p class="meta">
+      Votre adresse est lue le temps d'une requête, en mémoire seulement, pour
+      limiter le nombre de votes envoyés depuis une même connexion en quelques
+      minutes. Elle n'est jamais écrite sur disque et disparaît au redémarrage.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Ce qui est publié</h2>
+    <p>
+      Les résultats de chaque votation sont téléchargeables en accès libre : la
+      loi, le choix, et un horodatage arrondi. Aucun identifiant, aucune ligne
+      permettant de reconnaître une personne. En dessous d'un certain nombre de
+      votes, l'horodatage est retiré et les répartitions par profil ne sont pas
+      affichées — publier une répartition sur trop peu de personnes reviendrait à
+      les désigner.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Vos droits, et leur limite</h2>
+    <p>
+      Le règlement européen vous donne un droit d'accès, de rectification et
+      d'effacement sur les données qui vous concernent. Ici, ce droit se heurte à
+      la conception même du site : rien ne permet de relier un vote à une
+      personne, y compris pour nous. Nous ne pouvons donc ni vous montrer « vos »
+      votes, ni les supprimer individuellement — non par refus, mais parce que
+      l'information qui le permettrait n'existe pas.
+    </p>
+    <p>
+      Ce que vous pouvez faire : effacer les cookies de ce site dans votre
+      navigateur. Le lien entre votre appareil et les votes déjà exprimés
+      disparaît alors définitivement. Ces votes restent comptés — ils ne peuvent
+      plus être retrouvés — et vous pourrez voter à nouveau sur les votations
+      encore ouvertes.
+    </p>
+    <p>
+      Si vous estimez que ce traitement ne respecte pas vos droits, vous pouvez
+      saisir la <a href="https://www.cnil.fr/fr/plaintes" rel="noopener noreferrer" target="_blank">CNIL</a>.
+    </p>
+  </section>
+
+  <section class="block">
+    <h2>Nous écrire</h2>
+    {% if contact_email %}
+    <p>Pour toute question sur cette page : <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+    {% else %}
+    <p class="unfilled">Aucune adresse de contact n'est renseignée pour le moment.</p>
+    {% endif %}
+    <p class="meta"><a href="/mentions-legales">Mentions légales</a></p>
+  </section>
+</article>
+{% endblock %}
