@@ -73,7 +73,8 @@ class ImportedLaw(Base):
     seances: Mapped[list] = mapped_column(JSON, default=list)
 
     # Review state, owned by the admin and never overwritten by the import job.
-    status: Mapped[str] = mapped_column(String(16), default=STATUS_NEW)
+    # Indexed: every admin page counts the rows still awaiting a decision.
+    status: Mapped[str] = mapped_column(String(16), default=STATUS_NEW, index=True)
     law_id: Mapped[int | None] = mapped_column(
         ForeignKey("laws.id", ondelete="SET NULL"), default=None
     )
@@ -88,4 +89,8 @@ class ImportedLaw(Base):
     draft_error: Mapped[str | None] = mapped_column(Text, default=None)
 
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Indexed: the dashboard takes max() of this on every render to decide
+    # whether the automatic import has gone quiet.
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )

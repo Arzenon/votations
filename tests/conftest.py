@@ -16,6 +16,7 @@ at the ``db`` service.
 """
 
 import os
+from concurrent.futures import Future
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
@@ -39,8 +41,28 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 
+UNREACHABLE = """\
+PostgreSQL est injoignable sur {url}
+
+La suite s'exécute contre une vraie base : le schéma est construit par les
+migrations, et plusieurs comportements testés (upsert ON CONFLICT, date_trunc,
+suppression en cascade) n'existent que dans PostgreSQL.
+
+  docker compose up -d db
+  # ou, si la base tourne ailleurs :
+  TEST_DATABASE_URL=postgresql+psycopg://user:pass@hôte:5432/votations_test pytest
+
+Erreur : {error}"""
+
+
 def _ensure_database(url: str) -> None:
-    """Create the target database if absent (CREATE DATABASE needs autocommit)."""
+    """Create the target database if absent (CREATE DATABASE needs autocommit).
+
+    A database that cannot be reached ends the run with one readable message.
+    Letting the connection error escape gave 124 identical fixture errors that
+    said "connection refused" in the middle of a stack trace — indistinguishable,
+    at a glance, from a real regression.
+    """
     url_obj = make_url(url)
     db_name = url_obj.database
     admin = create_engine(url_obj.set(database="postgres"), isolation_level="AUTOCOMMIT")
@@ -51,6 +73,9 @@ def _ensure_database(url: str) -> None:
             ).scalar()
             if not exists:
                 conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+    except OperationalError as exc:
+        masked = url_obj.set(database=db_name).render_as_string(hide_password=True)
+        pytest.exit(UNREACHABLE.format(url=masked, error=exc.orig or exc), returncode=1)
     finally:
         admin.dispose()
 
@@ -169,11 +194,42 @@ class _NoCloseSession:
         pass
 
 
+_QUEUED: list[tuple] = []
+
+
+class _DeferredExecutor:
+    """Queues a submitted job instead of running it on another thread.
+
+    Drafting normally goes to its own thread pool so a ten-minute job cannot eat
+    request capacity. A real pool in a test would mean asserting against a job
+    racing on another thread, and sharing the test's Session across threads, which
+    is not safe.
+
+    Queueing reproduces the ordering that matters — schedule, answer the request,
+    *then* run — so a test can still see the "en cours" banner the administrator
+    sees, and `drain_drafts()` runs what was queued afterwards.
+    """
+
+    def submit(self, fn, *args, **kwargs):
+        _QUEUED.append((fn, args, kwargs))
+        return Future()
+
+
+def drain_drafts() -> None:
+    """Run every draft queued so far, as the pool would have."""
+    while _QUEUED:
+        fn, args, kwargs = _QUEUED.pop(0)
+        fn(*args, **kwargs)
+
+
 @pytest.fixture
 def background_db(db_session, monkeypatch):
-    """Run background jobs against the test transaction."""
+    """Run background jobs against the test transaction, on this thread."""
     monkeypatch.setattr("app.drafting.SessionLocal", lambda: _NoCloseSession(db_session))
-    return db_session
+    monkeypatch.setattr("app.drafting._executor", _DeferredExecutor)
+    _QUEUED.clear()
+    yield db_session
+    _QUEUED.clear()
 
 
 @pytest.fixture(autouse=True)

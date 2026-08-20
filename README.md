@@ -377,23 +377,52 @@ concerné, voici la carte :
   Lire à gauche revenait à laisser l'attaquant choisir sa propre clé de comptage.
   Le Caddyfile réécrit l'en-tête plutôt que de l'allonger, et la table de suivi est
   bornée : passé le plafond, on refuse au lieu de grandir.
-- **Connexions administrateur.** Comparaison à temps constant *et* limitation des
-  échecs : un couple d'identifiants statique sans verrouillage se devine à la
-  vitesse du réseau.
+- **Connexions administrateur.** Comparaison à temps constant *et* refus des
+  tentatives : un couple d'identifiants statique sans verrouillage se devine à la
+  vitesse du réseau. Au-delà de `ADMIN_RATE_LIMIT` échecs, *toute* tentative
+  depuis cette adresse est refusée pendant la fenêtre — y compris avec le bon mot
+  de passe. C'est délibéré dans les deux sens : compter les échecs sans les
+  refuser ne ralentissait rien, et ne refuser que la tentative *réussie*
+  transformait la limite en oracle (un 429 signifiait « ce mot de passe était le
+  bon »). Seuls les échecs alimentent le compteur, donc un administrateur qui
+  travaille n'est jamais ralenti.
 - **URL stockées.** Les liens saisis dans l'administration (sources d'arguments,
-  lien Légifrance) sont restreints à `http`/`https` avant enregistrement : ils sont
-  rendus en `href` sur la page publique, et la V3 ouvre ce formulaire à tout
+  lien Légifrance) sont restreints à `http`/`https` — **refusés** avec un message,
+  plutôt que vidés en silence — et re-filtrés au moment du rendu. Deux passages
+  parce qu'il y a deux chemins : le formulaire protège ce qu'on y saisit, le filtre
+  de gabarit protège aussi ce qui vient d'ailleurs (données de démonstration,
+  migration, écriture directe en base). La V3 ouvre ce formulaire à tout
   utilisateur authentifié.
-- **En-têtes.** Le Caddyfile pose une CSP stricte (`script-src 'self'`, aucun
-  `unsafe-inline`), HSTS, `nosniff`, `frame-ancestors 'none'` et une
-  `Permissions-Policy` fermée. Aucun script ni style en ligne dans les gabarits :
+- **Modifications après publication.** Toute modification d'une loi *publiée* est
+  enregistrée (`law_revisions`) et affichée publiquement sur la page de résultats,
+  avec la valeur avant et après. Sans cela, un texte pouvait être réécrit pendant
+  le vote et le résultat publié aurait décrit un texte que personne n'avait lu.
+  Les brouillons non publiés ne sont pas tracés : personne n'a encore voté.
+- **Suppression.** Une votation s'**archive** — elle quitte le site, ses votes sont
+  conservés, l'opération est réversible. La suppression définitive n'est proposée
+  que depuis les archives, sur une page de confirmation rendue par le serveur (et
+  non par un attribut JavaScript, qui ne s'exécutait pas sans JS).
+- **En-têtes.** L'application pose elle-même CSP stricte (`script-src 'self'`,
+  aucun `unsafe-inline`), `nosniff`, `frame-ancestors 'none'` et
+  `Permissions-Policy` fermée ; le Caddyfile pose les mêmes, plus HSTS, et
+  l'emporte quand il est là. Les deux, parce que dépendre d'un proxy particulier
+  signifiait qu'un déploiement derrière autre chose n'avait plus aucun en-tête,
+  sans le moindre signal. Les pages ne sont par défaut **jamais mises en cache**
+  (`private, no-store`) : la page d'une loi affiche le bulletin de la personne qui
+  la lit. Seuls les fichiers statiques, empreintés par leur contenu, sont mis en
+  cache durablement. Aucun script ni style en ligne dans les gabarits :
   les largeurs de barres et les confirmations passent par `static/app.js`, qui
   n'est qu'un rehaussement — tout fonctionne sans JavaScript.
 - **Surface exposée.** En production, `/docs`, `/redoc` et `/openapi.json` sont
   désactivés : le schéma énumère toutes les routes d'administration.
 - **Image.** Utilisateur non privilégié, aucune dépendance de développement,
-  versions figées (`requirements.lock`), limites mémoire sur les services qui
-  décompressent des archives publiques.
+  versions figées **et empreintées** (`requirements.lock`, installé avec
+  `--require-hashes`), limites mémoire sur les services qui décompressent des
+  archives publiques.
+- **Identifiants ASCII.** `ADMIN_USERNAME` et `ADMIN_PASSWORD` doivent être en
+  ASCII et l'application refuse de démarrer autrement : Starlette décode l'en-tête
+  HTTP Basic en ASCII, donc un mot de passe accentué ne peut jamais correspondre —
+  il n'aurait fait qu'enfermer dehors l'administrateur, sans explication.
 
 ## Journaux
 

@@ -14,13 +14,13 @@ def test_search_matches_summary_and_title(db_session):
         ]
     )
     db_session.commit()
-    rows, total = laws_crud.search(db_session, query="climat")
+    rows, total, _pages = laws_crud.search(db_session, query="climat")
     assert total == 1
     assert rows[0].slug == "a"
 
 
 def test_search_status_filter(db_session, open_law, closed_law):
-    rows, _ = laws_crud.search(db_session, status="closed")
+    rows, _total, _pages = laws_crud.search(db_session, status="closed")
     assert [law.slug for law in rows] == ["loi-close"]
 
 

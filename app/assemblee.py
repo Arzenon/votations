@@ -10,7 +10,7 @@ Design notes:
 - Any failure raises :class:`AssembleeFetchError`; callers leave the cache intact.
 - The export is a mechanical XML→JSON conversion, so single-element collections
   collapse from a list to a bare object. Every collection is normalised through
-  :func:`_as_list` and the acts are walked recursively — never indexed.
+  :func:`~app.opendata.as_list` and the acts are walked recursively — never indexed.
 - The legislature number is part of the export URL and changes once per
   legislature, which is why it lives in settings rather than in this module.
 """
@@ -20,13 +20,12 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-import httpx
-
 from app.config import get_settings
+from app.opendata import Getter, as_list, getter
 
 # Entries of interest inside the archive; the export also ships a `json/document/`
 # tree of bill/report notices, which carries no promulgation information.
@@ -69,31 +68,13 @@ class PromulgatedLaw:
     seances: list[dict] = field(default_factory=list)
 
 
-Getter = Callable[[str], bytes]
-
-
-def _default_getter(url: str) -> bytes:
-    # A generous timeout: the archive is ~10 MB and served from a public portal.
-    try:
-        resp = httpx.get(url, timeout=120.0, follow_redirects=True)
-        resp.raise_for_status()
-        return resp.content
-    except httpx.HTTPError as exc:
-        raise AssembleeFetchError(str(exc)) from exc
-
-
-def _as_list(node: object) -> list:
-    """Normalise an XML→JSON collection that may have collapsed to one object."""
-    if node is None:
-        return []
-    if isinstance(node, list):
-        return node
-    return [node]
+# A generous timeout: the archive is ~10 MB and served from a public portal.
+_default_getter = getter(timeout=120.0, error=AssembleeFetchError)
 
 
 def _iter_actes(node: object) -> Iterator[dict]:
     """Yield every acte in the tree, at any nesting depth."""
-    for acte in _as_list(node):
+    for acte in as_list(node):
         if not isinstance(acte, dict):
             continue
         yield acte

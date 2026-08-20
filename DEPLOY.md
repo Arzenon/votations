@@ -135,6 +135,40 @@ résultat ne contient ni schéma ni table `votes`, rien n'est conservé et le co
 de sortie est non nul. Une sauvegarde silencieusement vide est pire que pas de
 sauvegarde du tout.
 
+Le conteneur déclare une sonde de santé fondée sur la date du dernier dump
+*réussi* : une sauvegarde qui a cessé de fonctionner apparaît comme `unhealthy`
+sous 48 h, au lieu de rester un conteneur « en cours d'exécution » qui ne produit
+plus rien. Les services `assemblee-refresh` et `insee-refresh` font de même.
+
+### Espace disque
+
+C'est le mode de défaillance qui emporte tout le reste : Postgres, ses journaux
+et les sauvegardes partagent le même disque, et une partition pleine arrête la
+base — donc les votes en cours.
+
+Trois garde-fous, et une habitude :
+
+* le script **refuse de démarrer un dump** s'il reste moins de
+  `BACKUP_MIN_FREE_MB` (500 Mo par défaut) et prévient en dessous du double ;
+* la rétention supprime les dumps de plus de `BACKUP_KEEP_DAYS` jours ;
+* archiver une votation ne libère rien — c'est le but : les votes sont conservés.
+  La suppression définitive, depuis `/admin/archives`, est le seul geste qui rend
+  de l'espace, et elle est irréversible. Exportez les données avant.
+
+L'habitude : surveiller le disque comme le reste.
+
+```bash
+# occupation du volume de sauvegardes et de la base
+docker compose -f docker-compose.prod.yml exec db-backup df -h /backups
+docker compose -f docker-compose.prod.yml exec db \
+  psql -U votations -c "SELECT pg_size_pretty(pg_database_size('votations'))"
+```
+
+Ordre de grandeur : un vote occupe quelques dizaines d'octets. Un million de
+votes tient dans une centaine de mégaoctets, dumps compressés compris. Le disque
+se remplit bien plus vite avec les journaux et les images Docker qu'avec les
+votes — `docker system prune` avant de supprimer quoi que ce soit de civique.
+
 ### Copier hors de la machine
 
 Une sauvegarde sur le VPS protège contre « j'ai cassé les données ». Elle ne

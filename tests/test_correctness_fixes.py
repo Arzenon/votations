@@ -262,7 +262,7 @@ def test_search_pages_in_sql_not_in_python(db_session):
 
     event.listen(bind, "before_cursor_execute", record)
     try:
-        rows, total = laws_crud.search(db_session, page=2, page_size=20)
+        rows, total, _pages = laws_crud.search(db_session, page=2, page_size=20)
     finally:
         event.remove(bind, "before_cursor_execute", record)
 
@@ -273,8 +273,8 @@ def test_search_pages_in_sql_not_in_python(db_session):
 
 
 def test_search_by_status_filters_correctly(db_session, open_law, closed_law):
-    opened, _ = laws_crud.search(db_session, status="open")
-    closed, _ = laws_crud.search(db_session, status="closed")
+    opened, _, _pages = laws_crud.search(db_session, status="open")
+    closed, _, _pages = laws_crud.search(db_session, status="closed")
     assert [law.slug for law in opened] == [open_law.slug]
     assert [law.slug for law in closed] == [closed_law.slug]
 
@@ -283,10 +283,10 @@ def test_a_wildcard_typed_in_the_box_is_searched_for_literally(db_session):
     db_session.add(Law(slug="pourcent", title="Loi 100 % renouvelable", published=True))
     db_session.add(Law(slug="autre", title="Loi ordinaire", published=True))
     db_session.commit()
-    _, total = laws_crud.search(db_session, query="100 %")
+    _, total, _pages = laws_crud.search(db_session, query="100 %")
     assert total == 1
     # A bare "%" is a character to look for, not "match everything".
-    hits, count = laws_crud.search(db_session, query="%")
+    hits, count, _pages = laws_crud.search(db_session, query="%")
     assert count == 1
     assert hits[0].slug == "pourcent"
     # "_" is the other LIKE wildcard: it must not stand for any character.

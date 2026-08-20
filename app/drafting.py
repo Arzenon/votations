@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -32,6 +33,37 @@ from app.legifrance import LegifranceFetchError, fetch_law_text
 from app.logging_config import get_logger
 
 log = get_logger("drafting")
+
+# Drafts run on their own small pool, not on the thread pool that serves
+# requests. Starlette runs a sync background task on the request pool, which is
+# capped at `db_max_threads`; a draft holds its thread for as long as
+# `ai_draft_deadline_seconds` (ten minutes by default), so a couple of concurrent
+# drafts used to take a visible slice of the site's capacity with them. Here the
+# worst case is that drafts queue behind each other, which is the right queue to
+# be in.
+_pool: ThreadPoolExecutor | None = None
+
+
+def _executor() -> ThreadPoolExecutor:
+    global _pool
+    if _pool is None:
+        _pool = ThreadPoolExecutor(
+            max_workers=get_settings().draft_workers, thread_name_prefix="draft"
+        )
+    return _pool
+
+
+def schedule_draft(item_id: int) -> Future:
+    """Queue a draft run. Returns immediately; the form polls for the outcome."""
+    return _executor().submit(build_draft, item_id)
+
+
+def shutdown_drafting() -> None:
+    """Stop accepting drafts and let the app exit without waiting ten minutes."""
+    global _pool
+    if _pool is not None:
+        _pool.shutdown(wait=False, cancel_futures=True)
+        _pool = None
 
 
 class DeadlineExceeded(RuntimeError):

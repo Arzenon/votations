@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ law.title }} — Votations Françaises{% endblock %}
 {% block description %}{{ (law.summary_text or law.title)[:180] }}{% endblock %}
+{% block scripts %}<script src="{{ asset_url('htmx.min.js') }}" defer></script>{% endblock %}
 {% block content %}
 <article class="law">
   <p class="breadcrumb"><a href="/">← Toutes les votations</a></p>
@@ -9,7 +10,8 @@
   {% if law.official_ref %}
   <p class="official-ref">
     Référence : {{ law.official_ref }}
-    {% if law.legifrance_url %}— <a href="{{ law.legifrance_url }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)</a>{% endif %}
+    {% set officiel = law.legifrance_url | safe_href %}
+    {% if officiel %}— <a href="{{ officiel }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)</a>{% endif %}
   </p>
   {% endif %}
 
@@ -31,10 +33,11 @@
         {% for arg in law.arguments_for %}
         <li>
           <p>{{ arg.text }}</p>
-          {% if arg.author or arg.source %}
+          {% set source = arg.source | safe_href %}
+          {% if arg.author or source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
+            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
           </p>
           {% endif %}
         </li>
@@ -50,10 +53,11 @@
         {% for arg in law.arguments_against %}
         <li>
           <p>{{ arg.text }}</p>
-          {% if arg.author or arg.source %}
+          {% set source = arg.source | safe_href %}
+          {% if arg.author or source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if arg.source %}— <a href="{{ arg.source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
+            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source</a>{% endif %}
           </p>
           {% endif %}
         </li>
@@ -72,6 +76,13 @@
       {% include "_results_bars.html" %}
     {% endif %}
   </section>
+
+  {% if revision_count %}
+  <p class="revised-note">
+    Ce texte de présentation a été modifié {{ revision_count }} fois depuis sa
+    publication. <a href="/loi/{{ law.slug }}/resultats#historique">Voir l'historique des modifications</a>.
+  </p>
+  {% endif %}
 
   <p class="disclaimer-inline">⚠️ {{ DISCLAIMER }}</p>
 

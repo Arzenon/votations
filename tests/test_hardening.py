@@ -86,7 +86,7 @@ def test_the_error_says_how_to_generate_a_key():
 # --- Cross-site admin requests ------------------------------------------------
 
 
-def test_the_delete_route_rejects_a_cross_site_post(client, open_law):
+def test_the_archive_route_rejects_a_cross_site_post(client, open_law):
     """The attack: a page the admin visits while authenticated deletes a law."""
     r = client.post(
         f"/admin/lois/{open_law.id}/supprimer",
@@ -119,7 +119,7 @@ def test_a_lookalike_host_is_rejected(client, open_law):
 
 def test_the_admins_own_form_still_works(client, open_law):
     r = client.post(
-        f"/admin/lois/{open_law.id}/supprimer",
+        f"/admin/lois/{open_law.id}/archiver",
         headers={**_admin_auth(), "Origin": "http://testserver"},
         follow_redirects=False,
     )
@@ -277,7 +277,11 @@ def test_the_tracking_table_is_bounded(monkeypatch):
         for i in range(400)
     )
     assert len(ratelimit._hits) <= 50
-    assert refused > 0, "past the cap, further addresses are refused rather than tracked"
+    # Past the cap the least recently active entries are evicted, and the caller
+    # is still admitted. Refusing instead — which is what this used to do — turned
+    # a flood into a site-wide outage for every address not already tracked, which
+    # is precisely the outcome an attacker was after.
+    assert refused == 0, "a full table must evict, not refuse legitimate voters"
     ratelimit.reset()
 
 
@@ -369,25 +373,57 @@ def test_production_hides_the_api_schema():
 # --- Stored links -------------------------------------------------------------
 
 
-def test_a_javascript_url_never_reaches_a_page(client, db_session):
+def test_a_javascript_url_is_refused_not_silently_blanked(client, db_session):
     """V3 opens this form to every authenticated user; an href is executable."""
     from app.models import Law
 
-    client.post(
+    r = client.post(
         "/admin/lois",
         headers={**_admin_auth(), "Origin": "http://testserver"},
         data={
             "title": "Loi piégée",
             "published": "1",
             "legifrance_url": "javascript:alert(1)",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 400
+    assert "http(s)" in r.text
+    assert db_session.query(Law).filter_by(title="Loi piégée").first() is None
+
+
+def test_a_javascript_argument_source_is_refused_too(client, db_session):
+    from app.models import Law
+
+    r = client.post(
+        "/admin/lois",
+        headers={**_admin_auth(), "Origin": "http://testserver"},
+        data={
+            "title": "Loi piégée 2",
+            "published": "1",
             "arguments_for": '[{"text":"t","author":"a","source":"javascript:alert(1)"}]',
         },
         follow_redirects=False,
     )
-    law = db_session.query(Law).filter_by(title="Loi piégée").one()
-    assert law.legifrance_url is None
-    assert law.arguments_for[0]["source"] == ""
+    assert r.status_code == 400
+    assert db_session.query(Law).filter_by(title="Loi piégée 2").first() is None
+
+
+def test_a_stored_javascript_url_still_never_renders(client, db_session):
+    """Defence in depth: a row that predates the form check must stay inert."""
+    from app.models import Law
+
+    law = Law(
+        slug="loi-heritee",
+        title="Loi héritée",
+        published=True,
+        legifrance_url="javascript:alert(1)",
+        arguments_for=[{"text": "t", "author": "a", "source": "javascript:alert(1)"}],
+    )
+    db_session.add(law)
+    db_session.commit()
     page = client.get(f"/loi/{law.slug}")
+    assert page.status_code == 200
     assert "javascript:" not in page.text
 
 

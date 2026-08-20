@@ -1,5 +1,6 @@
 """INSEE reference: offline fetch/parse + DB cache fallback."""
 
+import json
 from urllib.parse import parse_qs, urlparse
 
 from app import insee
@@ -35,8 +36,17 @@ QUINQUENNAL = {
 }
 
 
-def fake_get(url: str) -> dict:
-    """Stand-in for the Melodi API, keyed on the GEO/SEX/AGE query parameters."""
+def fake_get(url: str) -> bytes:
+    """Stand-in for the Melodi API, keyed on the GEO/SEX/AGE query parameters.
+
+    Returns bytes, like every other injected getter in the app: Melodi answers
+    JSON, but the seam is the same one the Journal Officiel and the Assemblée
+    nationale use, and decoding belongs to the module that knows the format.
+    """
+    return json.dumps(_fake_payload(url)).encode()
+
+
+def _fake_payload(url: str) -> dict:
     q = parse_qs(urlparse(url).query)
     geo = q["GEO"][0]
     _prefix, level, code = geo.split("-", 2)
@@ -88,9 +98,13 @@ def test_fetch_reference_raises_on_unreachable():
         pass
 
 
+def _reference(db, dimension):
+    return demo_crud.all_references(db)[dimension]
+
+
 def test_get_reference_prefers_cache_then_falls_back(db_session, open_law):
     # No rows → curated fallback constant, no source year.
-    mapping, year = demo_crud.get_reference(db_session, "sexe")
+    mapping, year = _reference(db_session, "sexe")
     assert year is None
     assert mapping["femme"] == 51.5  # from INSEE_REFERENCE constant
 
@@ -99,6 +113,6 @@ def test_get_reference_prefers_cache_then_falls_back(db_session, open_law):
         InseeReference(dimension="sexe", category="femme", percentage=49.9, source_year=2026)
     )
     db_session.commit()
-    mapping, year = demo_crud.get_reference(db_session, "sexe")
+    mapping, year = _reference(db_session, "sexe")
     assert year == 2026
     assert mapping["femme"] == 49.9

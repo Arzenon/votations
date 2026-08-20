@@ -3,6 +3,10 @@
 Only three numbers are ever surfaced publicly: % for / % against / % abstain and
 the total voter count. The V1 evolution curve buckets votes over time, gated by a
 minimum volume to prevent re-identification.
+
+Several functions here need the same number — how many votes this law has — to
+decide what may be published. They all take it as an optional argument so a page
+that already knows it counts once instead of four times.
 """
 
 from __future__ import annotations
@@ -61,28 +65,32 @@ def tallies_for(db: Session, law_ids: list[int]) -> dict[int, Tally]:
     return {law_id: _tally_from_counts(c) for law_id, c in counts.items()}
 
 
+def count_votes(db: Session, law_id: int) -> int:
+    return db.scalar(select(func.count()).select_from(Vote).where(Vote.law_id == law_id)) or 0
+
+
 @dataclass
 class EvolutionBucket:
     label: str
     counts: dict[str, int] = field(default_factory=dict)
 
 
-def evolution(db: Session, law_id: int, *, granularity: str = "day") -> list[EvolutionBucket]:
-    """Vote counts bucketed over time (V1).
+def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[EvolutionBucket]:
+    """Daily vote counts over time (V1).
 
-    Returns an empty list until the total reaches ``MIN_BUCKET_VOLUME`` so that
+    Returns an empty list until the total reaches ``min_bucket_volume`` so that
     low-volume votations cannot be used to re-identify or fingerprint voters.
 
     Bucketing happens in the database: reading every vote row back into Python to
     group it was the single most expensive query in the application.
     """
     settings = get_settings()
-    total = db.scalar(select(func.count()).select_from(Vote).where(Vote.law_id == law_id)) or 0
+    if total is None:
+        total = count_votes(db, law_id)
     if total < settings.min_bucket_volume:
         return []
 
-    unit = "hour" if granularity == "hour" else "day"
-    bucket = func.date_trunc(unit, func.timezone("UTC", Vote.created_at))
+    bucket = func.date_trunc("day", func.timezone("UTC", Vote.created_at))
     rows = db.execute(
         select(bucket.label("bucket"), Vote.choice, func.count())
         .where(Vote.law_id == law_id)
@@ -90,27 +98,17 @@ def evolution(db: Session, law_id: int, *, granularity: str = "day") -> list[Evo
         .order_by("bucket")
     ).all()
 
-    fmt = "%Y-%m-%d %H:00" if unit == "hour" else "%Y-%m-%d"
     out: dict[str, dict[str, int]] = {}
     for moment, choice, n in rows:
-        label = moment.strftime(fmt)
+        label = moment.strftime("%Y-%m-%d")
         out.setdefault(label, {c.value: 0 for c in VoteChoice})[choice] = n
     return [EvolutionBucket(label=label, counts=counts) for label, counts in sorted(out.items())]
 
 
-def export_rows(db: Session, law_id: int) -> list[dict]:
-    """Raw anonymised rows for open-data export (materialised).
-
-    Kept for callers that need the whole set at once — the JSON export. The CSV
-    export streams :func:`iter_export_rows` instead.
-    """
-    return list(iter_export_rows(db, law_id))
-
-
-def export_note(db: Session, law_id: int) -> str:
+def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
     """What was withheld from this law's export, in the words shown to readers."""
     settings = get_settings()
-    if not _timestamps_allowed(db, law_id):
+    if not _timestamps_allowed(db, law_id, total=total):
         return (
             "L'horodatage est omis : cette votation compte moins de "
             f"{settings.min_bucket_volume} votes, seuil en dessous duquel la "
@@ -128,19 +126,21 @@ def export_note(db: Session, law_id: int) -> str:
     )
 
 
-def _timestamps_allowed(db: Session, law_id: int) -> bool:
+def _timestamps_allowed(db: Session, law_id: int, *, total: int | None = None) -> bool:
     """Whether this law has enough votes for a time column to be publishable.
 
     The evolution curve is withheld below ``min_bucket_volume``. An export
     carrying per-vote times would hand back exactly what that gate withholds — at
     any resolution the reader chooses — so the same gate applies here.
     """
-    settings = get_settings()
-    total = db.scalar(select(func.count()).select_from(Vote).where(Vote.law_id == law_id)) or 0
-    return total >= settings.min_bucket_volume
+    if total is None:
+        total = count_votes(db, law_id)
+    return total >= get_settings().min_bucket_volume
 
 
-def iter_export_rows(db: Session, law_id: int, *, chunk: int = 1000) -> Iterator[dict]:
+def iter_export_rows(
+    db: Session, law_id: int, *, chunk: int = 1000, total: int | None = None
+) -> Iterator[dict]:
     """Raw anonymised rows, streamed.
 
     Contains ONLY law_id, choice and created_at. No voter token, no identifier.
@@ -160,7 +160,7 @@ def iter_export_rows(db: Session, law_id: int, *, chunk: int = 1000) -> Iterator
     """
     resolution = get_settings().export_time_resolution
     trunc = _EXPORT_TRUNC.get(resolution)
-    with_time = _timestamps_allowed(db, law_id)
+    with_time = _timestamps_allowed(db, law_id, total=total)
 
     if not with_time:
         moment = literal(None)

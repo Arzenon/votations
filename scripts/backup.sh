@@ -15,9 +15,27 @@ set -e
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 INTERVAL="${BACKUP_INTERVAL:-86400}"
+# Refuse to start a dump with less than this free (MB). A dump that fills the
+# disk does not just fail: it takes the database down with it, and Postgres is on
+# the same host. Archived votations are kept for ever now, so the data only ever
+# grows — see « Espace disque » dans DEPLOY.md.
+MIN_FREE_MB="${BACKUP_MIN_FREE_MB:-500}"
+HEARTBEAT="${BACKUP_HEARTBEAT:-/tmp/backup-alive}"
+
+free_mb() {
+  df -Pm "$1" 2>/dev/null | awk 'NR==2 {print $4}'
+}
 
 dump() {
   mkdir -p "$BACKUP_DIR"
+
+  free=$(free_mb "$BACKUP_DIR")
+  if [ -n "$free" ] && [ "$free" -lt "$MIN_FREE_MB" ]; then
+    echo "✗ espace insuffisant : ${free} Mo libres, minimum ${MIN_FREE_MB} Mo." >&2
+    echo "  Libérez de l'espace ou copiez les sauvegardes hors de la machine." >&2
+    return 1
+  fi
+
   stamp=$(date -u +%Y%m%d-%H%M%S)
   target="$BACKUP_DIR/votations-$stamp.sql.gz"
   raw="$BACKUP_DIR/.votations-$stamp.sql"
@@ -45,6 +63,15 @@ dump() {
   echo "→ sauvegarde : $target ($(wc -c < "$target") octets)"
 
   find "$BACKUP_DIR" -name 'votations-*.sql.gz' -type f -mtime "+$KEEP_DAYS" -print -delete
+
+  # Touched only after a dump that passed every check, so the healthcheck reports
+  # the age of the last *good* backup rather than the age of the container.
+  : > "$HEARTBEAT"
+
+  remaining=$(free_mb "$BACKUP_DIR")
+  if [ -n "$remaining" ] && [ "$remaining" -lt $((MIN_FREE_MB * 2)) ]; then
+    echo "⚠ espace faible : ${remaining} Mo libres après sauvegarde." >&2
+  fi
 }
 
 case "${1:-dump}" in

@@ -12,10 +12,6 @@
   personne avant toute mise au vote.
 </p>
 
-{% if error %}
-<p class="disclaimer"><strong>Brouillon impossible.</strong> {{ error }}</p>
-{% endif %}
-
 <p>
   {% if statut == 'tous' %}
     <a class="button" href="/admin/imports">Voir seulement les nouvelles</a>
@@ -42,9 +38,10 @@
         {{ item.title }}
         <br>
         <small>
-          <a href="{{ item.dossier_url }}" rel="noopener noreferrer" target="_blank">Dossier AN</a>
-          {% if item.legifrance_url %}
-            · <a href="{{ item.legifrance_url }}" rel="noopener noreferrer" target="_blank">Légifrance</a>
+          <a href="{{ item.dossier_url | safe_href }}" rel="noopener noreferrer" target="_blank">Dossier AN</a>
+          {% set lf = item.legifrance_url | safe_href %}
+          {% if lf %}
+            · <a href="{{ lf }}" rel="noopener noreferrer" target="_blank">Légifrance</a>
           {% endif %}
         </small>
       </td>
@@ -71,6 +68,14 @@
   </tbody>
 </table>
 </div>
+
+{% if pages > 1 %}
+<nav class="pagination" aria-label="Pages">
+  {% if page > 1 %}<a href="/admin/imports?statut={{ statut }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
+  <span>Page {{ page }} / {{ pages }} ({{ total }} lois)</span>
+  {% if page < pages %}<a href="/admin/imports?statut={{ statut }}&page={{ page + 1 }}">Suivant →</a>{% endif %}
+</nav>
+{% endif %}
 {% else %}
 <p>Aucune loi en attente.</p>
 {% endif %}

@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import check_production_config, get_settings
 from app.db import SessionLocal
+from app.drafting import shutdown_drafting
 from app.logging_config import configure_logging, get_logger
 from app.routes import admin, auth, public
 from app.routes.admin import InvalidFormValue
@@ -38,6 +39,47 @@ FAVICON_SVG = (
     'stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>'
     "</svg>"
 )
+
+# Set by the app itself, not only by the reverse proxy. The Caddyfile sets the
+# same headers and wins where it is present (these are applied only if absent),
+# but the app must not depend on a particular proxy being in front of it for its
+# protection: run it behind anything else and the headers used to vanish with no
+# signal at all.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        "font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; "
+        "base-uri 'none'; object-src 'none'"
+    ),
+    "Permissions-Policy": (
+        "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()"
+    ),
+}
+
+# Pages default to not being stored anywhere. The law page renders the visitor's
+# own ballot, and the administration renders unpublished drafts; neither may sit
+# in a shared cache, and "no cache directive at all" leaves that to the goodwill
+# of whatever proxy is in the path. Anything genuinely shareable opts in by
+# setting its own Cache-Control — the static files and the favicon do.
+DEFAULT_CACHE_CONTROL = "private, no-store"
+STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+class CachedStaticFiles(StaticFiles):
+    """Static assets, cached hard.
+
+    Safe only because the templates request them through ``asset_url``, which
+    appends a fingerprint of the file's contents: a deployed edit is a new URL,
+    so nothing can be served stale.
+    """
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = STATIC_CACHE_CONTROL
+        return response
 
 
 def _error_page(request: Request, *, status: int, titre: str, message: str) -> Response:
@@ -84,9 +126,21 @@ def create_app() -> FastAPI:
             settings.db_pool_size,
         )
         yield
+        # Drafts can run for minutes; do not make a redeploy wait for one.
+        shutdown_drafting()
 
     app = FastAPI(title="Votations Françaises", lifespan=lifespan, **docs)
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    @app.middleware("http")
+    async def secure_headers(request: Request, call_next):
+        """Apply the site's headers whatever is (or is not) proxying for us."""
+        response = await call_next(request)
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        response.headers.setdefault("Cache-Control", DEFAULT_CACHE_CONTROL)
+        return response
+
+    app.mount("/static", CachedStaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(public.router)
     app.include_router(auth.router)
     app.include_router(admin.router)
@@ -132,7 +186,7 @@ def create_app() -> FastAPI:
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
-        return PlainTextResponse(ROBOTS_TXT)
+        return PlainTextResponse(ROBOTS_TXT, headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:

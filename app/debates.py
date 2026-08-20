@@ -24,11 +24,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 
-import httpx
+from app.opendata import Getter, as_list, getter
 
 OPENDATA_URL = "https://www.assemblee-nationale.fr/dyn/opendata/{uid}.json"
 SEANCE_URL = "https://www.assemblee-nationale.fr/dyn/{legislature}/comptes-rendus/seance/{uid}"
@@ -78,27 +77,12 @@ class Speech:
         return f"{who}{when} · {self.chamber}"
 
 
-Getter = Callable[[str], bytes]
-
-
-def _default_getter(url: str) -> bytes:
-    try:
-        resp = httpx.get(url, timeout=60.0, follow_redirects=True)
-        resp.raise_for_status()
-        return resp.content
-    except httpx.HTTPError as exc:
-        raise DebatesFetchError(str(exc)) from exc
+_default_getter = getter(timeout=60.0, error=DebatesFetchError)
 
 
 def _as_text(node: object) -> str:
     """`texte` is a string on paragraphs but an empty dict on some points."""
     return node.strip() if isinstance(node, str) else ""
-
-
-def _as_list(node: object) -> list:
-    if node is None:
-        return []
-    return node if isinstance(node, list) else [node]
 
 
 def _get_json(get: Getter, uid: str) -> dict:
@@ -110,7 +94,7 @@ def _get_json(get: Getter, uid: str) -> dict:
 
 def _agenda_position(reunion: dict, odj_ref: str) -> int | None:
     """1-based index of our agenda item, which the compte rendu calls valeur_ptsodj."""
-    points = _as_list(((reunion.get("ODJ") or {}).get("pointsODJ") or {}).get("pointODJ"))
+    points = as_list(((reunion.get("ODJ") or {}).get("pointsODJ") or {}).get("pointODJ"))
     for index, point in enumerate(points, start=1):
         if isinstance(point, dict) and point.get("uid") == odj_ref:
             return index
@@ -139,11 +123,11 @@ def _speech_sections(compte_rendu: dict) -> dict[str, str]:
         text = _as_text(point.get("texte"))
         if text and code.startswith(ARGUMENT_SECTIONS):
             titles.setdefault(ptsodj, text)
-        for sub in _as_list(point.get("point")):
+        for sub in as_list(point.get("point")):
             if isinstance(sub, dict):
                 walk(sub)
 
-    for point in _as_list((compte_rendu.get("contenu") or {}).get("point")):
+    for point in as_list((compte_rendu.get("contenu") or {}).get("point")):
         if isinstance(point, dict):
             walk(point)
     return titles

@@ -16,6 +16,13 @@ nothing. Three consequences worth stating plainly, since the charter demands it:
   browser reveals what someone typed about themselves, not how they voted;
 * clearing cookies simply means an old contribution stays where it was, exactly
   as before this existed.
+
+**The cookie is keyed by law.** It used to hold one profile for the whole site,
+overwritten on every vote, while the counters it moves are per-law. Voting on law
+A as 18-24 and then on law B as 65+ left the cookie saying 65+, so changing the
+vote on law A decremented a cell that belonged to other voters and stranded the
+real contribution under the old choice. Both directions were wrong, and it was
+repeatable on purpose to deflate a category.
 """
 
 from __future__ import annotations
@@ -29,12 +36,20 @@ from app.models import DIMENSIONS, VALID_CATEGORIES
 COOKIE_NAME = "vf_profil"
 _COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year, like the voter token
 
+# Laws remembered at once. A browser that votes on more than this forgets its
+# oldest entries first, which degrades exactly like clearing cookies: an old
+# contribution stays where it was. Also a hard ceiling on the cookie's size —
+# browsers drop a cookie over 4 kB outright, which would lose *every* entry.
+_MAX_LAWS = 25
+# Refuse to emit anything close to the 4 kB limit, whatever the categories are.
+_MAX_COOKIE_BYTES = 3000
+
 
 def _serializer() -> URLSafeSerializer:
     return URLSafeSerializer(get_settings().secret_key, salt="voter-profile")
 
 
-def clean(profile: dict | None) -> dict[str, str]:
+def clean_profile(profile: object) -> dict[str, str]:
     """Keep only known dimensions with known categories."""
     if not isinstance(profile, dict):
         return {}
@@ -45,27 +60,80 @@ def clean(profile: dict | None) -> dict[str, str]:
     }
 
 
-def read(request: Request) -> dict[str, str]:
-    """The categories this browser previously contributed, or {}."""
+def _clean_store(raw: object) -> dict[str, dict[str, str]]:
+    """Keep only ``{law_id: {dimension: category}}`` entries that make sense.
+
+    A cookie written before this was keyed by law is a flat ``{dimension:
+    category}`` map. Its values are strings rather than dicts, so every entry is
+    dropped here and the browser behaves exactly as if it had no cookie: nothing
+    moves, which is the documented safe fallback. Nothing is corrupted by it.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for law_id, profile in raw.items():
+        if not isinstance(law_id, str) or not law_id.isdigit():
+            continue
+        cleaned = clean_profile(profile)
+        if cleaned:
+            out[law_id] = cleaned
+    return out
+
+
+def _load(request: Request) -> dict[str, dict[str, str]]:
     signed = request.cookies.get(COOKIE_NAME)
     if not signed:
         return {}
     try:
-        return clean(_serializer().loads(signed))
+        return _clean_store(_serializer().loads(signed))
     except BadSignature:
         return {}
 
 
-def write(response: Response, profile: dict[str, str]) -> None:
-    """Remember the contributed categories on this device."""
-    profile = clean(profile)
+def read(request: Request, law_id: int) -> dict[str, str]:
+    """The categories this browser previously contributed **to this law**, or {}."""
+    return _load(request).get(str(law_id), {})
+
+
+def write(request: Request, response: Response, law_id: int, profile: dict[str, str]) -> None:
+    """Remember the categories contributed to this law, keeping the other laws.
+
+    Takes the request as well as the response because the cookie holds every law
+    this browser has voted on: writing one law's entry means re-emitting the
+    others rather than replacing them.
+    """
+    profile = clean_profile(profile)
+    store = _load(request)
     if not profile:
+        # Nothing to record for this law. Leave whatever is already stored alone
+        # rather than emitting a cookie that says nothing.
+        return
+
+    # Re-insert at the end so the most recently used law is the last to be
+    # dropped when the store is trimmed.
+    store.pop(str(law_id), None)
+    store[str(law_id)] = profile
+
+    value = _fit(store)
+    if value is None:
         return
     response.set_cookie(
         COOKIE_NAME,
-        _serializer().dumps(profile),
+        value,
         max_age=_COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
         secure=get_settings().cookie_secure,
     )
+
+
+def _fit(store: dict[str, dict[str, str]]) -> str | None:
+    """Serialise, dropping the oldest laws until the cookie is a sane size."""
+    serializer = _serializer()
+    entries = list(store.items())[-_MAX_LAWS:]
+    while entries:
+        value = serializer.dumps(dict(entries))
+        if len(value.encode("utf-8")) <= _MAX_COOKIE_BYTES:
+            return value
+        entries = entries[1:]
+    return None

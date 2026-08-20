@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block body_class %}admin-wide{% endblock %}
 {% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} — Administration{% endblock %}
+{% block scripts %}<script src="{{ asset_url('htmx.min.js') }}" defer></script>{% endblock %}
 {% block content %}
 <p class="breadcrumb">
   <a href="/admin">← Administration</a>
@@ -8,18 +9,31 @@
 </p>
 {% if prefill and ai_enabled %}
 {# Above the fold: the draft is the first thing you want on a freshly imported law.
-   `form=` attaches these to the form below, so they still post what is already
-   typed — the draft route only fills fields left empty. #}
+
+   `form=` attaches these to the form below, so a plain submit still posts what is
+   already typed and the draft route can echo it back — that is the no-JavaScript
+   path. With htmx the request goes out in the background and only the status
+   banner is swapped: the page never navigates, so nothing typed is at risk and a
+   later refresh cannot replay the POST and bill a second generation. #}
 <div class="draft-actions">
   <button type="submit" class="secondary" form="law-form" formnovalidate
-          formaction="/admin/imports/{{ prefill.id }}/brouillon">
+          formaction="/admin/imports/{{ prefill.id }}/brouillon"
+          hx-post="/admin/imports/{{ prefill.id }}/brouillon"
+          hx-target="#draft-state" hx-swap="outerHTML">
     {% if has_draft %}Revoir le brouillon IA{% else %}Proposer un brouillon IA{% endif %}
   </button>
   {% if has_draft %}
     <button type="submit" class="secondary" form="law-form" formnovalidate
             name="regenerer" value="1"
             formaction="/admin/imports/{{ prefill.id }}/brouillon"
-            data-confirm="Régénérer appelle le modèle et sera facturé. Continuer ?">
+            hx-post="/admin/imports/{{ prefill.id }}/brouillon"
+            hx-vals='{"regenerer": "1"}'
+            hx-target="#draft-state" hx-swap="outerHTML"
+            {# hx-confirm, not data-confirm: with JavaScript on, htmx handles the
+               click, and carrying both would prompt twice. With JavaScript off
+               neither runs — the plain POST is the fallback, and « Régénérer »
+               there is an explicit click on a button that says what it does. #}
+            hx-confirm="Régénérer appelle le modèle et sera facturé. Continuer ?">
       Régénérer
     </button>
   {% endif %}
@@ -42,9 +56,10 @@
   — promulguée le {{ prefill.promulgated_on.strftime('%d/%m/%Y') }}
   {% if prefill.jo_number %}· JO n° {{ prefill.jo_number }}{% endif %}
   <br>
-  <a href="{{ prefill.dossier_url }}" rel="noopener noreferrer" target="_blank">Dossier Assemblée nationale</a>
-  {% if values.legifrance_url %}
-    · <a href="{{ values.legifrance_url }}" rel="noopener noreferrer" target="_blank">Texte sur Légifrance</a>
+  <a href="{{ prefill.dossier_url | safe_href }}" rel="noopener noreferrer" target="_blank">Dossier Assemblée nationale</a>
+  {% set officiel = values.legifrance_url | safe_href %}
+  {% if officiel %}
+    · <a href="{{ officiel }}" rel="noopener noreferrer" target="_blank">Texte sur Légifrance</a>
   {% endif %}
   {% if prefill.seances %}· {{ prefill.seances | length }} séance(s) publique(s){% endif %}
 </p>
@@ -80,7 +95,8 @@
       <blockquote>« {{ r.text }} »</blockquote>
       <p class="attrib">
         {{ r.author }}
-        {% if r.source %}· <a href="{{ r.source }}" rel="noopener noreferrer" target="_blank">compte rendu</a>{% endif %}
+        {% set rsource = r.source | safe_href %}
+        {% if rsource %}· <a href="{{ rsource }}" rel="noopener noreferrer" target="_blank">compte rendu</a>{% endif %}
       </p>
     </li>
     {% endfor %}
@@ -138,4 +154,51 @@
     <button type="submit">Enregistrer</button>
   </div>
 </form>
+
+{% if law %}
+<section class="block">
+  <h2>Historique public des modifications</h2>
+  {% if law.published %}
+  <p class="meta">
+    Cette loi est publiée : <strong>chaque modification enregistrée ici est
+    affichée publiquement</strong> sur la page de résultats, avec la valeur avant
+    et après. C'est ce qui permet à un lecteur de vérifier que les votes portaient
+    bien sur le texte affiché.
+  </p>
+  {% else %}
+  <p class="meta">
+    Cette loi n'est pas encore publiée : les modifications ne sont pas
+    enregistrées. L'historique public commence à la publication.
+  </p>
+  {% endif %}
+  {% if revisions %}
+  <div class="table-scroll">
+    <table class="admin-table">
+      <thead><tr><th>Date</th><th>Champ</th><th>Avant</th><th>Après</th></tr></thead>
+      <tbody>
+        {% for rev in revisions %}
+        <tr>
+          <td>{{ rev.changed_at | french_datetime }}</td>
+          <td>{{ rev.field | field_label }}</td>
+          <td class="revision-value">{{ rev.old_value or '—' }}</td>
+          <td class="revision-value">{{ rev.new_value or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif law.published %}
+  <p class="meta">Aucune modification depuis la publication.</p>
+  {% endif %}
+</section>
+
+<div class="danger-zone">
+  <h2>Retirer cette votation</h2>
+  <p class="meta">
+    L'archivage retire la votation du site sans rien détruire : les votes sont
+    conservés et l'opération est réversible.
+  </p>
+  <a class="button secondary" href="/admin/lois/{{ law.id }}/archiver">Archiver…</a>
+</div>
+{% endif %}
 {% endblock %}

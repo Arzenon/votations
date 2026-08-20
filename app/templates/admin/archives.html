@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body_class %}admin-wide{% endblock %}
+{% block title %}Votations archivées — Administration{% endblock %}
+{% block content %}
+<p class="breadcrumb"><a href="/admin">← Administration</a></p>
+<h1>Votations archivées</h1>
+
+<p class="disclaimer">
+  Ces votations ne sont plus accessibles publiquement, mais <strong>rien n'a été
+  effacé</strong> : les votes sont conservés et une votation peut être remise en
+  ligne à tout moment. La suppression définitive est proposée ici, et seulement
+  ici, pour libérer de l'espace disque une fois les exports archivés hors ligne.
+</p>
+
+{% if laws %}
+<div class="table-scroll">
+<table class="admin-table">
+  <thead>
+    <tr><th>Titre</th><th>Archivée le</th><th>Votes</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for law in laws %}
+    <tr>
+      <td>{{ law.title }}</td>
+      <td>{{ law.archived_at.strftime('%d/%m/%Y') }}</td>
+      <td>{{ tallies[law.id].total }}</td>
+      <td class="actions">
+        <form action="/admin/lois/{{ law.id }}/restaurer" method="post">
+          <button type="submit">Remettre en ligne</button>
+        </form>
+        <a class="link-danger" href="/admin/lois/{{ law.id }}/supprimer">Supprimer définitivement…</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if pages > 1 %}
+<nav class="pagination" aria-label="Pages">
+  {% if page > 1 %}<a href="/admin/archives?page={{ page - 1 }}">← Précédent</a>{% endif %}
+  <span>Page {{ page }} / {{ pages }} ({{ total }} votations)</span>
+  {% if page < pages %}<a href="/admin/archives?page={{ page + 1 }}">Suivant →</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p>Aucune votation archivée.</p>
+{% endif %}
+{% endblock %}

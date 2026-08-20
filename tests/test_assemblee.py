@@ -168,10 +168,10 @@ def test_sync_is_idempotent_and_preserves_admin_decisions(db_session):
     # A second run of the same export creates nothing.
     created, refreshed = imports_crud.sync(db_session, records=records)
     assert (created, refreshed) == (0, 2)
-    assert len(imports_crud.list_by_status(db_session)) == 2
+    assert imports_crud.list_by_status(db_session)[1] == 2
 
     # An admin sets one aside; the next import must not undo that.
-    item = imports_crud.list_by_status(db_session, status=STATUS_NEW)[0]
+    item = imports_crud.list_by_status(db_session, status=STATUS_NEW)[0][0]
     imports_crud.set_status(db_session, item, status=STATUS_IGNORED)
     imports_crud.sync(db_session, records=records)
 
@@ -187,7 +187,7 @@ def test_sync_refreshes_factual_fields(db_session):
     records[0].title = "Titre corrigé par l'Assemblée"
     imports_crud.sync(db_session, records=records)
 
-    titles = {item.title for item in imports_crud.list_by_status(db_session)}
+    titles = {item.title for item in imports_crud.list_by_status(db_session)[0]}
     assert "Titre corrigé par l'Assemblée" in titles
 
 
@@ -199,7 +199,7 @@ def test_admin_imports_page_lists_and_ignores(client, db_session):
     assert "LOI n° 2026-532" in r.text
     assert "Loi sur les moniteurs de ski" in r.text
 
-    item = imports_crud.list_by_status(db_session, status=STATUS_NEW)[0]
+    item = imports_crud.list_by_status(db_session, status=STATUS_NEW)[0][0]
     r = client.post(
         f"/admin/imports/{item.id}/ignorer", headers=_admin_auth(), follow_redirects=False
     )
@@ -214,7 +214,9 @@ def test_admin_imports_page_requires_auth(client):
 
 def test_creating_a_law_from_an_import_prefills_and_links(client, db_session):
     imports_crud.sync(db_session, records=_fetch())
-    item = next(i for i in imports_crud.list_by_status(db_session) if i.law_code == "2026-532")
+    item = next(
+        i for i in imports_crud.list_by_status(db_session)[0] if i.law_code == "2026-532"
+    )
 
     # The form carries the factual fields only — the narrative blocks stay empty.
     r = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin_auth())

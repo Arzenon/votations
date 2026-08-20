@@ -117,6 +117,13 @@ def _move(
         vote.demographics_choice = choice.value
         db.commit()
         return previous
+    if not previous:
+        # No categories came back from the device, so nothing can be moved. Leave
+        # `demographics_choice` pointing at the choice the counters actually sit
+        # under: advancing it would make the column claim a contribution had moved
+        # when it had not, and a later change with a restored cookie would then
+        # decrement the wrong cell.
+        return {}
 
     previous = {
         dim: cat
@@ -153,13 +160,6 @@ class Breakdown:
     rows: list[BreakdownRow] = field(default_factory=list)
     dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
-
-
-def get_reference(db: Session, dimension: str) -> tuple[dict[str, float], int | None]:
-    """Reference shares for a dimension: cached INSEE values if present, else the
-    curated fallback constant. Returns (mapping, source_year_or_None)."""
-    mapping, year = all_references(db).get(dimension, ({}, None))
-    return mapping, year
 
 
 def all_references(db: Session) -> dict[str, tuple[dict[str, float], int | None]]:
@@ -254,16 +254,6 @@ def _cells_by_dimension(db: Session, law_id: int) -> dict[str, dict[str, dict[st
         by_category = out.setdefault(dimension, {})
         by_category.setdefault(category, {c.value: 0 for c in VoteChoice})[choice] = count
     return out
-
-
-def breakdown(
-    db: Session, law_id: int, dimension: str, *, min_cell: int | None = None
-) -> Breakdown:
-    """Return the choice breakdown for one dimension, suppressed if too sparse."""
-    k = min_cell if min_cell is not None else get_settings().min_cell_count
-    cells = _cells_by_dimension(db, law_id).get(dimension, {})
-    reference, year = get_reference(db, dimension)
-    return _build(dimension, cells, k=k, reference=reference, reference_year=year)
 
 
 def all_breakdowns(db: Session, law_id: int, *, min_cell: int | None = None) -> list[Breakdown]:

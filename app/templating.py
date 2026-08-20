@@ -1,13 +1,16 @@
 """Shared Jinja2 templates instance, filters and context processors."""
 
+import hashlib
 import json
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
 from app.auth.base import get_auth_provider
-from app.labels import import_status, law_status
+from app.labels import field_label, french_date, french_datetime, import_status, law_status
+from app.security import safe_url
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -33,6 +36,27 @@ def _auth_context(request: Request) -> dict:
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR), context_processors=[_auth_context])
 
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
+
+
+@lru_cache
+def asset_url(name: str) -> str:
+    """``/static/<name>`` with a content fingerprint appended.
+
+    The static files are served with a one-year immutable cache, which is only
+    safe if the URL changes when the file does. Hashing the bytes at first use
+    keeps that true with no build step: a deployed edit produces a new URL, and an
+    unchanged file keeps its cached copy. Cached per process — the files do not
+    change under a running server.
+    """
+    path = STATIC_DIR / name
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return f"/static/{name}"
+    return f"/static/{name}?v={digest}"
+
+
+templates.env.globals["asset_url"] = asset_url
 
 
 def readable_json(value) -> str:
@@ -61,3 +85,12 @@ templates.env.filters["readable_json"] = readable_json
 templates.env.filters["paragraphs"] = paragraphs
 templates.env.filters["law_status"] = law_status
 templates.env.filters["import_status"] = import_status
+templates.env.filters["field_label"] = field_label
+templates.env.filters["french_date"] = french_date
+templates.env.filters["french_datetime"] = french_datetime
+# Defence in depth. The admin form refuses a non-http(s) link, but that is one
+# gate on one path: seed data, a migration, a direct database edit or a future
+# importer could all put a `javascript:` URL in a column that templates render as
+# an href. Sanitising again at render means a stored payload is inert wherever it
+# came from, and an empty result lets the template drop the link entirely.
+templates.env.filters["safe_href"] = safe_url

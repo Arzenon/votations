@@ -91,6 +91,37 @@
     </p>
   </section>
 
+  <section class="block" id="historique">
+    <h2>Modifications de la présentation</h2>
+    {% if revisions %}
+    <p class="meta">
+      La présentation de ce texte a été modifiée après sa publication. Le détail
+      est donné ici pour que chacun·e puisse juger si les votes exprimés portaient
+      sur le même texte que celui affiché aujourd'hui.
+    </p>
+    <div class="table-scroll">
+      <table class="evolution revisions">
+        <thead><tr><th>Date</th><th>Bloc modifié</th><th>Avant</th><th>Après</th></tr></thead>
+        <tbody>
+          {% for rev in revisions %}
+          <tr>
+            <td>{{ rev.changed_at | french_datetime }}</td>
+            <td>{{ rev.field | field_label }}</td>
+            <td class="revision-value">{{ rev.old_value or '—' }}</td>
+            <td class="revision-value">{{ rev.new_value or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="meta">
+      Aucune modification depuis la publication : le texte affiché est celui sur
+      lequel tous les votes ont été exprimés.
+    </p>
+    {% endif %}
+  </section>
+
   <section class="block">
     <h2>Données ouvertes</h2>
     <p>Les données brutes anonymisées (loi, choix, horodatage — aucun identifiant) sont téléchargeables :</p>

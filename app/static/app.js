@@ -1,10 +1,15 @@
 /* Progressive enhancement, kept tiny and dependency-free.
  *
- * Everything here exists so the pages need no inline scripts and no inline
- * styles, which is what lets the Content-Security-Policy stay strict
- * (`script-src 'self'`, no 'unsafe-inline'). Without JavaScript the site still
- * works: bars simply render at their default width and confirmations are
- * skipped. */
+ * This exists so the pages need no inline scripts and no inline styles, which is
+ * what lets the Content-Security-Policy stay strict (`script-src 'self'`, no
+ * 'unsafe-inline'). Without JavaScript the site still works: the bars simply
+ * render at their default width, and every percentage is written out in text
+ * beside them anyway.
+ *
+ * Confirmations used to live here too, behind a `data-confirm` attribute. They
+ * do not any more: a confirmation that only exists in JavaScript is not a
+ * confirmation, and archiving or deleting a votation now goes through a page the
+ * server renders. What remains is presentation. */
 (function () {
   "use strict";
 
@@ -19,35 +24,15 @@
     });
   }
 
-  /* Destructive or billable actions confirm first, via data-confirm. */
-  function wireConfirms(root) {
-    var nodes = (root || document).querySelectorAll("[data-confirm]");
-    Array.prototype.forEach.call(nodes, function (node) {
-      if (node.dataset.confirmWired) return;
-      node.dataset.confirmWired = "1";
-      var handler = function (event) {
-        if (!window.confirm(node.getAttribute("data-confirm"))) {
-          event.preventDefault();
-        }
-      };
-      if (node.tagName === "FORM") {
-        node.addEventListener("submit", handler);
-      } else {
-        node.addEventListener("click", handler);
-      }
-    });
-  }
-
-  function init(root) {
-    paintBars(root);
-    wireConfirms(root);
-  }
-
   document.addEventListener("DOMContentLoaded", function () {
-    init(document);
+    paintBars(document);
   });
-  /* HTMX swaps fragments in after load; re-run on whatever it inserted. */
+
+  /* No fragment swapped in today carries bars — the ballot and the draft banner
+   * do not. Keeping the hook means the invariant "a bar is always painted" holds
+   * for whatever fragment is added next, which is cheaper than the afternoon
+   * spent finding out it did not. */
   document.addEventListener("htmx:afterSwap", function (event) {
-    init(event.target);
+    paintBars(event.target);
   });
 })();

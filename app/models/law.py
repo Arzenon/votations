@@ -44,10 +44,30 @@ class Law(Base):
     opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Set when a law is withdrawn from the site. Archiving replaces deletion:
+    # removing a law used to cascade away every vote cast on it, destroying
+    # published open data with one click. An archived law disappears from every
+    # public page but keeps its votes, and can be restored. Purging one for good
+    # is a separate, explicit act — see `app.crud.laws.purge`.
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, index=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived_at is not None
+
+    @property
+    def is_public(self) -> bool:
+        """Whether this law may be shown, voted on, or exported at all."""
+        return self.published and not self.is_archived
 
     def status(self, now: datetime | None = None) -> str:
         """Derive status from publication flag and the voting window."""

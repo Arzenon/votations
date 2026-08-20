@@ -15,14 +15,14 @@ Design notes:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-import httpx
-
 from app.config import get_settings
 from app.models import DIMENSION_AGE, DIMENSION_REGION, DIMENSION_SEXE
+from app.opendata import Getter, getter
 
 # App age brackets as (weighted) sums of INSEE quinquennal groups, restricted to
 # adults. Only 18-24 is approximate: ages 18-19 are taken as 2/5 of the 15-19
@@ -73,20 +73,29 @@ class InseeData:
     values: dict[str, dict[str, float]]  # {"sexe": {...}, "region": {...}}
 
 
-Getter = Callable[[str], dict]
-
-
-def _default_getter(url: str) -> dict:
+def _headers() -> dict[str, str]:
+    """The key is optional — the estimation-population dataset is open."""
     settings = get_settings()
     headers = {"Accept": "application/json"}
     if settings.insee_api_key:
         headers["Authorization"] = f"Bearer {settings.insee_api_key}"
+    return headers
+
+
+_default_getter = getter(timeout=30.0, error=InseeFetchError, headers=_headers)
+
+
+def _payload(get: Getter, url: str) -> dict:
+    """Fetch and decode one Melodi response.
+
+    Melodi answers JSON, but the getter returns bytes like every other source in
+    the app: one seam, one signature, so an injected getter is the same kind of
+    thing everywhere.
+    """
     try:
-        resp = httpx.get(url, headers=headers, timeout=30.0)
-        resp.raise_for_status()
-        return resp.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise InseeFetchError(str(exc)) from exc
+        return json.loads(get(url))
+    except ValueError as exc:
+        raise InseeFetchError(f"réponse illisible : {exc}") from exc
 
 
 def _data_url(geo: str, **filters: str) -> str:
@@ -122,7 +131,7 @@ def _discover_prefix(get: Getter) -> str:
     for prefix in (current, current + 1, current - 1, current - 2):
         url = _data_url(f"{prefix}-FRANCE-F", AGE="_T", EP_MEASURE="POP_JAN_1ST")
         try:
-            payload = get(url)
+            payload = _payload(get, url)
             if payload.get("observations"):
                 return str(prefix)
         except InseeFetchError:
@@ -136,7 +145,9 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
     prefix = _discover_prefix(get)
 
     # --- Sexe: counts for France (all), AGE total, by sex, latest year. ---
-    fr = _observations(get(_data_url(f"{prefix}-FRANCE-F", AGE="_T", EP_MEASURE="POP_JAN_1ST")))
+    fr = _observations(
+        _payload(get, _data_url(f"{prefix}-FRANCE-F", AGE="_T", EP_MEASURE="POP_JAN_1ST"))
+    )
     sex_year, sex_obs = _latest(fr, lambda o: o["dimensions"]["SEX"] in ("F", "M"))
     by_sex = {o["dimensions"]["SEX"]: _value(o) for o in sex_obs}
     total_sex = by_sex.get("F", 0) + by_sex.get("M", 0)
@@ -149,7 +160,7 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
 
     # --- Age: quinquennal counts (France, total sex) → app brackets, adults only. ---
     age_obs = _observations(
-        get(_data_url(f"{prefix}-FRANCE-F", SEX="_T", EP_MEASURE="POP_JAN_1ST"))
+        _payload(get, _data_url(f"{prefix}-FRANCE-F", SEX="_T", EP_MEASURE="POP_JAN_1ST"))
     )
     age_year, age = _age_reference(age_obs)
 
@@ -160,7 +171,7 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
     for code in list(REGION_CODE_TO_LABEL) + list(OVERSEAS_CODES):
         url = _data_url(f"{prefix}-REG-{code}", AGE="_T", SEX="_T", EP_MEASURE="POP_JAN_1ST")
         try:
-            year, obs = _latest(_observations(get(url)), lambda o: True)
+            year, obs = _latest(_observations(_payload(get, url)), lambda o: True)
         except InseeFetchError:
             continue  # a missing région must not abort the whole refresh
         region_year = max(region_year, year)

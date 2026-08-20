@@ -5,6 +5,17 @@ from app.crud import votes as votes_crud
 from app.models import DemographicTally, Vote, VoteChoice
 
 
+def _dimension(db, law_id, dimension, **kwargs):
+    """One dimension's breakdown, via the function the application actually calls.
+
+    `all_breakdowns` is the only entry point the app uses; a single-dimension
+    variant existed solely for these tests and loaded every dimension anyway.
+    """
+    return next(
+        bd for bd in demo_crud.all_breakdowns(db, law_id, **kwargs) if bd.dimension == dimension
+    )
+
+
 def _cell(db, law_id, dimension, category, choice):
     return (
         db.query(DemographicTally)
@@ -86,7 +97,7 @@ def test_breakdown_hidden_below_threshold(open_law, db_session):
             "25-34": {"for": 15, "against": 2, "abstain": 11},  # the "2" trips suppression
         },
     )
-    bd = demo_crud.breakdown(db_session, open_law.id, "age")
+    bd = _dimension(db_session, open_law.id, "age")
     assert bd.shown is False
     assert bd.reason == "below_threshold"
 
@@ -101,7 +112,7 @@ def test_breakdown_shown_above_threshold(open_law, db_session):
             "50-64": {"for": 22, "against": 18, "abstain": 10},
         },
     )
-    bd = demo_crud.breakdown(db_session, open_law.id, "age")
+    bd = _dimension(db_session, open_law.id, "age")
     assert bd.shown is True
     # Canonical ordering: 35-49 before 50-64.
     assert [r.category for r in bd.rows] == ["35-49", "50-64"]
@@ -146,7 +157,7 @@ def test_breakdown_includes_share_and_reference(open_law, db_session):
             "homme": {"for": 25, "against": 10, "abstain": 10},  # 45
         },
     )
-    bd = demo_crud.breakdown(db_session, open_law.id, "sexe")
+    bd = _dimension(db_session, open_law.id, "sexe")
     assert bd.shown is True
     assert bd.dimension_total == 105
     femme = bd.rows[0]

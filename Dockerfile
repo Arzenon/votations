@@ -10,10 +10,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Pinned, hash-free lockfile: two builds of the same commit install the same
-# code. Copied on its own so this layer is cached until the lockfile changes.
+# Pinned *and* hashed: two builds of the same commit install byte-identical
+# dependencies, and pip refuses anything whose artefact does not match the
+# recorded hash — a version number alone would still accept whatever the index
+# serves under that name today. Copied on its own so this layer stays cached
+# until the lockfile changes.
 COPY requirements.lock ./
-RUN pip install --no-deps -r requirements.lock
+RUN pip install --no-deps --require-hashes -r requirements.lock
 
 # The application itself, in the layer that actually changes.
 COPY pyproject.toml ./

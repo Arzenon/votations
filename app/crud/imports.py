@@ -12,7 +12,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.assemblee import PromulgatedLaw
 from app.db import utcnow
@@ -85,13 +85,32 @@ def sync(
     return created, len(records) - created
 
 
-def list_by_status(db: Session, *, status: str | None = None) -> list[ImportedLaw]:
-    """Staged laws, most recently promulgated first."""
+def list_by_status(
+    db: Session, *, status: str | None = None, page: int = 1, page_size: int = 50
+) -> tuple[list[ImportedLaw], int, int]:
+    """Staged laws, most recently promulgated first. Returns (rows, total, pages).
+
+    ``draft`` and ``seances`` are deferred: a stored draft is a whole AI
+    presentation — two prose blocks and up to a dozen quotes — and the list shows
+    neither. Fetching them for every row made the "tous" view megabytes of JSON to
+    render a table of titles and dates.
+    """
     stmt = select(ImportedLaw)
     if status:
         stmt = stmt.where(ImportedLaw.status == status)
-    stmt = stmt.order_by(ImportedLaw.promulgated_on.desc(), ImportedLaw.law_code.desc())
-    return list(db.scalars(stmt))
+
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    pages = max(1, -(-total // page_size))
+    page = min(max(1, page), pages)
+    rows = list(
+        db.scalars(
+            stmt.options(defer(ImportedLaw.draft), defer(ImportedLaw.seances))
+            .order_by(ImportedLaw.promulgated_on.desc(), ImportedLaw.law_code.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    return rows, total, pages
 
 
 def count_new(db: Session) -> int:

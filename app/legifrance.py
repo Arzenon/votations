@@ -20,16 +20,15 @@ from __future__ import annotations
 import io
 import re
 import tarfile
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from xml.etree.ElementTree import Element  # type only — parsing goes through defusedxml
 
-import httpx
 from defusedxml import ElementTree as ET
 from defusedxml.ElementTree import ParseError
 
 from app.config import get_settings
+from app.opendata import Getter, getter
 
 # Archive names look like `JORFSIMPLE_20260818-223511.tar.gz`.
 DUMP_RE = re.compile(r"JORFSIMPLE_(\d{8})-(\d{6})\.tar\.gz")
@@ -80,17 +79,8 @@ class LawText:
         return f"{self.title}\n\n{body}".strip()
 
 
-Getter = Callable[[str], bytes]
-
-
-def _default_getter(url: str) -> bytes:
-    # Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page.
-    try:
-        resp = httpx.get(url, timeout=180.0, follow_redirects=True)
-        resp.raise_for_status()
-        return resp.content
-    except httpx.HTTPError as exc:
-        raise LegifranceFetchError(str(exc)) from exc
+# Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page.
+_default_getter = getter(timeout=180.0, error=LegifranceFetchError)
 
 
 def _base_url() -> str:

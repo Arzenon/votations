@@ -6,6 +6,9 @@
 <p>
   <a class="button" href="/admin/lois/nouvelle">+ Nouvelle loi</a>
   <a class="button" href="/admin/imports">Lois promulguées{% if pending_imports %} ({{ pending_imports }}){% endif %}</a>
+  {% if archived_count %}
+  <a class="button secondary" href="/admin/archives">Archives ({{ archived_count }})</a>
+  {% endif %}
 </p>
 
 {# The import job runs in its own container and retries forever, so a source that
@@ -46,16 +49,23 @@
       <td class="actions">
         <a href="/admin/lois/{{ law.id }}">Éditer</a>
         <a href="/loi/{{ law.slug }}/export.csv">Export</a>
-        <form action="/admin/lois/{{ law.id }}/supprimer" method="post"
-              data-confirm="Supprimer cette loi et tous ses votes ?">
-          <button type="submit" class="link-danger">Supprimer</button>
-        </form>
+        {# Archiving, not deleting, and via a page the server renders: this used
+           to destroy every vote on one click that JavaScript had to intercept. #}
+        <a class="link-danger" href="/admin/lois/{{ law.id }}/archiver">Archiver…</a>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
+
+{% if pages > 1 %}
+<nav class="pagination" aria-label="Pages">
+  {% if page > 1 %}<a href="/admin?page={{ page - 1 }}">← Précédent</a>{% endif %}
+  <span>Page {{ page }} / {{ pages }} ({{ total }} votations)</span>
+  {% if page < pages %}<a href="/admin?page={{ page + 1 }}">Suivant →</a>{% endif %}
+</nav>
+{% endif %}
 {% else %}
 <p>Aucune loi enregistrée.</p>
 {% endif %}

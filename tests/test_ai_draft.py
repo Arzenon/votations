@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.legifrance import Article, LawText
 from app.models import ImportedLaw
+from tests.conftest import drain_drafts
 
 
 def _basic(user: str, pw: str) -> dict:
@@ -224,10 +225,17 @@ def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=Non
 
 
 def _draft(client, item_id, **data):
-    """Ask for a draft. The job runs in the background before the client returns."""
-    return client.post(
+    """Ask for a draft, then run the job the request queued.
+
+    The route only schedules: it answers straight away and the form polls for the
+    outcome. So the response below is what the administrator sees *while the job
+    is still pending*, and the drain afterwards is the pool getting to it.
+    """
+    response = client.post(
         f"/admin/imports/{item_id}/brouillon", headers=_admin_auth(), data=data or None
     )
+    drain_drafts()
+    return response
 
 
 def _form(client, item_id):

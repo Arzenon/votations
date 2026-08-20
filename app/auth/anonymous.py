@@ -68,9 +68,3 @@ class AnonymousProvider:
 
     def login_url(self) -> str:
         return "/connexion"
-
-    def logout_url(self) -> str:
-        return "/connexion"
-
-    def is_authenticated(self, request: Request) -> bool:
-        return False

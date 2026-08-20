@@ -92,7 +92,17 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
       INSEE_REFRESH_INTERVAL: "2592000"
+      HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/insee_cron.sh"]
+    # A shell loop that has stopped succeeding still looks "running". The
+    # heartbeat is touched only after a successful refresh, so its age is what
+    # actually says whether the job works. Generous window: the cadence is 30 days.
+    healthcheck:
+      test: ["CMD-SHELL", "test $(find /tmp/refresh-alive -mmin -64800 2>/dev/null | wc -l) -eq 1"]
+      interval: 6h
+      timeout: 10s
+      retries: 2
+      start_period: 10m
     deploy:
       resources:
         limits:
@@ -110,7 +120,17 @@ services:
       # Rolling window rather than a pinned date, so the import never quietly
       # grows a backlog as the years pass.
       AN_IMPORT_SINCE_DAYS: "365"
+      HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/assemblee_cron.sh"]
+    # The export URL carries the legislature number and changes once per
+    # legislature; without this the import stops in silence. The dashboard warns
+    # too, but only somebody who logs in sees that.
+    healthcheck:
+      test: ["CMD-SHELL", "test $(find /tmp/refresh-alive -mmin -2880 2>/dev/null | wc -l) -eq 1"]
+      interval: 1h
+      timeout: 10s
+      retries: 2
+      start_period: 10m
     deploy:
       resources:
         limits:
@@ -133,10 +153,23 @@ services:
       PGDATABASE: votations
       BACKUP_INTERVAL: "86400"     # 24 h
       BACKUP_KEEP_DAYS: "14"
+      # Refuse to dump with less than this free, rather than filling the disk the
+      # database is also sitting on.
+      BACKUP_MIN_FREE_MB: "500"
+      BACKUP_HEARTBEAT: /tmp/backup-alive
     volumes:
       - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
       - backups:/backups
     entrypoint: ["sh", "/usr/local/bin/backup.sh", "loop"]
+    # A backup you find out about only when you need it is not a backup. The
+    # heartbeat is touched after a dump that passed its integrity checks, so a
+    # full disk or a broken pg_dump turns this container unhealthy within a day.
+    healthcheck:
+      test: ["CMD-SHELL", "test $(find /tmp/backup-alive -mmin -2880 2>/dev/null | wc -l) -eq 1"]
+      interval: 1h
+      timeout: 10s
+      retries: 2
+      start_period: 10m
 
 volumes:
   pgdata:

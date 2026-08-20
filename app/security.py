@@ -51,17 +51,34 @@ def require_same_origin(request: Request) -> None:
         )
 
 
+def is_safe_url(value: str | None) -> bool:
+    """Whether ``value`` is empty or a plain http(s) link.
+
+    Empty counts as safe: an absent URL is a legitimate answer everywhere one is
+    accepted. Only a *present* URL with another scheme is a rejection, which is
+    the distinction callers need to tell the administrator what was refused
+    rather than blanking the field in silence.
+    """
+    if not value or not value.strip():
+        return True
+    return urlsplit(value.strip()).scheme.lower() in SAFE_URL_SCHEMES
+
+
 def safe_url(value: str | None) -> str:
     """Return ``value`` if it is a plain http(s) link, else "".
 
     Applied to every URL an administrator can type — argument sources and the
     Légifrance link — because those are rendered as hrefs on the public page, and
     the roadmap opens the administration to all authenticated users in V3.
+
+    This is the last line of defence and stays silent. The admin form checks
+    :func:`is_safe_url` first so a rejected link is reported rather than dropped;
+    anything reaching here has already been through that, or comes from a code
+    path where there is nobody to tell.
     """
     if not value:
         return ""
     candidate = value.strip()
     if not candidate:
         return ""
-    scheme = urlsplit(candidate).scheme.lower()
-    return candidate if scheme in SAFE_URL_SCHEMES else ""
+    return candidate if is_safe_url(candidate) else ""

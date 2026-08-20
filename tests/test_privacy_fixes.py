@@ -129,11 +129,28 @@ def test_the_profile_cookie_holds_categories_and_never_the_vote(client, open_law
     # Signed, so its content is opaque to the page and unforgeable in transit...
     assert "18-24" not in stored
     # ...and once read back, it carries the categories alone.
-    assert profile_cookie.read(_request_with(stored)) == {"age": "18-24"}
+    assert profile_cookie.read(_request_with(stored), open_law.id) == {"age": "18-24"}
 
 
 def test_a_tampered_profile_cookie_is_ignored():
-    assert profile_cookie.read(_request_with("n-importe-quoi")) == {}
+    assert profile_cookie.read(_request_with("n-importe-quoi"), 1) == {}
+
+
+def test_a_cookie_from_before_the_per_law_split_is_ignored():
+    """The old format held one profile for the whole site; it must not be trusted.
+
+    Its values are categories rather than per-law maps, so every entry is dropped
+    and the browser behaves as if it had no cookie: nothing moves, which is the
+    documented safe fallback.
+    """
+    from itsdangerous import URLSafeSerializer
+
+    from app.config import get_settings
+
+    old = URLSafeSerializer(get_settings().secret_key, salt="voter-profile").dumps(
+        {"age": "18-24", "sexe": "femme"}
+    )
+    assert profile_cookie.read(_request_with(old), 1) == {}
 
 
 def test_an_invalid_category_is_never_recorded(client, open_law, db_session):
@@ -158,4 +175,8 @@ def test_without_a_cookie_nothing_moves_and_nothing_breaks(open_law, db_session)
 
     cells = _cells(db_session, open_law.id)
     assert cells[("age", "65+", "for")] == 1
-    assert vote.demographics_choice == "against"
+    # And the tracker keeps pointing at the choice the counter actually sits
+    # under. Advancing it would make the column claim the contribution had moved
+    # when it had not, so a later change with a restored cookie would decrement
+    # the wrong cell.
+    assert vote.demographics_choice == "for"

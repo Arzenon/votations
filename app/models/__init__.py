@@ -34,6 +34,7 @@ from app.models.law import (
     STATUS_SCHEDULED,
     Law,
 )
+from app.models.revision import LawRevision
 from app.models.vote import Vote, VoteChoice
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "ImportedLaw",
     "InseeReference",
     "Law",
+    "LawRevision",
     "Region",
     "Sexe",
     "Vote",

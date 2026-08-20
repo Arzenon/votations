@@ -24,6 +24,12 @@ from app.config import get_settings
 _hits: dict[str, deque[float]] = {}
 # Bound the table so a spray of forged addresses cannot exhaust memory.
 _MAX_TRACKED = 20_000
+# Sweep expired entries every this many recorded hits. Without a periodic sweep
+# the table only ever shrinks at the ceiling, so a busy process pays for a full
+# scan on *every* new address once it fills — and, worse, refuses everyone it has
+# not already seen. Sweeping as we go keeps it far from the ceiling in normal use.
+_SWEEP_EVERY = 512
+_since_sweep = 0
 
 
 def client_key(request: Request) -> str:
@@ -49,20 +55,29 @@ def client_key(request: Request) -> str:
 
 def too_many(request: Request, *, limit: int, window_seconds: int, bucket: str = "vote") -> bool:
     """Record this request and report whether the caller is over the limit."""
+    global _since_sweep
     if limit <= 0:
         return False
     now = time.monotonic()
     cutoff = now - window_seconds
     key = f"{bucket}|{client_key(request)}"
 
+    _since_sweep += 1
+    if _since_sweep >= _SWEEP_EVERY:
+        _since_sweep = 0
+        _forget_stale(cutoff)
+
     seen = _hits.get(key)
     if seen is None:
         if len(_hits) >= _MAX_TRACKED:
             _forget_stale(cutoff)
         if len(_hits) >= _MAX_TRACKED:
-            # Still full: every tracked address is active, which is a flood.
-            # Refuse rather than grow the table without bound.
-            return True
+            # Still full after a sweep: every tracked address is active inside its
+            # window, which is a flood rather than traffic. Evict the least
+            # recently seen instead of refusing this caller — turning a flood into
+            # a site-wide refusal of everyone not already tracked would hand an
+            # attacker the outage they were looking for.
+            _forget_oldest()
         seen = _hits.setdefault(key, deque())
 
     while seen and seen[0] < cutoff:
@@ -94,6 +109,23 @@ def _forget_stale(cutoff: float) -> None:
         _hits.pop(key, None)
 
 
+def _forget_oldest(fraction: float = 0.1) -> None:
+    """Evict the least recently active entries to make room.
+
+    Called only when the table is full of entries that are all still inside their
+    window. A whole batch goes at once so a sustained flood does not pay for an
+    O(n) scan on every single request.
+    """
+    if not _hits:
+        return
+    how_many = max(1, int(len(_hits) * fraction))
+    oldest = sorted(_hits, key=lambda k: _hits[k][-1] if _hits[k] else 0.0)[:how_many]
+    for key in oldest:
+        _hits.pop(key, None)
+
+
 def reset() -> None:
     """Clear all counters (tests, and a deliberate operational reset)."""
+    global _since_sweep
     _hits.clear()
+    _since_sweep = 0

@@ -231,10 +231,10 @@ def _pool_prompt(law: LawText, speeches: list[Speech]) -> str:
     )
 
 
-def _fit_budget(speeches: list[Speech], budget_chars: int) -> tuple[list[Speech], int]:
+def _fit_budget(speeches: list[Speech], budget_chars: int) -> list[Speech]:
     """Keep the longest speeches that fit, preserving chronological order."""
     if sum(len(s.text) for s in speeches) <= budget_chars:
-        return speeches, 0
+        return speeches
     kept, used = [], 0
     for speech in sorted(speeches, key=lambda s: len(s.text), reverse=True):
         if used + len(speech.text) > budget_chars:
@@ -243,7 +243,7 @@ def _fit_budget(speeches: list[Speech], budget_chars: int) -> tuple[list[Speech]
         used += len(speech.text)
     order = {s.speech_id: i for i, s in enumerate(speeches)}
     kept.sort(key=lambda s: order[s.speech_id])
-    return kept, len(speeches) - len(kept)
+    return kept
 
 
 def _verify(pick: ArgumentPick, by_id: dict[str, Speech]) -> tuple[dict | None, str]:
@@ -294,7 +294,7 @@ def select_arguments(
 
     # Roughly 3.6 characters per token in French; leave room for the instructions.
     budget = int(settings.ai_max_input_tokens * 3.6 * 0.8)
-    pool, _ = _fit_budget(speeches[: settings.ai_max_speeches * 4], budget)
+    pool = _fit_budget(speeches[: settings.ai_max_speeches * 4], budget)
     if len(pool) > settings.ai_max_speeches:
         order = {s.speech_id: i for i, s in enumerate(pool)}
         longest = sorted(pool, key=lambda s: len(s.text), reverse=True)

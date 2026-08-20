@@ -233,3 +233,17 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Public record of edits made to a law after publication (charter: transparency). */
+.revised-note { background: #eef2fb; border: 1px solid #c9d6f0; border-radius: var(--radius);
+  padding: 0.75rem 1rem; font-size: 0.9rem; }
+.revision-value { max-width: 22rem; font-size: 0.85rem; color: var(--muted);
+  overflow-wrap: anywhere; }
+table.revisions td { vertical-align: top; }
+
+/* Archiving and purging: the two-step replacement for one-click deletion. */
+.danger-zone { border: 1px solid #f0c9c9; background: #fdf5f5; border-radius: var(--radius);
+  padding: 1rem 1.25rem; margin-top: 2rem; }
+.danger-zone h2 { margin-top: 0; font-size: 1.05rem; }
+.confirm-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 1.5rem; }
+.button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }

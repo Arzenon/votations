@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import csv
 import io
-import math
+import json
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import (
     HTMLResponse,
-    JSONResponse,
     RedirectResponse,
     Response,
     StreamingResponse,
@@ -25,7 +24,15 @@ from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.crud import votes as votes_crud
 from app.db import get_db
-from app.models import DIMENSION_AGE, DIMENSION_ORDER, DIMENSION_REGION, DIMENSION_SEXE, VoteChoice
+from app.models import (
+    DIMENSION_AGE,
+    DIMENSION_ORDER,
+    DIMENSION_REGION,
+    DIMENSION_SEXE,
+    STATUS_OPEN,
+    Law,
+    VoteChoice,
+)
 from app.security import require_same_origin
 from app.templating import templates
 
@@ -34,6 +41,10 @@ from app.templating import templates
 # not stop a fresh one being minted, so any page could otherwise turn its
 # visitors into ballots.
 router = APIRouter(dependencies=[Depends(require_same_origin)])
+
+# A search box is not a place to paste a novel. Long enough for any real query,
+# short enough that three unanchored ILIKEs stay cheap.
+MAX_QUERY_CHARS = 120
 
 
 def _demographic_form_context() -> dict:
@@ -50,6 +61,16 @@ def _carry_cookies(source: Response, target: Response) -> Response:
         if key.lower() == b"set-cookie":
             target.raw_headers.append((key, value))
     return target
+
+
+def _visible(db: Session, slug: str) -> Law | None:
+    """The law behind this slug, if it may be shown at all.
+
+    Archived laws are withdrawn from the site: they answer 404 exactly as an
+    unpublished one does, on every public route including the exports.
+    """
+    law = laws_crud.get_by_slug(db, slug)
+    return law if law is not None and law.is_public else None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -69,18 +90,16 @@ def search(
     page: int = 1,
     db: Session = Depends(get_db),
 ):
-    page = max(1, page)
-    page_size = 20
-    rows, total = laws_crud.search(db, query=q, status=status, page=page, page_size=page_size)
-    pages = max(1, math.ceil(total / page_size))
+    q = (q or "")[:MAX_QUERY_CHARS]
+    rows, total, pages = laws_crud.search(db, query=q or None, status=status, page=page)
     return templates.TemplateResponse(
         request,
         "search.html",
         {
             "laws": rows,
-            "q": q or "",
+            "q": q,
             "status": status or "",
-            "page": page,
+            "page": min(max(1, page), pages),
             "pages": pages,
             "total": total,
         },
@@ -94,25 +113,29 @@ def law_page(
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
-    law = laws_crud.get_by_slug(db, slug)
-    if law is None or not law.published:
+    law = _visible(db, slug)
+    if law is None:
         return _not_found(request)
 
     # Reading a law issues nothing: a voter token is minted when someone votes,
     # not when they visit. Somebody who only reads leaves no identifier behind.
     voter_token = auth.peek_voter_token(request)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
+    status = law.status()
 
     return templates.TemplateResponse(
         request,
         "law.html",
         {
             "law": law,
-            "status": law.status(),
+            "status": status,
             "existing_choice": existing.choice if existing else None,
-            "tally": results_crud.tally(db, law.id),
+            # Only the closed page shows a tally; counting the votes to render a
+            # ballot nobody sees was wasted work on the busiest page of the site.
+            "tally": results_crud.tally(db, law.id) if status != STATUS_OPEN else None,
             "choices": list(VoteChoice),
             "demographics_locked": bool(existing and existing.demographics_recorded),
+            "revision_count": laws_crud.count_revisions(db, law.id),
             **_demographic_form_context(),
         },
     )
@@ -129,8 +152,8 @@ def cast_vote(
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
-    law = laws_crud.get_by_slug(db, slug)
-    if law is None or not law.published:
+    law = _visible(db, slug)
+    if law is None:
         return _not_found(request)
 
     # A fresh cookie is a fresh voter, so without this a script can add votes as
@@ -159,7 +182,8 @@ def cast_vote(
 
     # Optional, anonymous: folded once into aggregate counters (no per-voter row).
     # The categories a voter already contributed come back from their own device,
-    # so changing a vote moves the counters instead of leaving them stale.
+    # keyed on this law, so changing a vote moves this law's counters and no
+    # other law's.
     on_file = demo_crud.record(
         db,
         vote=vote,
@@ -167,9 +191,9 @@ def cast_vote(
         age_bracket=age_bracket,
         sexe=sexe,
         region=region,
-        previous=profile_cookie.read(request),
+        previous=profile_cookie.read(request, law.id),
     )
-    profile_cookie.write(carrier, on_file)
+    profile_cookie.write(request, carrier, law.id, on_file)
 
     # HTMX request → return just the ballot fragment; else full-page redirect.
     if request.headers.get("HX-Request"):
@@ -192,29 +216,50 @@ def cast_vote(
 
 @router.get("/loi/{slug}/resultats", response_class=HTMLResponse)
 def results_page(request: Request, slug: str, db: Session = Depends(get_db)):
-    law = laws_crud.get_by_slug(db, slug)
-    if law is None or not law.published:
+    law = _visible(db, slug)
+    if law is None:
         return _not_found(request)
+    # One count of this law's votes, shared by everything below that needs it.
+    # Four separate COUNT(*)s used to answer the same question per render.
+    tally = results_crud.tally(db, law.id)
     return templates.TemplateResponse(
         request,
         "results.html",
         {
             "law": law,
             "status": law.status(),
-            "tally": results_crud.tally(db, law.id),
-            "evolution": results_crud.evolution(db, law.id),
+            "tally": tally,
+            "evolution": results_crud.evolution(db, law.id, total=tally.total),
             "breakdowns": demo_crud.all_breakdowns(db, law.id),
             "provision": demo_crud.provision_rate(db, law.id),
-            "export_note": results_crud.export_note(db, law.id),
+            "export_note": results_crud.export_note(db, law.id, total=tally.total),
+            "revisions": laws_crud.revisions(db, law.id),
         },
     )
 
 
+def _export_allowed(request: Request) -> bool:
+    """Exports get their own, much tighter bucket than voting.
+
+    One download is a full scan of a law's votes. Legitimate use is a handful of
+    files; a loop over the JSON endpoint is a cheap way to keep the database busy.
+    """
+    settings = get_settings()
+    return not ratelimit.too_many(
+        request,
+        limit=settings.export_rate_limit,
+        window_seconds=settings.export_rate_window_seconds,
+        bucket="export",
+    )
+
+
 @router.get("/loi/{slug}/export.csv")
-def export_csv(slug: str, db: Session = Depends(get_db)):
-    law = laws_crud.get_by_slug(db, slug)
-    if law is None or not law.published:
-        return JSONResponse({"detail": "not found"}, status_code=404)
+def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
+    law = _visible(db, slug)
+    if law is None:
+        return _not_found(request)
+    if not _export_allowed(request):
+        return _too_many_exports(request)
 
     def rows() -> Iterator[str]:
         buf = io.StringIO()
@@ -239,47 +284,71 @@ def export_csv(slug: str, db: Session = Depends(get_db)):
 
 
 @router.get("/loi/{slug}/export.json")
-def export_json(slug: str, db: Session = Depends(get_db)):
-    law = laws_crud.get_by_slug(db, slug)
-    if law is None or not law.published:
-        return JSONResponse({"detail": "not found"}, status_code=404)
+def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
+    law = _visible(db, slug)
+    if law is None:
+        return _not_found(request)
+    if not _export_allowed(request):
+        return _too_many_exports(request)
+
+    total = results_crud.count_votes(db, law.id)
+
     # Demographic aggregates are included only where they clear cell suppression.
-    demographics = []
-    for bd in demo_crud.all_breakdowns(db, law.id):
-        if bd.shown:
-            demographics.append(
-                {
-                    "dimension": bd.dimension,
-                    "rows": [
-                        {
-                            "category": r.category,
-                            "counts": r.counts,
-                            "share_pct": r.share,
-                            "reference_pct": r.reference,
-                        }
-                        for r in bd.rows
-                    ],
-                }
-            )
-    provision = demo_crud.provision_rate(db, law.id)
-    return JSONResponse(
+    demographics = [
         {
-            "law": {"id": law.id, "slug": law.slug, "title": law.title},
-            "votes": results_crud.export_rows(db, law.id),
-            "demographics": demographics,
-            "profile_provision": {
-                "total_votes": provision.total_votes,
-                "with_profile": provision.with_profile,
-                "percentage": provision.percentage,
-            },
-            "votes_note": results_crud.export_note(db, law.id),
-            "demographics_note": (
-                "Répartitions agrégées uniquement, masquées sous le seuil "
-                "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
-                "de grandeur national INSEE (approx.), jamais utilisé pour "
-                "repondérer."
-            ),
+            "dimension": bd.dimension,
+            "rows": [
+                {
+                    "category": r.category,
+                    "counts": r.counts,
+                    "share_pct": r.share,
+                    "reference_pct": r.reference,
+                }
+                for r in bd.rows
+            ],
         }
+        for bd in demo_crud.all_breakdowns(db, law.id)
+        if bd.shown
+    ]
+    provision = demo_crud.provision_rate(db, law.id)
+    envelope = {
+        "law": {"id": law.id, "slug": law.slug, "title": law.title},
+        "demographics": demographics,
+        "profile_provision": {
+            "total_votes": provision.total_votes,
+            "with_profile": provision.with_profile,
+            "percentage": provision.percentage,
+        },
+        "votes_note": results_crud.export_note(db, law.id, total=total),
+        "demographics_note": (
+            "Répartitions agrégées uniquement, masquées sous le seuil "
+            "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
+            "de grandeur national INSEE (approx.), jamais utilisé pour "
+            "repondérer."
+        ),
+    }
+
+    def document() -> Iterator[str]:
+        """Stream the envelope with the vote rows written one at a time.
+
+        The whole set used to be materialised into a list and then serialised —
+        two full copies of every vote in memory at once, on an endpoint anyone
+        can request. The rows are the only unbounded part, so they are the part
+        that streams.
+        """
+        head = json.dumps(envelope, ensure_ascii=False)
+        # Splice the vote array into the object rather than building a second one.
+        yield head[:-1] + ', "votes": ['
+        first = True
+        for row in results_crud.iter_export_rows(db, law.id, total=total):
+            yield ("" if first else ",") + json.dumps(row, ensure_ascii=False)
+            first = False
+        yield "]}"
+
+    return StreamingResponse(
+        document(),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="votations-{slug}.json"'},
     )
 
 
@@ -293,6 +362,22 @@ def _too_many_votes(request: Request) -> HTMLResponse:
             "message": (
                 "Trop de votes ont été envoyés depuis votre connexion en quelques "
                 "minutes. Réessayez dans un instant."
+            ),
+        },
+        status_code=429,
+    )
+
+
+def _too_many_exports(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "erreur.html",
+        {
+            "titre": "Trop de téléchargements",
+            "message": (
+                "Trop de fichiers ont été téléchargés depuis votre connexion en "
+                "quelques minutes. Les données restent disponibles : réessayez "
+                "dans un instant."
             ),
         },
         status_code=429,

@@ -46,10 +46,7 @@ class AuthProvider(Protocol):
 
     def login_url(self) -> str:
         """Where the connect button points."""
-
-    def logout_url(self) -> str: ...
-
-    def is_authenticated(self, request: Request) -> bool: ...
+        ...
 
 
 _provider: AuthProvider | None = None

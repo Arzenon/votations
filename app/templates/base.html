@@ -10,9 +10,12 @@
   <meta property="og:description" content="{{ self.description() }}">
   <meta property="og:type" content="website">
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css">
-  <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
+  <script src="{{ asset_url('app.js') }}" defer></script>
+  {# htmx is 50 kB and only two pages use it (the ballot, and the admin draft
+     banner). Loading it from here made every visitor on every page pay for it —
+     on a site whose charter names slow connections explicitly. #}
+  {% block scripts %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#main">Aller au contenu</a>
