@@ -13,6 +13,7 @@ as possible, which strengthens the anonymity guarantee.
 """
 
 import enum
+import unicodedata
 
 from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -40,7 +41,10 @@ class Sexe(enum.StrEnum):
 
 
 class Region(enum.StrEnum):
-    # Ordered by population (largest first) — used as display order too.
+    # Declared largest-population-first, which is only how this list is *written*.
+    # What a visitor sees is alphabetical — see DIMENSION_ORDER below. The member
+    # *values* are what lands in the counters and in the open-data export, so they
+    # are the part that must never move.
     IDF = "Île-de-France"
     ARA = "Auvergne-Rhône-Alpes"
     HDF = "Hauts-de-France"
@@ -76,8 +80,31 @@ DIMENSION_LABELS = {
     DIMENSION_REGION: "Région",
 }
 
-# Canonical display order per dimension.
-DIMENSION_ORDER = {dim: [m.value for m in members] for dim, members in DIMENSION_ENUMS.items()}
+def _alphabetical(values) -> list[str]:
+    """Sort French labels the way a French reader expects to find them.
+
+    Sorting the raw strings would file « Île-de-France » after « Provence » —
+    ``Î`` sits well past ``Z`` in code-point order — so the key strips diacritics
+    first and the accented name lands under I, where someone looking for it will
+    actually look.
+    """
+
+    def key(value: str) -> str:
+        stripped = unicodedata.normalize("NFKD", value)
+        return "".join(c for c in stripped if not unicodedata.combining(c)).lower()
+
+    return sorted(values, key=key)
+
+
+# Canonical display order per dimension — used for the ballot's dropdowns and for
+# the rows of the results table. Age runs youngest to oldest and sexe keeps its
+# declared order, both of which are meaningful; régions are alphabetical, because
+# a list of fourteen is something people scan for their own rather than read.
+DIMENSION_ORDER = {
+    DIMENSION_AGE: [m.value for m in AgeBracket],
+    DIMENSION_SEXE: [m.value for m in Sexe],
+    DIMENSION_REGION: _alphabetical(m.value for m in Region),
+}
 
 # Allowed (dimension, category) pairs, used to validate incoming form values.
 VALID_CATEGORIES = {dim: set(order) for dim, order in DIMENSION_ORDER.items()}

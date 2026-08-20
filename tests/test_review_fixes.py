@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from itsdangerous import URLSafeSerializer
+from markupsafe import escape
 
 from app import profile_cookie, ratelimit
 from app.config import Settings, get_settings
@@ -503,3 +504,75 @@ def test_a_pending_draft_is_never_cleared_by_opening_the_form(client, db_session
     assert "en cours de génération" in page.text
     db_session.refresh(item)
     assert item.draft_status == "en_cours"
+
+
+# --- Éditorial : ordre des régions et cohérence des chaînes -------------------
+
+
+def test_regions_are_offered_in_alphabetical_order(client, open_law):
+    """Fourteen régions are scanned for one's own, not read top to bottom."""
+    from app.models import DIMENSION_ORDER, DIMENSION_REGION
+
+    shown = DIMENSION_ORDER[DIMENSION_REGION]
+    assert shown[0] == "Auvergne-Rhône-Alpes"
+    assert shown[-1] == "Provence-Alpes-Côte d'Azur"
+    # The accented name files under I, not after Z as a raw sort would put it.
+    assert shown.index("Île-de-France") == shown.index("Hauts-de-France") + 1
+
+    # And that is the order the ballot actually renders. Compared against the
+    # escaped form: "Provence-Alpes-Côte d'Azur" reaches the page as d&#39;Azur.
+    page = client.get(f"/loi/{open_law.slug}").text
+    positions = [page.index(f'value="{escape(r)}"') for r in shown]
+    assert positions == sorted(positions)
+
+
+def test_reordering_regions_never_moves_a_stored_value():
+    """Display order is presentation; the values are in the counters and exports."""
+    from app.models import Region
+
+    assert {r.value for r in Region} == {
+        "Île-de-France",
+        "Auvergne-Rhône-Alpes",
+        "Hauts-de-France",
+        "Nouvelle-Aquitaine",
+        "Occitanie",
+        "Grand Est",
+        "Provence-Alpes-Côte d'Azur",
+        "Pays de la Loire",
+        "Bretagne",
+        "Normandie",
+        "Bourgogne-Franche-Comté",
+        "Centre-Val de Loire",
+        "Corse",
+        "Outre-mer",
+    }
+
+
+def test_the_tagline_is_written_once(client):
+    """The meta description and the home lede used to be two near-identical copies."""
+    from app.templating import TAGLINE
+
+    home = client.get("/").text
+    # Three renders from one constant: <meta name="description">, the og:description
+    # that mirrors it, and the lede. Previously two of these were separate prose.
+    assert home.count(str(escape(TAGLINE))) == 3
+
+
+def test_inclusive_spelling_is_uniform(client, open_law, db_session):
+    """One form throughout: ·e·s in the plural."""
+    from app.crud import votes as votes_crud
+    from app.models import VoteChoice
+
+    votes_crud.cast_vote(db_session, open_law, "jeton", VoteChoice.FOR)
+    pages = [client.get("/").text, client.get(f"/loi/{open_law.slug}/resultats").text]
+    for page in pages:
+        assert "votant·es" not in page
+        assert "participant·es" not in page
+
+
+def test_the_representativeness_warning_appears_once_per_page(client, open_law):
+    """It is in the banner at the top; repeating it at the foot read as insistence."""
+    from app.templating import DISCLAIMER
+
+    for url in ("/", f"/loi/{open_law.slug}", f"/loi/{open_law.slug}/resultats"):
+        assert client.get(url).text.count(str(escape(DISCLAIMER))) == 1

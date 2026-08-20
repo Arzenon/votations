@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Votations Françaises{% endblock %}</title>
-  <meta name="description" content="{% block description %}Donnez votre avis sur les lois adoptées par le Parlement : présentation neutre et sourcée, données ouvertes, aucune donnée personnelle collectée.{% endblock %}">
+  <meta name="description" content="{% block description %}{{ TAGLINE }}{% endblock %}">
   <meta property="og:site_name" content="Votations Françaises">
   <meta property="og:title" content="{{ self.title() }}">
   <meta property="og:description" content="{{ self.description() }}">
@@ -39,10 +39,7 @@
 
   <footer class="site-footer">
     <div class="container">
-      <p>
-        Données publiées en accès libre, anonymisées.
-        La plateforme ne prend aucune position et ne formule aucune recommandation.
-      </p>
+      <p>Données publiées en accès libre, anonymisées.</p>
       <p><a href="/connexion">À propos de l'authentification</a></p>
     </div>
   </footer>

@@ -15,6 +15,15 @@ from app.security import safe_url
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
+# What the site is, in one sentence. Used as the default meta description — the
+# line search engines and messaging apps show under the link — and as the lede on
+# the home page. Defined once because it was drifting: the two copies said nearly
+# the same thing in not quite the same words.
+TAGLINE = (
+    "Donnez votre avis sur les lois adoptées par le Parlement : données "
+    "ouvertes, aucune donnée personnelle collectée."
+)
+
 # Permanent transparency disclaimer, shown on every page (charter requirement).
 DISCLAIMER = (
     "Votations Françaises n'est pas un sondage représentatif. Les personnes qui "
@@ -36,6 +45,7 @@ def _auth_context(request: Request) -> dict:
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR), context_processors=[_auth_context])
 
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
+templates.env.globals["TAGLINE"] = TAGLINE
 
 
 @lru_cache

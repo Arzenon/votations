@@ -48,7 +48,7 @@
       (≥ {{ breakdowns[0].threshold }} votes) ; sinon, l'ensemble est masqué.
     </p>
     <p class="meta">
-      <strong>{{ provision.percentage }}%</strong> des votant·es ont partagé au
+      <strong>{{ provision.percentage }}%</strong> des votant·e·s ont partagé au
       moins une information de profil ({{ provision.with_profile }} sur
       {{ provision.total_votes }}). Les répartitions ci-dessous ne concernent
       qu'elles et eux.
@@ -78,13 +78,13 @@
       </table>
     </div>
     {% elif bd.reason == "below_threshold" %}
-    <p class="meta">Masqué : la participation est encore trop faible pour afficher cette répartition sans risque de ré-identification.</p>
+    <p class="meta">Pas assez de votant·e·s.</p>
     {% else %}
     <p class="meta">Aucune donnée renseignée pour cette répartition.</p>
     {% endif %}
     {% endfor %}
     <p class="meta">
-      « Part ici » = poids de la catégorie parmi les participant·es ayant
+      « Part ici » = poids de la catégorie parmi les participant·e·s ayant
       renseigné ce champ. « France » = part nationale (estimations de population
       INSEE ; régions de France métropolitaine), donnée <em>uniquement</em> pour
       montrer l'écart : les résultats ne sont jamais repondérés.
@@ -132,6 +132,5 @@
     <p class="meta">{{ export_note }}</p>
   </section>
 
-  <p class="disclaimer-inline">⚠️ {{ DISCLAIMER }}</p>
 </article>
 {% endblock %}

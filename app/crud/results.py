@@ -117,13 +117,10 @@ def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
         )
     if settings.export_time_resolution == "exact":
         return "L'horodatage est publié à la seconde près."
-    unit = "à l'heure" if settings.export_time_resolution == "hour" else "au jour"
-    return (
-        f"L'horodatage est arrondi {unit}, à la même résolution que la courbe "
-        "d'évolution publiée : l'export ne révèle rien de plus que la page de "
-        "résultats, et connaître le moment où une personne a voté ne permet pas "
-        "de retrouver son vote."
-    )
+    # The rounding resolution is no longer spelled out here. It is still the same
+    # one the published evolution uses — that is what makes the sentence true —
+    # but naming it added a clause readers had to decode to reach the point.
+    return "L'export ne révèle rien de plus que la page de résultats."
 
 
 def _timestamps_allowed(db: Session, law_id: int, *, total: int | None = None) -> bool:

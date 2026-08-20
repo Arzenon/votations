@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Donnez votre avis sur les lois</h1>
-<p class="lede">
-  Exprimez votre opinion sur les textes adoptés par le Parlement. Présentation
-  neutre, données ouvertes, aucune donnée personnelle collectée.
-</p>
+<p class="lede">{{ TAGLINE }}</p>
 
 {# One search, one page: the form posts to the dedicated search route rather
    than duplicating a second implementation here. #}

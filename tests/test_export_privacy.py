@@ -121,7 +121,9 @@ def test_export_is_reproducible(client, open_law, db_session):
 def test_the_json_export_says_what_it_rounded(client, open_law, db_session):
     _seed(db_session, open_law)
     data = client.get(f"/loi/{open_law.slug}/export.json").json()
-    assert "arrondi" in data["votes_note"]
+    # The note no longer names the resolution — it states the guarantee that
+    # matters, and the rounding is visible in the rows themselves.
+    assert data["votes_note"] == "L'export ne révèle rien de plus que la page de résultats."
     for vote in data["votes"]:
         assert vote["created_at"] == "2026-05-04"
 
