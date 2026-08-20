@@ -135,10 +135,13 @@ class Settings(BaseSettings):
     # Refuse to send anything larger, rather than silently spending on an outlier
     # (a loi de finances can be far bigger than an ordinary law).
     ai_max_input_tokens: int = Field(default=150000, ge=1)
-    # Thinking tokens bill as output. Summarising and quoting do not need deep
-    # reasoning, so "medium" roughly halves the cost of a draft; raise it if the
-    # drafts read as shallow.
-    ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    # Thinking tokens bill as output, so this is the main cost dial. "high" is
+    # the default because the drafts are read and corrected by a person before
+    # anything is published: an hour of editing costs more than the extra tokens,
+    # and a shallow summary of a law is worse than a slow one. Drop to "medium"
+    # to roughly halve the cost of a draft if the quality holds for your corpus;
+    # "xhigh" and "max" exist above it and are rarely worth it here.
+    ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
     # Interventions sent when selecting arguments. The biggest debates run to 86
     # speeches; the longest are the substantive ones, so a cap trims cost far more
     # than it trims quality.

@@ -28,23 +28,25 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Everything the operator decides — secrets, mentions légales, seuils
+    # d'anonymat, clé IA. `.env` is excluded from the image on purpose, so this
+    # is what carries it into the container; without it, filling `.env` would
+    # change nothing in production. Create it first: `cp .env.example .env`.
+    env_file: .env
+    # Only what the deployment itself must impose. `environment` wins over
+    # `env_file`, so these cannot be weakened by editing `.env` — which is the
+    # point: they are properties of *this* stack, not preferences.
     environment:
       ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
-      SECRET_KEY: ${SECRET_KEY:?définissez SECRET_KEY — voir DEPLOY.md}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?définissez ADMIN_PASSWORD}
       COOKIE_SECURE: "true"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      MIN_BUCKET_VOLUME: "50"
-      MIN_CELL_COUNT: "10"
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
       # Exactly one proxy (Caddy) sits in front, and it overwrites
       # X-Forwarded-For with the peer address — so the last entry is the real
       # client and the rate limit cannot be keyed on a forged one.
       TRUSTED_PROXY_HOPS: "1"
-      # Rounded timestamps in the open-data export: publishing the exact instant
-      # of every vote would undo the evolution-curve anonymity gate.
-      EXPORT_TIME_RESOLUTION: "day"
+      # Fail at `up`, with a message, rather than at boot inside the container.
+      SECRET_KEY: ${SECRET_KEY:?définissez SECRET_KEY — voir DEPLOY.md}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?définissez ADMIN_PASSWORD}
       # SEED_ON_START is deliberately absent: it defaults to 0.
     # --no-access-log: uvicorn's access log records the client IP of every
     # request, which would pair addresses with vote timestamps in the logs.
@@ -91,7 +93,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
-      INSEE_REFRESH_INTERVAL: "2592000"
+      INSEE_REFRESH_INTERVAL: "2592000"   # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/insee_cron.sh"]
     # A shell loop that has stopped succeeding still looks "running". The
@@ -116,10 +118,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
-      AN_REFRESH_INTERVAL: "86400"
-      # Rolling window rather than a pinned date, so the import never quietly
-      # grows a backlog as the years pass.
-      AN_IMPORT_SINCE_DAYS: "365"
+      AN_REFRESH_INTERVAL: "86400"        # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/assemblee_cron.sh"]
     # The export URL carries the legislature number and changes once per

@@ -341,9 +341,11 @@ Ordre de grandeur, mesuré : un brouillon complet enchaîne deux appels (résum�
 factuel, puis sélection d'arguments) et les jetons de raisonnement sont facturés en
 sortie. Une loi médiane revient à quelques dizaines de centimes ; la plus
 volumineuse du corpus (programmation militaire : 232 000 caractères de texte et 86
-interventions) a coûté **1,20 $** avant réglage. `AI_EFFORT=medium` et
-`AI_MAX_SPEECHES` ramènent nettement ce plafond, et le cache garantit qu'une loi
-n'est facturée qu'une fois.
+interventions) a coûté **1,20 $** à `AI_EFFORT=medium`. Le défaut est désormais
+`high`, ce qui augmente les jetons de raisonnement : les brouillons sont relus et
+corrigés par une personne, et une heure de relecture coûte plus cher que l'écart.
+`AI_MAX_SPEECHES` reste le réglage qui rabaisse nettement le plafond, et le cache
+garantit qu'une loi n'est facturée qu'une fois.
 
 Les arguments proposés sont un **vivier à trier**, pas ce qui sera publié :
 `AI_ARGUMENTS_PER_SIDE` (défaut 5) est un plafond, atteint seulement si les débats
@@ -351,7 +353,8 @@ fournissent autant de passages réellement argumentés. Cinq arguments par camp 
 beaucoup à lire pour un citoyen : réduisez avant d'enregistrer.
 
 Réglages : `ANTHROPIC_API_KEY`, `AI_MODEL` (défaut `claude-opus-5`),
-`AI_EFFORT` (défaut `medium` — à monter si les brouillons paraissent superficiels),
+`AI_EFFORT` (défaut `high` — `medium` divise à peu près par deux le coût d'un
+brouillon, `xhigh` et `max` existent au-dessus),
 `AI_MAX_INPUT_TOKENS`, `AI_MAX_SPEECHES` (interventions envoyées au modèle),
 `AI_ARGUMENTS_PER_SIDE`, `AI_RESERVES_MAX`, `AI_DRAFT_DEADLINE_SECONDS`.
 
