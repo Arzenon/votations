@@ -102,9 +102,7 @@ def _smooth(points: list[tuple[float, float]]) -> str:
         c1y = min(max(p1[1] + (p2[1] - p0[1]) / 6, low), high)
         c2x = p2[0] - (p3[0] - p1[0]) / 6
         c2y = min(max(p2[1] - (p3[1] - p1[1]) / 6, low), high)
-        out.append(
-            f"C {c1x:.1f} {c1y:.1f}, {c2x:.1f} {c2y:.1f}, {p2[0]:.1f} {p2[1]:.1f}"
-        )
+        out.append(f"C {c1x:.1f} {c1y:.1f}, {c2x:.1f} {c2y:.1f}, {p2[0]:.1f} {p2[1]:.1f}")
     return " ".join(out)
 
 

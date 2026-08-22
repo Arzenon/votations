@@ -10,6 +10,8 @@ import hashlib
 import random
 from datetime import datetime, timedelta
 
+from sqlalchemy import select
+
 from app.db import SessionLocal, utcnow
 from app.models import DemographicTally, Law, Vote, VoteChoice
 
@@ -210,7 +212,7 @@ def _seed_demographics(db, law: Law, data: dict) -> None:
         sum(c for choices in categories.values() for c in choices.values())
         for categories in data.values()
     )
-    votes = db.query(Vote).filter_by(law_id=law.id).limit(n).all()
+    votes = db.scalars(select(Vote).where(Vote.law_id == law.id).limit(n)).all()
     for v in votes:
         v.demographics_recorded = True
         # Which choice their profile was counted under, so that changing the vote
@@ -218,27 +220,34 @@ def _seed_demographics(db, law: Law, data: dict) -> None:
         v.demographics_choice = v.choice
 
 
+def _has_demographics(db, law_id: int) -> bool:
+    return (
+        db.scalar(select(DemographicTally.id).where(DemographicTally.law_id == law_id)) is not None
+    )
+
+
 def main() -> None:
     db = SessionLocal()
     created = 0
     try:
         for spec in SAMPLE_LAWS:
-            votes = spec.pop("votes")
-            demographics = spec.pop("demographics")
-            existing = db.query(Law).filter_by(slug=spec["slug"]).first()
-            if existing:
+            # Copied, not mutated: `SAMPLE_LAWS` is module state, and popping the
+            # two extra keys out of it and putting them back left the module in a
+            # different shape on every path through this loop.
+            columns = {k: v for k, v in spec.items() if k not in ("votes", "demographics")}
+            votes, demographics = spec["votes"], spec["demographics"]
+
+            existing = db.scalar(select(Law).where(Law.slug == columns["slug"]))
+            if existing is not None:
                 # Top up demographics if this law has none yet (idempotent).
-                if (
-                    demographics
-                    and not db.query(DemographicTally).filter_by(law_id=existing.id).first()
-                ):
+                if demographics and not _has_demographics(db, existing.id):
                     _seed_demographics(db, existing, demographics)
-                    print(f"↻ added demographics: {spec['slug']}")
+                    print(f"↻ added demographics: {columns['slug']}")
                 else:
-                    print(f"• skip (exists): {spec['slug']}")
-                spec["votes"], spec["demographics"] = votes, demographics
+                    print(f"• skip (exists): {columns['slug']}")
                 continue
-            law = Law(**spec)
+
+            law = Law(**columns)
             db.add(law)
             db.flush()  # assign id
             if votes:
@@ -247,7 +256,6 @@ def main() -> None:
                 _seed_demographics(db, law, demographics)
             created += 1
             print(f"✓ created: {law.slug}")
-            spec["votes"], spec["demographics"] = votes, demographics
         db.commit()
     finally:
         db.close()

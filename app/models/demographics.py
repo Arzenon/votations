@@ -80,6 +80,7 @@ DIMENSION_LABELS = {
     DIMENSION_REGION: "Région",
 }
 
+
 def _alphabetical(values) -> list[str]:
     """Sort French labels the way a French reader expects to find them.
 

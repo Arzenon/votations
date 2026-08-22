@@ -27,6 +27,8 @@ repeatable on purpose to deflate a category.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from fastapi import Request, Response
 from itsdangerous import BadSignature, URLSafeSerializer
 
@@ -45,7 +47,14 @@ _MAX_LAWS = 25
 _MAX_COOKIE_BYTES = 3000
 
 
+@lru_cache(maxsize=1)
 def _serializer() -> URLSafeSerializer:
+    """Built once, not per call.
+
+    Each construction derives a signing key from SECRET_KEY, and a single vote
+    goes through this three times — read, read again, write. The key cannot
+    change under a running process, so neither can the serializer.
+    """
     return URLSafeSerializer(get_settings().secret_key, salt="voter-profile")
 
 

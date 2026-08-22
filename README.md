@@ -13,11 +13,15 @@ personnelle).
 
 ## Mise en production
 
-`docker-compose.yml` est le fichier de **développement**. Pour un déploiement réel,
-voir **[DEPLOY.md](DEPLOY.md)** : secrets, choix d'hébergement, TLS, sauvegardes
-quotidiennes et hygiène des journaux. L'application refuse de démarrer en
-production tant que `SECRET_KEY` ou `ADMIN_PASSWORD` gardent leur valeur
-d'exemple.
+`docker-compose.dev.yml` est le fichier de **développement** : il construit
+l'image de test et insère des lois d'exemple. Le suffixe est volontaire — sans
+lui, un `docker compose up` sans `-f` aurait démarré la pile de développement en
+croyant démarrer la production.
+
+Pour un déploiement réel, voir **[DEPLOY.md](DEPLOY.md)** : secrets, choix
+d'hébergement, TLS, sauvegardes quotidiennes et hygiène des journaux.
+L'application refuse de démarrer en production tant que `SECRET_KEY` ou
+`ADMIN_PASSWORD` gardent leur valeur d'exemple.
 
 ## Démarrage (Docker — recommandé)
 
@@ -25,24 +29,26 @@ Tout tourne dans Docker : PostgreSQL + l'application. Au démarrage, le conteneu
 applique les migrations et insère des lois d'exemple (`SEED_ON_START=1`).
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 - Accueil : http://127.0.0.1:8000/
 - Administration : http://127.0.0.1:8000/admin (HTTP Basic — `admin` / `change-me`,
-  voir `docker-compose.yml`)
+  voir `docker-compose.dev.yml`)
 
 Tests et qualité (dans le conteneur) :
 
 ```bash
-docker compose run --rm app pytest
-docker compose run --rm app ruff check .
-docker compose run --rm app ruff format --check .
+docker compose -f docker-compose.dev.yml run --rm app pytest
+docker compose -f docker-compose.dev.yml run --rm app ruff check .
+docker compose -f docker-compose.dev.yml run --rm app ruff format --check .
 ```
 
-L'outillage de test vit dans l'étage `dev` de l'image ; l'image de production n'en
-contient rien, tourne sous un utilisateur non privilégié et installe exactement
-les versions figées dans `requirements.lock`.
+L'outillage de test vit dans l'étage `dev` de l'image. L'image de production n'en
+contient rien : chaque service de `docker-compose.prod.yml` nomme explicitement
+`target: base`, parce que Docker construit sinon le **dernier** étage du
+Dockerfile — qui est `dev`. Elle tourne sous un utilisateur non privilégié et
+installe exactement les versions figées dans `requirements.lock`.
 
 La suite construit son schéma **par les migrations**, pas par `create_all` : une
 migration manquante casse donc les tests plutôt que la mise à jour en production,
@@ -52,7 +58,7 @@ modèles et que la chaîne fait l'aller-retour.
 ## Démarrage sans Docker (optionnel)
 
 Nécessite un PostgreSQL accessible (`DATABASE_URL`). Vous pouvez lancer
-uniquement la base via `docker compose up -d db`.
+uniquement la base via `docker compose -f docker-compose.dev.yml up -d db`.
 
 ```bash
 python -m venv venv && source venv/bin/activate
@@ -176,7 +182,7 @@ l'échantillon auto-sélectionné. Les résultats ne sont **jamais** repondéré
 
 Les valeurs de référence sont rafraîchies chaque année depuis l'**API Melodi**
 ouverte de l'INSEE (jeu de données `DS_ESTIMATION_POPULATION`, estimations de
-population au 1ᵉʳ janvier), par le service `insee-refresh` de docker-compose :
+population au 1ᵉʳ janvier), par le service `insee-refresh` de la pile Docker :
 
 - **sexe**, **âge** et **région** (13 régions métropolitaines) sont calculés à
   partir des effectifs INSEE de l'année courante ; l'année source est affichée

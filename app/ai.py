@@ -87,7 +87,37 @@ def _user_prompt(law: LawText) -> str:
         header += f"Nature : {law.nature}\n"
     if law.signed_on:
         header += f"Promulguée le : {law.signed_on:%d/%m/%Y}\n"
-    return f"{header}\nTexte officiel :\n\n{law.plain_text}"
+    body = f"{header}\nTexte officiel :\n\n{law.plain_text}"
+    # The Journal Officiel sometimes carries its own plain-language notice. It is
+    # official, factual and already written for a non-specialist — exactly the
+    # register « Ce que ça change en pratique » is asking for — so it is given as
+    # source material rather than discarded. Still source material: the rules
+    # above forbid going beyond what the text says, and this is part of the text.
+    if law.notice:
+        body += f"\n\nNotice publiée au Journal Officiel :\n\n{law.notice}"
+    return body
+
+
+def _refuse_if_oversized(client: Any, *, system: str, messages: list, what: str) -> None:
+    """Measure the request before sending it, so an outlier is refused not billed.
+
+    Applied to both calls. The argument selection used to rely on a character
+    budget alone — a ratio times a ratio — which is a good enough way to decide
+    what to trim and no way at all to decide what is too expensive to send.
+    """
+    settings = get_settings()
+    try:
+        counted = client.messages.count_tokens(
+            model=settings.ai_model, system=system, messages=messages
+        ).input_tokens
+    except Exception as exc:
+        raise AiDraftError(f"impossible de mesurer le {what} : {exc}") from exc
+
+    if counted > settings.ai_max_input_tokens:
+        raise AiDraftError(
+            f"{what} trop volumineux ({counted} jetons, limite "
+            f"{settings.ai_max_input_tokens}) — à rédiger à la main"
+        )
 
 
 def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
@@ -107,20 +137,7 @@ def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
         raise AiDraftError("le texte officiel ne contient aucun article exploitable")
 
     messages = [{"role": "user", "content": _user_prompt(law)}]
-
-    # Measure before sending: an outsized text is refused, not silently billed.
-    try:
-        counted = client.messages.count_tokens(
-            model=settings.ai_model, system=SYSTEM_PROMPT, messages=messages
-        ).input_tokens
-    except Exception as exc:
-        raise AiDraftError(f"impossible de mesurer le texte : {exc}") from exc
-
-    if counted > settings.ai_max_input_tokens:
-        raise AiDraftError(
-            f"texte trop volumineux ({counted} jetons, limite "
-            f"{settings.ai_max_input_tokens}) — à rédiger à la main"
-        )
+    _refuse_if_oversized(client, system=SYSTEM_PROMPT, messages=messages, what="texte")
 
     try:
         response = client.messages.parse(
@@ -313,6 +330,9 @@ def select_arguments(
         "passages qui exposent réellement un motif."
     )
     messages = [{"role": "user", "content": f"{_pool_prompt(law, pool)}\n\n{instruction}"}]
+    _refuse_if_oversized(
+        client, system=ARGUMENTS_SYSTEM_PROMPT, messages=messages, what="corpus de séance"
+    )
 
     try:
         response = client.messages.parse(

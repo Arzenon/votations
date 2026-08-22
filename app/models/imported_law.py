@@ -57,7 +57,6 @@ class ImportedLaw(Base):
     legislature: Mapped[str] = mapped_column(String(8), default="")
     procedure: Mapped[str] = mapped_column(String(100), default="")
     title: Mapped[str] = mapped_column(String(1000))
-    law_title: Mapped[str] = mapped_column(Text, default="")
     law_code: Mapped[str] = mapped_column(String(32))
 
     # Official publication references.

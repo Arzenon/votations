@@ -130,6 +130,38 @@ def draft_import(
     )
 
 
+@router.post("/imports/{item_id}/brouillon/masquer", response_class=HTMLResponse)
+def dismiss_draft_failure(
+    request: Request,
+    item_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Acknowledge a failed draft, so its banner stops being shown.
+
+    A failure is news exactly once, and this is where that becomes true. The
+    form used to clear it while *rendering* the page, which made an ordinary GET
+    destroy state: a link prefetch or a preload consumed the explanation before
+    anybody read it, and the administrator was left with a form that had simply
+    not been filled in and no reason why.
+
+    Only a failed run is dismissible. A pending one is left strictly alone —
+    clearing it would stop the polling banner while the job is still running,
+    and the outcome would land on a row nobody is watching.
+    """
+    item = imports_crud.get_by_id(db, item_id)
+    if item is None:
+        raise HTTPException(404)
+    if item.draft_status == DRAFT_FAILED:
+        imports_crud.clear_draft_state(db, item)
+
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(
+            request, "admin/_draft_state.html", _draft_state_context(item)
+        )
+    return RedirectResponse(f"/admin/lois/nouvelle?import_id={item.id}", status_code=303)
+
+
 @router.get("/imports/{item_id}/brouillon/etat", response_class=HTMLResponse)
 def draft_state(
     request: Request,

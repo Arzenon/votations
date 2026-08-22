@@ -6,12 +6,12 @@ arguments against. Arguments are stored as lists of {text, source, author} so
 that every claim is sourced and attributed, and symmetry can be enforced.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db import Base, utcnow
+from app.db import Base, as_utc, utcnow
 
 # Derived publication states. Stored nowhere: always computed from `published`
 # and the voting window, so a law opens and closes on the clock alone.
@@ -35,9 +35,7 @@ STATUS_CLOSED = "closed"
 
 class Law(Base):
     __tablename__ = "laws"
-    __table_args__ = (
-        Index("ix_laws_fts", text(SEARCH_VECTOR_SQL), postgresql_using="gin"),
-    )
+    __table_args__ = (Index("ix_laws_fts", text(SEARCH_VECTOR_SQL), postgresql_using="gin"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
@@ -97,16 +95,11 @@ class Law(Base):
         look once published" is a question about the window, not about the flag.
         """
         now = now or utcnow()
-        if self.opens_at and now < _aware(self.opens_at):
+        if self.opens_at and now < as_utc(self.opens_at):
             return STATUS_SCHEDULED
-        if self.closes_at and now >= _aware(self.closes_at):
+        if self.closes_at and now >= as_utc(self.closes_at):
             return STATUS_CLOSED
         return STATUS_OPEN
 
     def is_open(self, now: datetime | None = None) -> bool:
         return self.status(now) == STATUS_OPEN
-
-
-def _aware(dt: datetime) -> datetime:
-    """Treat any naive datetime as UTC for safe comparison."""
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

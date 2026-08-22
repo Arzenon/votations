@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -12,20 +10,12 @@ from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
-from app.db import get_db
-from app.models import (
-    DIMENSION_AGE,
-    DIMENSION_ORDER,
-    DIMENSION_REGION,
-    DIMENSION_SEXE,
-    DRAFT_FAILED,
-    STATUS_IMPORTED,
-    STATUS_OPEN,
-    VoteChoice,
-)
+from app.db import as_utc, get_db, utcnow
+from app.models import STATUS_IMPORTED
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form
 from app.routes.admin.guard import require_admin
+from app.routes.public import law_page_context
 from app.templating import templates
 
 router = APIRouter()
@@ -44,8 +34,11 @@ def dashboard(
     stale_after = settings.an_import_stale_after_hours
     hours_since = None
     if last_import is not None:
-        delta = datetime.now(tz=last_import.tzinfo) - last_import
-        hours_since = delta.total_seconds() / 3600
+        # Both sides in UTC. Reading the zone off the stored value and asking for
+        # "now" in it worked only because the column is timestamptz; the day it
+        # handed back a naive value, this would have compared local wall-clock
+        # time against a UTC instant and mis-stated the delay by the offset.
+        hours_since = (utcnow() - as_utc(last_import)).total_seconds() / 3600
     return templates.TemplateResponse(
         request,
         "admin/dashboard.html",
@@ -101,23 +94,20 @@ def new_law_form(
         raise HTTPException(404)
     # A draft already generated for this law is shown straight away: it has been
     # paid for, and hiding it behind another click helps nobody.
-    draft, arguments, notes, eli_url = cached_draft(prefill)
-    context = law_form_context(
-        prefill=prefill, draft=draft, arguments=arguments, notes=notes, eli_url=eli_url
-    )
-
-    # A failure is news exactly once. Showing it on this render and clearing it
-    # afterwards means the administrator sees why the draft did not happen, and
-    # is not told again on every later visit. The context above already holds a
-    # snapshot of the status, so clearing now does not affect what is rendered.
     #
-    # A *pending* run is left strictly alone: clearing it would stop the polling
-    # banner while the job is still going, and the outcome would land on a row
-    # nobody is watching.
-    if prefill is not None and prefill.draft_status == DRAFT_FAILED:
-        imports_crud.clear_draft_state(db, prefill)
-
-    return templates.TemplateResponse(request, "admin/law_form.html", context)
+    # A failed run leaves its banner up until the administrator dismisses it —
+    # see `dismiss_draft_failure`. Clearing it here, while rendering, made a GET
+    # destroy the only record of why the draft had not happened: a link
+    # prefetch, a browser preload or a stray double-tap consumed the message
+    # before anyone read it.
+    draft, arguments, notes, eli_url = cached_draft(prefill)
+    return templates.TemplateResponse(
+        request,
+        "admin/law_form.html",
+        law_form_context(
+            prefill=prefill, draft=draft, arguments=arguments, notes=notes, eli_url=eli_url
+        ),
+    )
 
 
 @router.get("/lois/{law_id}", response_class=HTMLResponse)
@@ -181,23 +171,12 @@ def preview_law(
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
-    status = law.scheduled_status()
     return templates.TemplateResponse(
         request,
         "law.html",
-        {
-            "law": law,
-            "status": status,
-            "existing_choice": None,
-            "tally": results_crud.tally(db, law.id) if status != STATUS_OPEN else None,
-            "choices": list(VoteChoice),
-            "demographics_locked": False,
-            "revision_count": laws_crud.count_revisions(db, law.id),
-            "preview": True,
-            "age_brackets": DIMENSION_ORDER[DIMENSION_AGE],
-            "sexes": DIMENSION_ORDER[DIMENSION_SEXE],
-            "regions": DIMENSION_ORDER[DIMENSION_REGION],
-        },
+        # The public page's own context builder, not a copy of it: a copy drifts,
+        # and a preview that has drifted from the page is worse than no preview.
+        law_page_context(db, law, status=law.scheduled_status(), preview=True),
     )
 
 

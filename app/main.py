@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 
 import anyio.to_thread
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.config import check_production_config, get_settings
+from app.config import Settings, check_production_config, get_settings
 from app.db import SessionLocal
 from app.drafting import shutdown_drafting
 from app.logging_config import configure_logging, get_logger
@@ -63,6 +65,12 @@ SECURITY_HEADERS = {
     ),
 }
 
+# Only ever sent where the site is already HTTPS-only — `cookie_secure` is the
+# app's own record of that, and production refuses to boot without it. Sending it
+# over plain HTTP in development would pin the developer's browser to a scheme
+# the local stack does not serve, and browsers honour that pin for a year.
+HSTS_HEADER = ("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
 # Pages default to not being stored anywhere. The law page renders the visitor's
 # own ballot, and the administration renders unpublished drafts; neither may sit
 # in a shared cache, and "no cache directive at all" leaves that to the goodwill
@@ -70,6 +78,10 @@ SECURITY_HEADERS = {
 # setting its own Cache-Control — the static files and the favicon do.
 DEFAULT_CACHE_CONTROL = "private, no-store"
 STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
+# Development only: still cacheable, but revalidated every time. `immutable`
+# there meant an edited stylesheet was invisible until a hard reload, because the
+# files change under a running server and `--reload` only watches Python.
+DEV_STATIC_CACHE_CONTROL = "no-cache"
 
 
 class CachedStaticFiles(StaticFiles):
@@ -82,15 +94,75 @@ class CachedStaticFiles(StaticFiles):
 
     def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
-        response.headers["Cache-Control"] = STATIC_CACHE_CONTROL
+        response.headers["Cache-Control"] = (
+            STATIC_CACHE_CONTROL if get_settings().is_production else DEV_STATIC_CACHE_CONTROL
+        )
         return response
+
+
+def default_headers(settings: Settings | None = None) -> list[tuple[str, str]]:
+    """The security headers plus the conservative cache default, in one list.
+
+    Applied in two places on purpose. The middleware below covers every ordinary
+    response; :func:`_error_page` applies them again because an unhandled
+    exception is served by Starlette's ``ServerErrorMiddleware``, which sits
+    *above* our own middleware and never reaches it. That left the one page on
+    the site most likely to be generated under stress as the only one with no
+    CSP — and, worse, with no ``no-store``, which is the directive no reverse
+    proxy puts back for us.
+    """
+    settings = settings or get_settings()
+    headers = [*SECURITY_HEADERS.items(), ("Cache-Control", DEFAULT_CACHE_CONTROL)]
+    if settings.cookie_secure:
+        headers.append(HSTS_HEADER)
+    return headers
+
+
+class SecurityHeaders:
+    """Apply the site's headers, whatever is (or is not) proxying for us.
+
+    A plain ASGI middleware rather than ``@app.middleware("http")``: the
+    ``BaseHTTPMiddleware`` behind that decorator pipes every response body
+    through an anyio memory stream, task group included. The open-data exports
+    are the one place that streams a whole votation row by row, and they paid
+    that cost on every chunk for a handful of headers that never vary.
+
+    Headers already on the response win, so a route that sets its own
+    ``Cache-Control`` — the static files, the favicon, robots.txt — keeps it.
+    """
+
+    def __init__(self, app: ASGIApp, *, headers: list[tuple[str, str]]) -> None:
+        self.app = app
+        # Encoded once at construction: they are the same bytes on every
+        # response, and latin-1 is what the HTTP layer wants.
+        self.headers = [
+            (name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers
+        ]
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                existing = list(message.get("headers") or [])
+                present = {name.lower() for name, _ in existing}
+                existing.extend((n, v) for n, v in self.headers if n not in present)
+                message["headers"] = existing
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 def _error_page(request: Request, *, status: int, titre: str, message: str) -> Response:
     """Render a failure as a page of this site, not as a bare JSON payload."""
     template = "not_found.html" if status == 404 else "erreur.html"
     context = {} if status == 404 else {"titre": titre, "message": message}
-    return templates.TemplateResponse(request, template, context, status_code=status)
+    response = templates.TemplateResponse(request, template, context, status_code=status)
+    for name, value in default_headers():
+        response.headers.setdefault(name, value)
+    return response
 
 
 def _wants_html(request: Request) -> bool:
@@ -135,14 +207,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Votations Françaises", lifespan=lifespan, **docs)
 
-    @app.middleware("http")
-    async def secure_headers(request: Request, call_next):
-        """Apply the site's headers whatever is (or is not) proxying for us."""
-        response = await call_next(request)
-        for header, value in SECURITY_HEADERS.items():
-            response.headers.setdefault(header, value)
-        response.headers.setdefault("Cache-Control", DEFAULT_CACHE_CONTROL)
-        return response
+    app.add_middleware(SecurityHeaders, headers=default_headers(settings))
 
     app.mount("/static", CachedStaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(public.router)
@@ -159,6 +224,32 @@ def create_app() -> FastAPI:
             )
         titre = "Requête refusée" if exc.status_code == 403 else "Une erreur est survenue"
         return _error_page(request, status=exc.status_code, titre=titre, message=str(exc.detail))
+
+    @app.exception_handler(RequestValidationError)
+    def invalid_request(request: Request, exc: RequestValidationError) -> Response:
+        """A field FastAPI could not read at all, rendered as a page.
+
+        Its own handler answers with a JSON list of pydantic error dicts, which
+        is right for an API and wrong for a site whose forms are posted by
+        browsers: a mistyped field showed the visitor raw JSON. The status stays
+        FastAPI's 422 — the request really was unprocessable, and nothing is
+        gained by disagreeing with the framework about which number says so.
+
+        The detail is deliberately not echoed: it names internal field paths,
+        which help nobody reading the page and describe the shape of the form
+        handler to anyone probing it.
+        """
+        if not _wants_html(request):
+            return PlainTextResponse("Requête invalide", status_code=422)
+        return _error_page(
+            request,
+            status=422,
+            titre="Saisie invalide",
+            message=(
+                "Le formulaire n'a pas pu être lu : un champ manque ou n'a pas le "
+                "format attendu. Revenez en arrière pour le corriger."
+            ),
+        )
 
     @app.exception_handler(InvalidFormValue)
     def invalid_form_value(request: Request, exc: InvalidFormValue) -> Response:

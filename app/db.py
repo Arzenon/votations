@@ -14,22 +14,43 @@ class Base(DeclarativeBase):
     pass
 
 
-# Alembic renders a functional index expression as opaque text and cannot compare
-# two of them, so autogenerate reports a spurious drop-and-recreate for these on
-# every run — which would make the drift check cry wolf until nobody reads it.
-# They are written by hand in their migration instead. Anything *not* named here
-# is still compared, so real drift is still caught.
-UNCOMPARABLE_INDEXES = frozenset({"ix_laws_fts"})
+# Indexes autogenerate must not try to reconcile with the models. Both entries
+# are written by hand in their migration, for two different reasons:
+#
+# * `ix_laws_fts` is a functional index. Alembic renders the expression as opaque
+#   text and cannot compare two of them, so it reports a spurious
+#   drop-and-recreate on every run — which would make the drift check cry wolf
+#   until nobody read it.
+# * `ix_laws_official_ref_trgm` needs the `pg_trgm` extension, and managed
+#   Postgres often refuses CREATE EXTENSION. Its migration therefore creates it
+#   only where the extension is available, so it is present on some deployments
+#   and absent on others. Declaring it on the model would make every install
+#   without pg_trgm fail to migrate; not declaring it made autogenerate want to
+#   drop it everywhere it does exist.
+#
+# Anything *not* named here is still compared, so real drift is still caught.
+UNCOMPARED_INDEXES = frozenset({"ix_laws_fts", "ix_laws_official_ref_trgm"})
 
 
 def include_object(obj, name, type_, reflected, compare_to) -> bool:
     """Autogenerate filter, shared by `alembic/env.py` and the migration tests."""
-    return not (type_ == "index" and name in UNCOMPARABLE_INDEXES)
+    return not (type_ == "index" and name in UNCOMPARED_INDEXES)
 
 
 def utcnow() -> datetime:
     """The single source of "now" for every timestamp column."""
     return datetime.now(UTC)
+
+
+def as_utc(value: datetime) -> datetime:
+    """Treat a naive datetime as UTC, so a comparison never uses local time.
+
+    Every timestamp column is ``timestamptz`` and comes back aware, so this is
+    only reached by values built in Python. It exists because the alternative —
+    ``datetime.now(tz=value.tzinfo)`` — silently compares local wall-clock time
+    against a UTC instant on the day something hands over a naive value.
+    """
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 # The engine is built on first use, not at import time, so the production

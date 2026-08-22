@@ -15,7 +15,6 @@ LAW = LawText(
     title="LOI n° 2026-668 du 27 juillet 2026 portant diverses dispositions",
     nature="LOI",
     signed_on=date(2026, 7, 27),
-    published_on=date(2026, 7, 28),
     eli_url="https://www.legifrance.gouv.fr/eli/loi/2026/7/27/2026-668/jo/texte",
     articles=[Article(num="1", text="Le code de la santé publique est ainsi modifié.")],
 )

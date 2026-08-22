@@ -13,8 +13,11 @@ configured one multiplied by the number of replicas.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from fastapi import Request
 
@@ -62,15 +65,21 @@ def too_many(request: Request, *, limit: int, window_seconds: int, bucket: str =
     cutoff = now - window_seconds
     key = f"{bucket}|{client_key(request)}"
 
+    # The sweep runs over *every* bucket, so it may not use this bucket's cutoff:
+    # a vote (five-minute window) would then expire an export entry whose window
+    # is an hour, handing back allowance the caller had already spent. The widest
+    # configured window is the only cutoff that is safe for all of them.
+    stale_before = now - _widest_window()
+
     _since_sweep += 1
     if _since_sweep >= _SWEEP_EVERY:
         _since_sweep = 0
-        _forget_stale(cutoff)
+        _forget_stale(stale_before)
 
     seen = _hits.get(key)
     if seen is None:
         if len(_hits) >= _MAX_TRACKED:
-            _forget_stale(cutoff)
+            _forget_stale(stale_before)
         if len(_hits) >= _MAX_TRACKED:
             # Still full after a sweep: every tracked address is active inside its
             # window, which is a flood rather than traffic. Evict the least
@@ -104,6 +113,22 @@ def over_limit(request: Request, *, limit: int, window_seconds: int, bucket: str
     return sum(1 for hit in seen if hit >= cutoff) >= limit
 
 
+def _widest_window() -> float:
+    """The longest window any bucket is configured with.
+
+    An entry is only genuinely dead once it has fallen out of *every* window it
+    could belong to, and one table holds all the buckets.
+    """
+    settings = get_settings()
+    return float(
+        max(
+            settings.vote_rate_window_seconds,
+            settings.admin_rate_window_seconds,
+            settings.export_rate_window_seconds,
+        )
+    )
+
+
 def _forget_stale(cutoff: float) -> None:
     for key in [k for k, v in _hits.items() if not v or v[-1] < cutoff]:
         _hits.pop(key, None)
@@ -124,8 +149,57 @@ def _forget_oldest(fraction: float = 0.1) -> None:
         _hits.pop(key, None)
 
 
+# --- Concurrency, which is a different question from rate -------------------
+#
+# An export is the one response on the site whose length is unbounded: it holds
+# a server-side cursor, and therefore a pooled database connection, for as long
+# as the client takes to read it. The per-address rate limit does not bound that
+# — ten downloads from each of three addresses is inside every limit and still
+# more connections than the pool has. A slow reader is then indistinguishable
+# from an outage, because the pages that only need one quick query cannot get a
+# connection either.
+#
+# So exports are also capped by how many may be *in flight* at once. The count is
+# kept by the streaming generator itself, not by the route: a slot taken when the
+# response is created and released when it finishes would leak whenever a client
+# disconnects in between, and a leaked slot never comes back. Here nothing is
+# ever taken that the generator did not enter, and `finally` gives it back.
+#
+# The consequence is that `slots_free` is a read, not a reservation: several
+# requests arriving in the same instant can all see room and all proceed. The cap
+# is a guardrail against slow readers piling up, not a hard admission gate, and
+# briefly exceeding it by a couple is harmless where leaking a slot is not.
+_active_exports = 0
+_active_lock = threading.Lock()
+
+
+def slots_free(*, limit: int) -> bool:
+    """Whether another streamed export may start."""
+    return _active_exports < limit
+
+
+@contextmanager
+def export_slot() -> Iterator[None]:
+    """Count one export as in flight for the duration of its streaming."""
+    global _active_exports
+    with _active_lock:
+        _active_exports += 1
+    try:
+        yield
+    finally:
+        with _active_lock:
+            _active_exports -= 1
+
+
+def active_exports() -> int:
+    """How many exports are streaming right now (tests, diagnostics)."""
+    return _active_exports
+
+
 def reset() -> None:
     """Clear all counters (tests, and a deliberate operational reset)."""
-    global _since_sweep
+    global _since_sweep, _active_exports
     _hits.clear()
     _since_sweep = 0
+    with _active_lock:
+        _active_exports = 0

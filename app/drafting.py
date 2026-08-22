@@ -152,7 +152,14 @@ def build_draft(item_id: int, *, session_factory: Callable[[], Session] | None =
                 "eli_url": law_text.eli_url or "",
             },
         )
-        log.info("brouillon prêt pour l'import %s", item_id)
+        # The archive name is the provenance of the text the draft was written
+        # from: a law can land in the morning or the evening dump, and "which
+        # file did this come from" is the first question when a draft looks wrong.
+        log.info(
+            "brouillon prêt pour l'import %s (archive JO %s)",
+            item_id,
+            law_text.source_dump or "inconnue",
+        )
     except Exception as exc:
         log.exception("brouillon interrompu pour l'import %s", item_id)
         try:

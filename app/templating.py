@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
 from app.auth.base import get_auth_provider
+from app.config import get_settings
 from app.labels import field_label, french_date, french_datetime, import_status, law_status
 from app.security import safe_url
 
@@ -48,22 +49,33 @@ templates.env.globals["DISCLAIMER"] = DISCLAIMER
 templates.env.globals["TAGLINE"] = TAGLINE
 
 
-@lru_cache
+def _digest(name: str) -> str:
+    """A short content fingerprint of one static file, or "" if unreadable."""
+    try:
+        return hashlib.sha256((STATIC_DIR / name).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+_cached_digest = lru_cache(maxsize=64)(_digest)
+
+
 def asset_url(name: str) -> str:
     """``/static/<name>`` with a content fingerprint appended.
 
     The static files are served with a one-year immutable cache, which is only
-    safe if the URL changes when the file does. Hashing the bytes at first use
-    keeps that true with no build step: a deployed edit produces a new URL, and an
-    unchanged file keeps its cached copy. Cached per process — the files do not
-    change under a running server.
+    safe if the URL changes when the file does. Hashing the bytes keeps that true
+    with no build step: a deployed edit produces a new URL, and an unchanged file
+    keeps its cached copy.
+
+    The hash is memoised in production only, where the files genuinely cannot
+    change under a running server. In development they change constantly, and
+    `--reload` restarts on Python edits alone — so a cached fingerprint plus an
+    immutable Cache-Control meant an edited stylesheet kept its old URL and the
+    browser kept serving the old bytes. The change appeared not to have happened.
     """
-    path = STATIC_DIR / name
-    try:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-    except OSError:
-        return f"/static/{name}"
-    return f"/static/{name}?v={digest}"
+    digest = _cached_digest(name) if get_settings().is_production else _digest(name)
+    return f"/static/{name}?v={digest}" if digest else f"/static/{name}"
 
 
 templates.env.globals["asset_url"] = asset_url

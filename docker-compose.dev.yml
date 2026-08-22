@@ -1,3 +1,9 @@
+# Development stack. Named `.dev` on purpose: `docker compose` picks up a bare
+# `docker-compose.yml` with no `-f`, and this one builds the `dev` image (tests,
+# pytest, ruff) and seeds sample laws. Neither belongs on a live civic platform,
+# so production must be an explicit `-f docker-compose.prod.yml`.
+#
+#   docker compose -f docker-compose.dev.yml up --build
 services:
   db:
     image: postgres:16-alpine

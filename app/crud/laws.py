@@ -9,8 +9,9 @@ from datetime import datetime
 
 from sqlalchemy import Select, and_, func, literal, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import REGCONFIG
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
+from app.crud import count_matching, paginate
 from app.db import utcnow
 from app.labels import french_datetime
 from app.models import (
@@ -55,6 +56,19 @@ def unique_slug(db: Session, title: str) -> str:
     return slug
 
 
+#: Deferred on every list view. These are the expensive part of a law — the
+#: practical-changes prose and the two JSON argument lists — and only the law
+#: page and the admin form render them, both of which load a single law by key.
+#: Fetching them to draw a table of titles and dates was most of the bytes on
+#: every listing. Deferred rather than dropped: an attribute touched anyway still
+#: works, it just costs a query, so this can never turn a page into a 500.
+_LIST_DEFERRED = (
+    defer(Law.practical_changes),
+    defer(Law.arguments_for),
+    defer(Law.arguments_against),
+)
+
+
 def get_by_slug(db: Session, slug: str) -> Law | None:
     return db.scalar(select(Law).where(Law.slug == slug))
 
@@ -63,15 +77,35 @@ def get_by_id(db: Session, law_id: int) -> Law | None:
     return db.get(Law, law_id)
 
 
+def _published(stmt: Select) -> Select:
+    """Restrict to what the public may see: published, and not withdrawn."""
+    return stmt.where(Law.published.is_(True), Law.archived_at.is_(None))
+
+
 def list_published(db: Session, *, limit: int = 50) -> list[Law]:
     """Published, non-archived laws, newest first (home page)."""
     stmt = (
-        select(Law)
-        .where(Law.published.is_(True), Law.archived_at.is_(None))
+        _published(select(Law))
+        .options(*_LIST_DEFERRED)
         .order_by(Law.created_at.desc())
         .limit(limit)
     )
     return list(db.scalars(stmt))
+
+
+def public_urls(db: Session, *, limit: int = 5000) -> list[tuple[str, datetime]]:
+    """(slug, last-modified) for every publicly visible law — the sitemap.
+
+    Deliberately not :func:`list_published`: a sitemap needs two values per law
+    and used to load five thousand whole laws, prose and argument lists
+    included, to read them.
+    """
+    rows = db.execute(
+        _published(select(Law.slug, Law.updated_at, Law.created_at))
+        .order_by(Law.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [(slug, updated or created) for slug, updated, created in rows]
 
 
 def search(
@@ -86,20 +120,21 @@ def search(
 
     Returns (rows, total_matching, pages). Both the filter and the page window are
     applied in SQL, so a large corpus is never loaded into the process to be
-    sliced afterwards, and ``page`` is clamped to the last real page — an
-    unbounded page number used to issue an OFFSET the database would happily walk.
+    sliced afterwards.
     """
-    stmt = select(Law).where(Law.published.is_(True), Law.archived_at.is_(None))
+    stmt = _published(select(Law))
     if query:
         stmt = _apply_search(stmt, query)
     stmt = _apply_status(stmt, status)
 
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    pages = max(1, -(-total // page_size))  # ceil, without importing math
-    page = min(max(1, page), pages)
+    total = count_matching(db, stmt)
+    page, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
-            stmt.order_by(Law.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+            stmt.options(*_LIST_DEFERRED)
+            .order_by(Law.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
         )
     )
     return rows, total, pages
@@ -158,9 +193,7 @@ def _apply_search(stmt: Select, query: str) -> Select:
         return stmt.where(reference)
     return stmt.where(
         or_(
-            _SEARCH_VECTOR.op("@@")(
-                func.to_tsquery(literal("french", type_=REGCONFIG), terms)
-            ),
+            _SEARCH_VECTOR.op("@@")(func.to_tsquery(literal("french", type_=REGCONFIG), terms)),
             reference,
         )
     )
@@ -256,9 +289,7 @@ def revisions(db: Session, law_id: int) -> list[LawRevision]:
 
 def count_revisions(db: Session, law_id: int) -> int:
     return (
-        db.scalar(
-            select(func.count()).select_from(LawRevision).where(LawRevision.law_id == law_id)
-        )
+        db.scalar(select(func.count()).select_from(LawRevision).where(LawRevision.law_id == law_id))
         or 0
     )
 
@@ -297,21 +328,22 @@ def list_all(
     db: Session, *, page: int = 1, page_size: int = 50, archived: bool = False
 ) -> tuple[list[Law], int, int]:
     """Laws for the administration, paginated. Archived ones are a separate view."""
-    stmt = select(Law)
-    stmt = stmt.where(Law.archived_at.is_not(None) if archived else Law.archived_at.is_(None))
+    stmt = select(Law).where(
+        Law.archived_at.is_not(None) if archived else Law.archived_at.is_(None)
+    )
 
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    pages = max(1, -(-total // page_size))
-    page = min(max(1, page), pages)
+    total = count_matching(db, stmt)
+    page, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
-            stmt.order_by(Law.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+            stmt.options(*_LIST_DEFERRED)
+            .order_by(Law.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
         )
     )
     return rows, total, pages
 
 
 def count_archived(db: Session) -> int:
-    return (
-        db.scalar(select(func.count()).select_from(Law).where(Law.archived_at.is_not(None))) or 0
-    )
+    return db.scalar(select(func.count()).select_from(Law).where(Law.archived_at.is_not(None))) or 0

@@ -18,13 +18,18 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"   # SECRET_KEY
 python -c "import secrets; print(secrets.token_urlsafe(24))"   # ADMIN_PASSWORD
 ```
 
-Puis, en production, trois variables que le `docker-compose` lit directement :
+Ajoutez ensuite, **dans le même `.env`**, trois variables que `docker compose`
+lit lui-même (elles ne font pas partie des réglages de l'application, d'où leur
+absence de `.env.example`) :
 
 ```bash
 SITE_DOMAIN=votations.exemple.fr
 POSTGRES_PASSWORD=<généré comme ci-dessus>
 TRUSTED_PROXY_CIDR=172.16.0.0/12   # facultatif, défaut correct pour Docker
 ```
+
+Sans elles, `docker compose up` s'arrête immédiatement en nommant celle qui
+manque, plutôt que de démarrer sur une valeur vide.
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build

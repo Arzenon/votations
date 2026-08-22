@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # --- Base: dependencies only, so a source edit never reinstalls them ---------
-FROM python:3.13-slim AS base
+# 3.12 is what `requires-python`, the ruff target and the developers' virtualenvs
+# all say, so it is what the image runs: shipping a runtime the suite never
+# executes is how a version-specific bug reaches production first. Moving to 3.13
+# means moving all four together.
+FROM python:3.12-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -38,6 +42,10 @@ ENTRYPOINT ["./docker/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 # --- Dev: adds the test tooling and the suite, for `docker compose` locally ---
+# This stage is last, and Docker builds the last stage when none is named — so a
+# `build: .` with no `target:` gets pytest, ruff and tests/ in the image. It has
+# to be last (it extends `base`), which is why every production service names
+# `target: base` explicitly. Check that before adding a service.
 FROM base AS dev
 USER root
 RUN pip install "pytest>=8.3" "ruff>=0.15"

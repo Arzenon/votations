@@ -137,7 +137,11 @@ def test_exact_resolution_is_available_but_not_the_default(client, open_law, db_
     settings.export_time_resolution = "exact"
     try:
         stamps = [row["created_at"] for row in _rows(client, open_law)]
-        assert any("T09:30:15" in s for s in stamps)
+        # Written in the display zone like everything else the site publishes,
+        # so the assertion is on the instant rather than on how it is spelled:
+        # the same moment is "09:30:15+00:00" and "11:30:15+02:00".
+        moments = {datetime.fromisoformat(s).astimezone(UTC) for s in stamps}
+        assert datetime(2026, 5, 4, 9, 30, 15, 123456, tzinfo=UTC) in moments
     finally:
         settings.export_time_resolution = previous
 

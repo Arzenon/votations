@@ -91,7 +91,6 @@ def test_fetches_the_law_by_nor():
     assert law.law_code == "2026-668"
     assert law.nature == "LOI"
     assert law.signed_on == date(2026, 7, 27)
-    assert law.published_on == date(2026, 7, 28)
     assert law.title.startswith("LOI n° 2026-668")
     assert law.source_dump == MORNING
     assert [a.num for a in law.articles] == ["1", "2", "3"]

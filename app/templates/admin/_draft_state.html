@@ -11,10 +11,20 @@
     continuer à saisir le formulaire pendant ce temps.
   </p>
   {% elif failed %}
-  <p class="disclaimer" role="alert">
-    <strong>Brouillon impossible.</strong> {{ draft_error }}
-    <br>Les blocs sont à rédiger à la main, ou à réessayer plus tard.
-  </p>
+  <div class="disclaimer" role="alert">
+    <p>
+      <strong>Brouillon impossible.</strong> {{ draft_error }}
+      <br>Les blocs sont à rédiger à la main, ou à réessayer plus tard.
+    </p>
+    {# Dismissed by an explicit POST, never by the act of opening the page: this
+       banner is the only record of why the draft did not happen, and a GET that
+       cleared it lost the message to a browser prefetch. #}
+    <form action="/admin/imports/{{ item.id }}/brouillon/masquer" method="post"
+          hx-post="/admin/imports/{{ item.id }}/brouillon/masquer"
+          hx-target="#draft-state" hx-swap="outerHTML">
+      <button type="submit" class="secondary">J'ai lu — masquer</button>
+    </form>
+  </div>
   {% elif draft_status == 'pret' %}
   <p class="disclaimer" role="status">
     <strong>Le brouillon est prêt.</strong>

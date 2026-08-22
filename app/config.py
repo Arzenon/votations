@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     export_rate_limit: int = Field(default=10, ge=0)
     export_rate_window_seconds: int = Field(default=300, ge=1)
 
+    # Exports streaming at the same time, across all callers. An export holds a
+    # pooled database connection for as long as the client takes to read it, so
+    # this — not the rate limit — is what stops slow readers from occupying the
+    # pool and starving the ordinary pages. Keep it well under `db_pool_size`.
+    export_max_concurrent: int = Field(default=4, ge=1)
+
     # How many reverse proxies sit in front of the app. The client address is read
     # that many entries from the *end* of X-Forwarded-For: everything further left
     # was written by the caller and is forgeable. 0 disables the header entirely,

@@ -54,7 +54,6 @@ class PromulgatedLaw:
     dossier_uid: str
     legislature: str
     title: str  # titreDossier.titre — the readable dossier title
-    law_title: str  # titreLoi — a fragment ("visant à …")
     law_code: str  # "2026-532"
     procedure: str  # procedureParlementaire.libelle
     promulgated_on: date
@@ -131,7 +130,6 @@ def _build(dossier: dict, acte: dict) -> PromulgatedLaw | None:
         dossier_uid=uid,
         legislature=legislature,
         title=(dossier.get("titreDossier") or {}).get("titre") or acte.get("titreLoi") or uid,
-        law_title=acte.get("titreLoi") or "",
         law_code=law_code,
         procedure=(dossier.get("procedureParlementaire") or {}).get("libelle") or "",
         promulgated_on=promulgated_on,

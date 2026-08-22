@@ -31,6 +31,7 @@ from app.models import (
     DIMENSION_ORDER,
     DIMENSION_REGION,
     DIMENSION_SEXE,
+    STATUS_CLOSED,
     STATUS_OPEN,
     Law,
     VoteChoice,
@@ -75,6 +76,80 @@ def _visible(db: Session, slug: str) -> Law | None:
     return law if law is not None and law.is_public else None
 
 
+# Every way the vote route can refuse, in the words the voter reads. They exist
+# as constants because each one is used twice: once in the full page and once in
+# the HTMX fragment, and the two must not drift into telling different stories.
+GONE_NOTICE = "Cette votation n'est plus disponible. Rechargez la page pour voir son état actuel."
+CLOSED_NOTICE = "Cette votation vient de se clore : votre vote n'a pas pu être enregistré."
+NO_CHOICE_NOTICE = "Choisissez « Pour », « Contre » ou « Abstention » avant de valider."
+TOO_MANY_NOTICE = (
+    "Trop de votes ont été envoyés depuis votre connexion en quelques minutes. "
+    "Réessayez dans un instant."
+)
+
+
+def _ballot_fragment(
+    request: Request,
+    law: Law | None,
+    *,
+    status: str = STATUS_CLOSED,
+    existing_choice: str | None = None,
+    demographics_locked: bool = False,
+    notice: str = "",
+) -> HTMLResponse:
+    """The ballot on its own, for HTMX to swap back into the page.
+
+    Every refusal on the vote route answers with this when the request came from
+    HTMX, and with a redirect or a full error page when it did not. The two
+    branches are not decoration: htmx follows a 303 and swaps whatever it lands
+    on into the ballot's ``<div>``, so a vote on a law that had just closed
+    nested the entire site inside the ballot; and htmx discards the body of a
+    4xx, so a rate-limited voter watched the button do nothing whatsoever.
+
+    Answering 200 here is deliberate. The refusal is carried by the fragment's
+    own text, which is what the voter actually reads; the status code has no
+    reader left to inform once the response is a piece of a page.
+    """
+    return templates.TemplateResponse(
+        request,
+        "_ballot.html",
+        {
+            "law": law,
+            "status": status,
+            "existing_choice": existing_choice,
+            "choices": list(VoteChoice),
+            "demographics_locked": demographics_locked,
+            "notice": notice,
+            **_demographic_form_context(),
+        },
+    )
+
+
+def _refused_ballot(
+    request: Request,
+    db: Session,
+    law: Law,
+    auth: AuthProvider,
+    *,
+    notice: str,
+) -> HTMLResponse:
+    """The visitor's own ballot, re-rendered with the reason it was refused.
+
+    Reads the existing vote back so a refusal leaves the radio buttons showing
+    what this browser had already chosen, rather than silently clearing it.
+    """
+    voter_token = auth.peek_voter_token(request)
+    existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
+    return _ballot_fragment(
+        request,
+        law,
+        status=law.status(),
+        existing_choice=existing.choice if existing else None,
+        demographics_locked=bool(existing and existing.demographics_recorded),
+        notice=notice,
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
@@ -108,6 +183,37 @@ def search(
     )
 
 
+def law_page_context(
+    db: Session,
+    law: Law,
+    *,
+    status: str,
+    existing_choice: str | None = None,
+    demographics_locked: bool = False,
+    preview: bool = False,
+) -> dict:
+    """Everything ``law.html`` needs.
+
+    Shared with the administration's preview, which renders this same template on
+    purpose: an approximation would only catch the mistakes somebody thought to
+    approximate. Sharing the context is what keeps the preview honest as the page
+    grows — a block added here appears in both, or in neither.
+    """
+    return {
+        "law": law,
+        "status": status,
+        "existing_choice": existing_choice,
+        # Only the closed page shows a tally; counting the votes to render a
+        # ballot nobody sees was wasted work on the busiest page of the site.
+        "tally": results_crud.tally(db, law.id) if status != STATUS_OPEN else None,
+        "choices": list(VoteChoice),
+        "demographics_locked": demographics_locked,
+        "revision_count": laws_crud.count_revisions(db, law.id),
+        "preview": preview,
+        **_demographic_form_context(),
+    }
+
+
 @router.get("/loi/{slug}", response_class=HTMLResponse)
 def law_page(
     request: Request,
@@ -123,23 +229,17 @@ def law_page(
     # not when they visit. Somebody who only reads leaves no identifier behind.
     voter_token = auth.peek_voter_token(request)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
-    status = law.status()
 
     return templates.TemplateResponse(
         request,
         "law.html",
-        {
-            "law": law,
-            "status": status,
-            "existing_choice": existing.choice if existing else None,
-            # Only the closed page shows a tally; counting the votes to render a
-            # ballot nobody sees was wasted work on the busiest page of the site.
-            "tally": results_crud.tally(db, law.id) if status != STATUS_OPEN else None,
-            "choices": list(VoteChoice),
-            "demographics_locked": bool(existing and existing.demographics_recorded),
-            "revision_count": laws_crud.count_revisions(db, law.id),
-            **_demographic_form_context(),
-        },
+        law_page_context(
+            db,
+            law,
+            status=law.status(),
+            existing_choice=existing.choice if existing else None,
+            demographics_locked=bool(existing and existing.demographics_recorded),
+        ),
     )
 
 
@@ -147,15 +247,22 @@ def law_page(
 def cast_vote(
     request: Request,
     slug: str,
-    choice: str = Form(...),
+    # Optional rather than required, so an empty ballot is answered by this route
+    # instead of by FastAPI's validation error. The radio group carries `required`
+    # too, so in a browser this is the fallback for the fallback.
+    choice: str = Form(""),
     age_bracket: str = Form(""),
     sexe: str = Form(""),
     region: str = Form(""),
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
+    htmx = bool(request.headers.get("HX-Request"))
+
     law = _visible(db, slug)
     if law is None:
+        if htmx:
+            return _ballot_fragment(request, None, notice=GONE_NOTICE)
         return _not_found(request)
 
     # A fresh cookie is a fresh voter, so without this a script can add votes as
@@ -167,11 +274,15 @@ def cast_vote(
         window_seconds=settings.vote_rate_window_seconds,
         bucket="vote",
     ):
+        if htmx:
+            return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE)
         return _too_many_votes(request)
 
     try:
         vote_choice = VoteChoice(choice)
     except ValueError:
+        if htmx:
+            return _refused_ballot(request, db, law, auth, notice=NO_CHOICE_NOTICE)
         return RedirectResponse(f"/loi/{slug}", status_code=303)
 
     carrier = Response()  # collects the cookies the helpers below set
@@ -180,6 +291,8 @@ def cast_vote(
     try:
         vote = votes_crud.cast_vote(db, law, voter_token, vote_choice)
     except votes_crud.VotingClosed:
+        if htmx:
+            return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE)
         return RedirectResponse(f"/loi/{slug}", status_code=303)
 
     # Optional, anonymous: folded once into aggregate counters (no per-voter row).
@@ -198,18 +311,13 @@ def cast_vote(
     profile_cookie.write(request, carrier, law.id, on_file)
 
     # HTMX request → return just the ballot fragment; else full-page redirect.
-    if request.headers.get("HX-Request"):
-        fragment = templates.TemplateResponse(
+    if htmx:
+        fragment = _ballot_fragment(
             request,
-            "_ballot.html",
-            {
-                "law": law,
-                "status": law.status(),
-                "existing_choice": vote_choice.value,
-                "choices": list(VoteChoice),
-                "demographics_locked": vote.demographics_recorded,
-                **_demographic_form_context(),
-            },
+            law,
+            status=law.status(),
+            existing_choice=vote_choice.value,
+            demographics_locked=vote.demographics_recorded,
         )
         return _carry_cookies(carrier, fragment)
 
@@ -242,19 +350,31 @@ def results_page(request: Request, slug: str, db: Session = Depends(get_db)):
     )
 
 
-def _export_allowed(request: Request) -> bool:
-    """Exports get their own, much tighter bucket than voting.
+def _export_refused(request: Request) -> HTMLResponse | None:
+    """Why this export may not start right now, or None if it may.
 
-    One download is a full scan of a law's votes. Legitimate use is a handful of
-    files; a loop over the JSON endpoint is a cheap way to keep the database busy.
+    Two different limits. The rate limit is about one caller downloading in a
+    loop: one download is a full scan of a law's votes, and legitimate use is a
+    handful of files. The concurrency cap is about everyone at once — an export
+    holds a database connection for as long as the client takes to read it, so a
+    few slow readers can occupy the whole pool and take the ordinary pages down
+    with them, well inside every per-address limit.
+
+    Capacity is checked first, and deliberately does not record a hit: refusing
+    someone because the server is busy must not also spend the allowance they
+    would need to come back in a minute.
     """
     settings = get_settings()
-    return not ratelimit.too_many(
+    if not ratelimit.slots_free(limit=settings.export_max_concurrent):
+        return _exports_busy(request)
+    if ratelimit.too_many(
         request,
         limit=settings.export_rate_limit,
         window_seconds=settings.export_rate_window_seconds,
         bucket="export",
-    )
+    ):
+        return _too_many_exports(request)
+    return None
 
 
 @router.get("/loi/{slug}/export.csv")
@@ -262,23 +382,28 @@ def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
     law = _visible(db, slug)
     if law is None:
         return _not_found(request)
-    if not _export_allowed(request):
-        return _too_many_exports(request)
+    refused = _export_refused(request)
+    if refused is not None:
+        return refused
 
     def rows() -> Iterator[str]:
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=["law_id", "choice", "created_at"])
-        writer.writeheader()
-        for row in results_crud.iter_export_rows(db, law.id):
-            writer.writerow(row)
-            # Hand each chunk over as it is written, so a large votation never
-            # holds the whole export in memory twice.
-            yield buf.getvalue()
-            buf.seek(0)
-            buf.truncate(0)
-        tail = buf.getvalue()
-        if tail:
-            yield tail
+        # The slot is taken here rather than in the route, and given back by the
+        # `with`: a slot taken before the response exists would leak whenever a
+        # client disconnected before reading, and a leaked slot never comes back.
+        with ratelimit.export_slot():
+            buf = io.StringIO()
+            writer = csv.DictWriter(buf, fieldnames=["law_id", "choice", "created_at"])
+            writer.writeheader()
+            for row in results_crud.iter_export_rows(db, law.id):
+                writer.writerow(row)
+                # Hand each chunk over as it is written, so a large votation never
+                # holds the whole export in memory twice.
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate(0)
+            tail = buf.getvalue()
+            if tail:
+                yield tail
 
     return StreamingResponse(
         rows(),
@@ -292,8 +417,9 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
     law = _visible(db, slug)
     if law is None:
         return _not_found(request)
-    if not _export_allowed(request):
-        return _too_many_exports(request)
+    refused = _export_refused(request)
+    if refused is not None:
+        return refused
 
     total = results_crud.count_votes(db, law.id)
 
@@ -340,14 +466,15 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
         can request. The rows are the only unbounded part, so they are the part
         that streams.
         """
-        head = json.dumps(envelope, ensure_ascii=False)
-        # Splice the vote array into the object rather than building a second one.
-        yield head[:-1] + ', "votes": ['
-        first = True
-        for row in results_crud.iter_export_rows(db, law.id, total=total):
-            yield ("" if first else ",") + json.dumps(row, ensure_ascii=False)
-            first = False
-        yield "]}"
+        with ratelimit.export_slot():  # see the CSV route for why it is here
+            head = json.dumps(envelope, ensure_ascii=False)
+            # Splice the vote array into the object rather than building a second one.
+            yield head[:-1] + ', "votes": ['
+            first = True
+            for row in results_crud.iter_export_rows(db, law.id, total=total):
+                yield ("" if first else ",") + json.dumps(row, ensure_ascii=False)
+                first = False
+            yield "]}"
 
     return StreamingResponse(
         document(),
@@ -400,13 +527,15 @@ def sitemap(request: Request, db: Session = Depends(get_db)):
     base = str(request.base_url).rstrip("/")
     static_pages = ["/", "/recherche", "/connexion", "/vie-privee", "/mentions-legales"]
     urls = [(f"{base}{path}", None) for path in static_pages]
-    for law in laws_crud.list_published(db, limit=5000):
-        moment = (law.updated_at or law.created_at).date().isoformat()
-        urls.append((f"{base}/loi/{law.slug}", moment))
-        urls.append((f"{base}/loi/{law.slug}/resultats", moment))
+    for slug, changed_at in laws_crud.public_urls(db):
+        moment = changed_at.date().isoformat()
+        urls.append((f"{base}/loi/{slug}", moment))
+        urls.append((f"{base}/loi/{slug}/resultats", moment))
 
-    body = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    body = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
     for loc, lastmod in urls:
         entry = f"<url><loc>{escape(loc)}</loc>"
         if lastmod:
@@ -449,6 +578,28 @@ def _too_many_exports(request: Request) -> HTMLResponse:
             ),
         },
         status_code=429,
+    )
+
+
+def _exports_busy(request: Request) -> HTMLResponse:
+    """The server is at capacity — not this caller's fault, and it says so.
+
+    503 rather than 429: nothing about this request was excessive, the queue is
+    simply full. ``Retry-After`` gives a well-behaved client something better to
+    do than retry immediately.
+    """
+    return templates.TemplateResponse(
+        request,
+        "erreur.html",
+        {
+            "titre": "Téléchargements momentanément saturés",
+            "message": (
+                "Plusieurs exports sont en cours de téléchargement. Les données "
+                "restent publiques et complètes : réessayez dans une minute."
+            ),
+        },
+        status_code=503,
+        headers={"Retry-After": "60"},
     )
 
 

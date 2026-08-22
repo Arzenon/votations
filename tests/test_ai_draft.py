@@ -30,7 +30,6 @@ LAW = LawText(
     title="LOI n° 2026-668 du 27 juillet 2026 portant diverses dispositions",
     nature="LOI",
     signed_on=date(2026, 7, 27),
-    published_on=date(2026, 7, 28),
     eli_url="https://www.legifrance.gouv.fr/eli/loi/2026/7/27/2026-668/jo/texte",
     articles=[Article(num="1", text="Le code de la santé publique est ainsi modifié.")],
 )
@@ -107,7 +106,6 @@ def test_refuses_a_text_with_no_articles():
         title="t",
         nature="LOI",
         signed_on=None,
-        published_on=None,
         eli_url=None,
         articles=[],
     )
@@ -149,7 +147,6 @@ def _stage(db_session) -> ImportedLaw:
         legislature="17",
         procedure="Proposition de loi ordinaire",
         title="Loi de test",
-        law_title="portant diverses dispositions",
         law_code="2026-668",
         promulgated_on=date(2026, 7, 27),
         jo_date=date(2026, 7, 28),

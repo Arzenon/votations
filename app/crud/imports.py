@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, defer
 
 from app.assemblee import PromulgatedLaw
+from app.crud import count_matching, paginate
 from app.db import utcnow
 from app.models import (
     DRAFT_FAILED,
@@ -32,7 +33,6 @@ _REFRESHED = (
     "legislature",
     "procedure",
     "title",
-    "law_title",
     "law_code",
     "promulgated_on",
     "jo_date",
@@ -99,14 +99,13 @@ def list_by_status(
     if status:
         stmt = stmt.where(ImportedLaw.status == status)
 
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    pages = max(1, -(-total // page_size))
-    page = min(max(1, page), pages)
+    total = count_matching(db, stmt)
+    page, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
             stmt.options(defer(ImportedLaw.draft), defer(ImportedLaw.seances))
             .order_by(ImportedLaw.promulgated_on.desc(), ImportedLaw.law_code.desc())
-            .offset((page - 1) * page_size)
+            .offset(offset)
             .limit(page_size)
         )
     )

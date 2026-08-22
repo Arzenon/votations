@@ -82,13 +82,25 @@
 
   <section class="block">
     <h2>Ce que le serveur conserve</h2>
-    <p>Pour chaque vote, une ligne contenant quatre choses :</p>
+    <p>Pour chaque vote, une ligne. Elle contient exactement ceci :</p>
     <ul>
       <li>la loi concernée ;</li>
       <li>le choix exprimé (pour, contre, abstention) ;</li>
       <li>la date et l'heure ;</li>
-      <li>l'empreinte du jeton déposé dans votre navigateur, qui sert à vérifier que vous n'avez pas déjà voté sur cette loi.</li>
+      <li>l'empreinte du jeton déposé dans votre navigateur, qui sert à vérifier que vous n'avez pas déjà voté sur cette loi ;</li>
+      <li>
+        deux indicateurs de service : le fait que vous ayez renseigné ou non une
+        information de profil, et sous quel choix cette contribution a été comptée.
+        Le second est toujours identique à votre choix ci-dessus, et sert
+        uniquement à déplacer les compteurs si vous changez d'avis. Ni l'un ni
+        l'autre ne contient de catégorie : <strong>votre profil lui-même n'est
+        écrit nulle part.</strong>
+      </li>
     </ul>
+    <p class="meta">
+      Cette liste est exhaustive, et c'est ce qui la rend vérifiable : elle
+      correspond ligne pour ligne aux colonnes de la table des votes.
+    </p>
     <p>
       Les informations de profil que vous choisissez de donner ne sont
       <strong>pas</strong> enregistrées à côté de votre vote. Elles sont ajoutées à

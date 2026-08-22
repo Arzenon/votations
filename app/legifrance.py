@@ -66,7 +66,6 @@ class LawText:
     title: str  # TITREFULL
     nature: str  # NATURE, e.g. "LOI"
     signed_on: date | None  # DATE_TEXTE — the promulgation date
-    published_on: date | None  # DATE_PUBLI — the JO date
     eli_url: str | None  # canonical Légifrance (ELI) URL
     notice: str = ""  # plain-language notice, when the JO carries one
     articles: list[Article] = field(default_factory=list)
@@ -155,7 +154,6 @@ def _parse_law(data: bytes, nor: str, source: str) -> LawText | None:
         title=(root.findtext("TITREFULL") or root.findtext("TITRE") or "").strip(),
         nature=nature,
         signed_on=_parse_date(root.findtext("DATE_TEXTE")),
-        published_on=_parse_date(root.findtext("DATE_PUBLI")),
         eli_url=(alias or root.findtext("ID_ELI") or "").strip() or None,
         notice=_text(root.find("NOTICE")),
         articles=articles,

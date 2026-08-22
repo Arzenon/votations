@@ -214,9 +214,7 @@ def test_admin_imports_page_requires_auth(client):
 
 def test_creating_a_law_from_an_import_prefills_and_links(client, db_session):
     imports_crud.sync(db_session, records=_fetch())
-    item = next(
-        i for i in imports_crud.list_by_status(db_session)[0] if i.law_code == "2026-532"
-    )
+    item = next(i for i in imports_crud.list_by_status(db_session)[0] if i.law_code == "2026-532")
 
     # The form carries the factual fields only — the narrative blocks stay empty.
     r = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin_auth())

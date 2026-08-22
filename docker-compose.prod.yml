@@ -1,4 +1,4 @@
-# Production stack. Differs from docker-compose.yml deliberately:
+# Production stack. Differs from docker-compose.dev.yml deliberately:
 #   · no bind mounts and no --reload — the image you built is what runs
 #   · no seeding — sample laws must never reach a live civic platform
 #   · Postgres is not published; only Caddy is reachable from outside
@@ -23,7 +23,12 @@ services:
       retries: 5
 
   app:
-    build: .
+    # `target` is mandatory, not decoration: with none, Docker builds the *last*
+    # stage of the Dockerfile, which is `dev` — pytest, ruff and the test suite,
+    # shipped to production. Naming `base` is what keeps them out.
+    build:
+      context: .
+      target: base
     restart: unless-stopped
     depends_on:
       db:
@@ -86,13 +91,19 @@ services:
       - caddy_config:/config
 
   insee-refresh:
-    build: .
+    build:
+      context: .
+      target: base
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    # The same `.env` as the app. Without it this container ran on the shipped
+    # defaults alone: filling in INSEE_API_KEY or INSEE_DATASET changed nothing,
+    # silently, because `.env` is excluded from the image on purpose.
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
       INSEE_REFRESH_INTERVAL: "2592000"   # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/insee_cron.sh"]
@@ -111,19 +122,25 @@ services:
           memory: 512m
 
   assemblee-refresh:
-    build: .
+    build:
+      context: .
+      target: base
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    # The same `.env` as the app — this is the container that most needs it. The
+    # export URL carries the legislature number and changes once per legislature;
+    # without this, correcting AN_DOSSIERS_URL in `.env` would fix the setting
+    # everywhere except in the job that reads it.
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD}@db:5432/votations
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
       AN_REFRESH_INTERVAL: "86400"        # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/assemblee_cron.sh"]
-    # The export URL carries the legislature number and changes once per
-    # legislature; without this the import stops in silence. The dashboard warns
-    # too, but only somebody who logs in sees that.
+    # Without this the import stops in silence when the source moves. The
+    # dashboard warns too, but only somebody who logs in sees that.
     healthcheck:
       test: ["CMD-SHELL", "test $(find /tmp/refresh-alive -mmin -2880 2>/dev/null | wc -l) -eq 1"]
       interval: 1h
@@ -148,7 +165,7 @@ services:
     environment:
       PGHOST: db
       PGUSER: votations
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}
       PGDATABASE: votations
       BACKUP_INTERVAL: "86400"     # 24 h
       BACKUP_KEEP_DAYS: "14"

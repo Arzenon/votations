@@ -48,7 +48,7 @@ La suite s'exécute contre une vraie base : le schéma est construit par les
 migrations, et plusieurs comportements testés (upsert ON CONFLICT, date_trunc,
 suppression en cascade) n'existent que dans PostgreSQL.
 
-  docker compose up -d db
+  docker compose -f docker-compose.dev.yml up -d db
   # ou, si la base tourne ailleurs :
   TEST_DATABASE_URL=postgresql+psycopg://user:pass@hôte:5432/votations_test pytest
 

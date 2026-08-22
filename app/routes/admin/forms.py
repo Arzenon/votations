@@ -96,7 +96,7 @@ def parse_arguments(raw: str | None, *, field: str) -> list[dict]:
     for index, entry in enumerate(data, start=1):
         if not isinstance(entry, dict):
             raise InvalidFormValue(
-                f"« {field} », entrée {index} : un objet {{\"text\": …}} est attendu"
+                f'« {field} », entrée {index} : un objet {{"text": …}} est attendu'
             )
         source = str(entry.get("source", "")).strip()
         if not is_safe_url(source):

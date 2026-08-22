@@ -228,14 +228,34 @@ def test_the_app_sets_its_own_security_headers(client):
     assert "unsafe-inline" not in r.headers["content-security-policy"]
 
 
-def test_static_assets_are_cached_hard_and_fingerprinted(client):
+def test_static_assets_are_fingerprinted(client):
     from app.templating import asset_url
 
     url = asset_url("styles.css")
     assert "?v=" in url
-    r = client.get(url)
-    assert r.status_code == 200
-    assert "immutable" in r.headers["cache-control"]
+    assert client.get(url).status_code == 200
+
+
+def test_static_assets_are_cached_hard_in_production_only(client):
+    """`immutable` is safe once the files are frozen, and a trap while editing."""
+    from app.main import DEV_STATIC_CACHE_CONTROL, STATIC_CACHE_CONTROL
+    from app.templating import asset_url
+
+    settings = get_settings()
+    assert not settings.is_production, "the suite runs in development"
+    assert client.get(asset_url("styles.css")).headers["cache-control"] == (
+        DEV_STATIC_CACHE_CONTROL
+    )
+
+    previous = settings.environment
+    settings.environment = "production"
+    try:
+        assert "immutable" in STATIC_CACHE_CONTROL
+        assert client.get(asset_url("styles.css")).headers["cache-control"] == (
+            STATIC_CACHE_CONTROL
+        )
+    finally:
+        settings.environment = previous
 
 
 # --- A8: the exports stream and are throttled --------------------------------
@@ -368,9 +388,7 @@ def test_the_law_page_points_at_the_history_when_there_is_one(client, db_session
 def test_archiving_hides_a_law_without_destroying_its_votes(client, db_session, open_law):
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
 
-    r = client.post(
-        f"/admin/lois/{open_law.id}/archiver", headers=_admin(), follow_redirects=False
-    )
+    r = client.post(f"/admin/lois/{open_law.id}/archiver", headers=_admin(), follow_redirects=False)
     assert r.status_code == 303
 
     assert client.get(f"/loi/{open_law.slug}").status_code == 404
@@ -459,8 +477,13 @@ def test_the_law_page_does_load_htmx(client, open_law):
 # --- D1: the draft banner stops nagging, but only after it has been seen -------
 
 
-def test_a_failed_draft_is_shown_once_then_cleared(client, db_session):
-    """`clear_draft_state` existed but was never called: a failure nagged for ever."""
+def test_a_failed_draft_is_shown_until_it_is_dismissed(client, db_session):
+    """A failure must be seen once, then stop nagging — without a GET clearing it.
+
+    Clearing it while *rendering* the form meant an ordinary GET destroyed the
+    only record of why the draft had not happened, so a link prefetch or a
+    browser preload could consume the explanation before anybody read it.
+    """
     from app.crud import imports as imports_crud
     from app.models import ImportedLaw
 
@@ -476,11 +499,40 @@ def test_a_failed_draft_is_shown_once_then_cleared(client, db_session):
     db_session.commit()
     imports_crud.fail_draft(db_session, item, message="le texte officiel est introuvable")
 
-    first = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin())
-    assert "introuvable" in first.text, "the administrator must see why it failed"
+    page = f"/admin/lois/nouvelle?import_id={item.id}"
+    assert "introuvable" in client.get(page, headers=_admin()).text, (
+        "the administrator must see why it failed"
+    )
+    assert "introuvable" in client.get(page, headers=_admin()).text, (
+        "and a second GET must not have eaten the message"
+    )
 
-    second = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin())
-    assert "introuvable" not in second.text, "and must not be told again for ever"
+    dismissed = client.post(
+        f"/admin/imports/{item.id}/brouillon/masquer",
+        headers=_admin(),
+        follow_redirects=False,
+    )
+    assert dismissed.status_code == 303
+    assert "introuvable" not in client.get(page, headers=_admin()).text, (
+        "once acknowledged, it must not be told again for ever"
+    )
+
+
+def test_dismissing_a_draft_failure_needs_the_admin_guard(client, db_session):
+    from app.models import ImportedLaw
+
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid="DUID-ECHEC-AUTH",
+        title="Dossier",
+        law_code="2026-11",
+        promulgated_on=datetime.now(UTC).date(),
+        dossier_url="https://an.fr/d",
+    )
+    db_session.add(item)
+    db_session.commit()
+    r = client.post(f"/admin/imports/{item.id}/brouillon/masquer", follow_redirects=False)
+    assert r.status_code == 401
 
 
 def test_a_pending_draft_is_never_cleared_by_opening_the_form(client, db_session):
@@ -681,13 +733,10 @@ def test_the_chart_thins_its_date_labels():
     from app.charts import build_evolution_chart
 
     for days in (2, 7, 20, 30, 45, 120):
-        chart = build_evolution_chart(
-            [_bucket(f"2026-05-{(i % 28) + 1:02}") for i in range(days)]
-        )
+        chart = build_evolution_chart([_bucket(f"2026-05-{(i % 28) + 1:02}") for i in range(days)])
         assert len(chart.x_ticks) <= 8, f"{days} jours : trop d'étiquettes"
         gaps = [
-            chart.x_ticks[i + 1][0] - chart.x_ticks[i][0]
-            for i in range(len(chart.x_ticks) - 1)
+            chart.x_ticks[i + 1][0] - chart.x_ticks[i][0] for i in range(len(chart.x_ticks) - 1)
         ]
         assert not gaps or min(gaps) > 40, f"{days} jours : étiquettes trop serrées"
     assert chart.x_ticks[0][1] == "01/05"

@@ -13,16 +13,40 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, literal, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.db import as_utc
 from app.models import Vote, VoteChoice
 
 # How the export rounds `created_at`, per `export_time_resolution`.
 _EXPORT_TRUNC = {"day": "day", "hour": "hour"}
+
+
+def _display_zone() -> ZoneInfo:
+    """The zone every published instant is expressed in. Validated at boot."""
+    return ZoneInfo(get_settings().display_timezone)
+
+
+def _bucketed(unit: str, zone: str):
+    """``Vote.created_at`` rounded down to ``unit`` **in the display zone**.
+
+    A day has to be the day a voter would say they voted on. Truncating in UTC
+    filed every vote cast between midnight and 2 a.m. Paris under the previous
+    day — visibly wrong on a curve headed « jour par jour », and wrong in the
+    export too, which must round on exactly the same boundaries as the curve or
+    it would partition the votes a second, different way.
+
+    Round trip through the zone rather than stopping at the local timestamp: the
+    result stays a real instant, so the caller can format it in any zone and DST
+    is handled by the database rather than by arithmetic here.
+    """
+    local = func.timezone(zone, Vote.created_at)  # timestamptz → local timestamp
+    return func.timezone(zone, func.date_trunc(unit, local))  # → timestamptz
 
 
 @dataclass
@@ -90,7 +114,8 @@ def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[Evo
     if total < settings.min_bucket_volume:
         return []
 
-    bucket = func.date_trunc("day", func.timezone("UTC", Vote.created_at))
+    zone = _display_zone()
+    bucket = _bucketed("day", settings.display_timezone)
     rows = db.execute(
         select(bucket.label("bucket"), Vote.choice, func.count())
         .where(Vote.law_id == law_id)
@@ -100,7 +125,7 @@ def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[Evo
 
     out: dict[str, dict[str, int]] = {}
     for moment, choice, n in rows:
-        label = moment.strftime("%Y-%m-%d")
+        label = as_utc(moment).astimezone(zone).strftime("%Y-%m-%d")
         out.setdefault(label, {c.value: 0 for c in VoteChoice})[choice] = n
     return [EvolutionBucket(label=label, counts=counts) for label, counts in sorted(out.items())]
 
@@ -155,14 +180,15 @@ def iter_export_rows(
     id or timestamp ordering would have leaked. A shuffle would not do: any
     reproducible one can be replayed to recover the original order.
     """
-    resolution = get_settings().export_time_resolution
-    trunc = _EXPORT_TRUNC.get(resolution)
+    settings = get_settings()
+    trunc = _EXPORT_TRUNC.get(settings.export_time_resolution)
     with_time = _timestamps_allowed(db, law_id, total=total)
+    zone = _display_zone()
 
     if not with_time:
         moment = literal(None)
     elif trunc:
-        moment = func.date_trunc(trunc, func.timezone("UTC", Vote.created_at))
+        moment = _bucketed(trunc, settings.display_timezone)
     else:
         moment = Vote.created_at
 
@@ -173,21 +199,25 @@ def iter_export_rows(
     ).yield_per(chunk)
 
     for created, choice in result:
-        if created is not None and created.tzinfo is None:
-            created = created.replace(tzinfo=UTC)
         yield {
             "law_id": law_id,
             "choice": choice,
-            "created_at": _iso(created, trunc) if with_time else "",
+            "created_at": _iso(created, trunc, zone) if with_time else "",
         }
 
 
-def _iso(created: datetime | None, trunc: str | None) -> str:
+def _iso(created: datetime | None, trunc: str | None, zone: ZoneInfo) -> str:
+    """One rounded instant, written in the zone the results page uses.
+
+    The day form is a bare calendar date on purpose: it is the same day the curve
+    labels, and an offset on it would only invite the reader to convert it back
+    into some other day.
+    """
     if created is None:
         return ""
-    created = created.astimezone(UTC)
+    created = as_utc(created).astimezone(zone)
     if trunc == "day":
         return created.date().isoformat()
     if trunc == "hour":
-        return created.strftime("%Y-%m-%dT%H:00:00+00:00")
+        return created.strftime("%Y-%m-%dT%H:00:00%z")
     return created.isoformat()
