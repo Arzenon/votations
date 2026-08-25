@@ -37,8 +37,17 @@ def cast_vote(db: Session, law: Law, voter_token: str, choice: VoteChoice) -> Vo
     )
     vote_id = db.execute(stmt).scalar_one()
     db.commit()
-    vote = db.get(Vote, vote_id)
+    # One SELECT, not two. The row was written by Core, so it is not in the
+    # identity map and `get` really does go to the database; the `refresh` that
+    # used to follow fetched the very same row a second time, on the busiest
+    # write path of the site.
+    #
+    # `populate_existing` is what makes dropping the refresh safe rather than
+    # merely correct today. The session is `expire_on_commit=False`, so a Vote
+    # that some earlier call had already loaded would come back from the identity
+    # map still carrying the choice it held *before* this upsert. No caller does
+    # that right now; this costs nothing and means none ever can.
+    vote = db.get(Vote, vote_id, populate_existing=True)
     if vote is None:  # pragma: no cover - the row was just written
         raise RuntimeError("vote disparu juste après son enregistrement")
-    db.refresh(vote)
     return vote

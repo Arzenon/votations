@@ -87,7 +87,7 @@
     <p class="meta">
       Ces répartitions ne reposent que sur des compteurs agrégés. Une catégorie
       n'est affichée que si chacune de ses cases atteint le seuil d'anonymat
-      (≥ {{ breakdowns[0].threshold }} votes) ; sinon, l'ensemble est masqué.
+      (≥ {{ min_cell_count }} votes) ; sinon, l'ensemble est masqué.
     </p>
     <p class="meta">
       <strong>{{ provision.percentage }}%</strong> des votant·e·s ont partagé au
@@ -138,9 +138,9 @@
     <h2>Modifications de la présentation</h2>
     {% if revisions %}
     <p class="meta">
-      La présentation de ce texte a été modifiée après sa publication. Le détail
-      est donné ici pour que chacun·e puisse juger si les votes exprimés portaient
-      sur le même texte que celui affiché aujourd'hui.
+      La présentation de ce texte a été modifiée {{ revision_total }} fois après sa
+      publication. Le détail est donné ici pour que chacun·e puisse juger si les
+      votes exprimés portaient sur le même texte que celui affiché aujourd'hui.
     </p>
     <div class="table-scroll">
       <table class="evolution revisions">
@@ -158,6 +158,22 @@
         </tbody>
       </table>
     </div>
+
+    {# Paginated because this table has no ceiling: every edit adds a row holding
+       the whole before and after value of a field. The links carry the anchor so
+       a reader turning a page lands back on the history rather than at the top of
+       the results. #}
+    {% if revision_pages > 1 %}
+    <nav class="pagination" aria-label="Pages de l'historique des modifications">
+      {% if revision_page > 1 %}
+      <a href="/loi/{{ law.slug }}/resultats?revisions={{ revision_page - 1 }}#historique">← Plus récentes</a>
+      {% endif %}
+      <span>Page {{ revision_page }} / {{ revision_pages }} ({{ revision_total }} modifications)</span>
+      {% if revision_page < revision_pages %}
+      <a href="/loi/{{ law.slug }}/resultats?revisions={{ revision_page + 1 }}#historique">Plus anciennes →</a>
+      {% endif %}
+    </nav>
+    {% endif %}
     {% else %}
     <p class="meta">
       Aucune modification depuis la publication : le texte affiché est celui sur

@@ -68,3 +68,22 @@ def test_the_chain_downgrades_and_upgrades_again(engine):
             opts={"compare_type": True, "include_object": include_object},
         )
         assert compare_metadata(context, Base.metadata) == []
+
+
+
+# --- Migration drift ---------------------------------------------------------
+
+
+def test_conditionally_created_indexes_are_not_compared():
+    """Both hand-written indexes are excluded from autogenerate, for two reasons.
+
+    `ix_laws_fts` is a functional index Alembic cannot compare; the trigram index
+    exists only where `pg_trgm` could be installed. Comparing either made the
+    drift check report a difference on a schema that was perfectly correct — and
+    a drift check that cries wolf is one nobody reads.
+    """
+    for name in ("ix_laws_fts", "ix_laws_official_ref_trgm"):
+        assert not include_object(None, name, "index", True, None)
+    # Anything else is still compared, or the check would protect nothing.
+    assert include_object(None, "ix_laws_created_at", "index", True, None)
+    assert include_object(None, "laws", "table", True, None)

@@ -260,3 +260,15 @@ def check_production_config(settings: Settings) -> None:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def display_zone() -> ZoneInfo:
+    """The wall-clock zone this site writes and reads civil time in.
+
+    Validated at boot by :class:`Settings`, so it can no longer fall back to UTC
+    in silence. Lives here, next to the setting, because three modules need it —
+    the administration form parses opening and closing times into it, the results
+    round their buckets in it, and the labels format instants in it — and each had
+    grown its own one-line copy of the lookup.
+    """
+    return ZoneInfo(get_settings().display_timezone)

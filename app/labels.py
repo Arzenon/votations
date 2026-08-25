@@ -8,9 +8,8 @@ never as an ISO string.
 """
 
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo
 
-from app.config import get_settings
+from app.config import display_zone
 from app.models.imported_law import (
     STATUS_IGNORED,
     STATUS_IMPORTED,
@@ -74,9 +73,33 @@ def field_label(value: str) -> str:
     return FIELD_LABELS.get(value, value)
 
 
+def _local_day(value: date) -> date:
+    """The calendar day ``value`` falls on, as a reader here would name it.
+
+    A plain :class:`~datetime.date` carries no zone and is returned unchanged — a
+    promulgation happened on a day, not at an instant.
+
+    A :class:`~datetime.datetime` is an instant, and every one of them in this
+    application comes out of a ``timestamptz`` column in UTC. Reading ``.day`` off
+    it filed anything between midnight and 2 a.m. Paris under the previous day,
+    which is how a vote scheduled to close on the 15th announced the 14th on the
+    home page. ``datetime`` subclasses ``date``, so this had to be checked for
+    rather than caught by the type.
+    """
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=UTC)
+        return aware.astimezone(display_zone()).date()
+    return value
+
+
 def french_date(value: date) -> str:
-    """e.g. ``24 juin 2026`` — the form a law is cited in."""
-    return f"{value.day} {MOIS[value.month - 1]} {value.year}"
+    """e.g. ``24 juin 2026`` — the form a law is cited in.
+
+    Accepts an instant as well as a date, and converts it first; see
+    :func:`_local_day`.
+    """
+    day = _local_day(value)
+    return f"{day.day} {MOIS[day.month - 1]} {day.year}"
 
 
 def french_datetime(value: datetime) -> str:
@@ -87,6 +110,6 @@ def french_datetime(value: datetime) -> str:
     unambiguous and unreadable; this is unambiguous and readable, which is what a
     transparency page needs.
     """
-    zone = ZoneInfo(get_settings().display_timezone)
+    zone = display_zone()
     local = value.astimezone(zone) if value.tzinfo else value.replace(tzinfo=UTC).astimezone(zone)
     return f"{local:%d/%m/%Y à %H:%M} ({zone.key})"

@@ -17,6 +17,7 @@ validates.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -42,15 +43,21 @@ log = get_logger("drafting")
 # worst case is that drafts queue behind each other, which is the right queue to
 # be in.
 _pool: ThreadPoolExecutor | None = None
+# Built lazily from request threads, so two administrators clicking at the same
+# instant could otherwise each see `_pool is None` and build one — leaving a pool
+# nothing holds a reference to, with `draft_workers` threads of its own and no
+# shutdown path. Cheap to hold: the guarded region only ever constructs the pool.
+_pool_lock = threading.Lock()
 
 
 def _executor() -> ThreadPoolExecutor:
     global _pool
-    if _pool is None:
-        _pool = ThreadPoolExecutor(
-            max_workers=get_settings().draft_workers, thread_name_prefix="draft"
-        )
-    return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(
+                max_workers=get_settings().draft_workers, thread_name_prefix="draft"
+            )
+        return _pool
 
 
 def schedule_draft(item_id: int) -> Future:
@@ -61,9 +68,12 @@ def schedule_draft(item_id: int) -> Future:
 def shutdown_drafting() -> None:
     """Stop accepting drafts and let the app exit without waiting ten minutes."""
     global _pool
-    if _pool is not None:
-        _pool.shutdown(wait=False, cancel_futures=True)
-        _pool = None
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        # Outside the lock: `shutdown` does not wait here, but keeping it out
+        # means a later `_executor()` never blocks behind a teardown.
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 class DeadlineExceeded(RuntimeError):

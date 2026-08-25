@@ -14,22 +14,18 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import ColumnElement, func, literal, select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import display_zone, get_settings
 from app.db import as_utc
 from app.models import Vote, VoteChoice
 
 # How the export rounds `created_at`, per `export_time_resolution`.
 _EXPORT_TRUNC = {"day": "day", "hour": "hour"}
-
-
-def _display_zone() -> ZoneInfo:
-    """The zone every published instant is expressed in. Validated at boot."""
-    return ZoneInfo(get_settings().display_timezone)
 
 
 def _bucketed(unit: str, zone: str):
@@ -114,7 +110,7 @@ def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[Evo
     if total < settings.min_bucket_volume:
         return []
 
-    zone = _display_zone()
+    zone = display_zone()
     bucket = _bucketed("day", settings.display_timezone)
     rows = db.execute(
         select(bucket.label("bucket"), Vote.choice, func.count())
@@ -183,14 +179,17 @@ def iter_export_rows(
     settings = get_settings()
     trunc = _EXPORT_TRUNC.get(settings.export_time_resolution)
     with_time = _timestamps_allowed(db, law_id, total=total)
-    zone = _display_zone()
+    zone = display_zone()
 
+    # Three different expressions land here — a literal NULL, a truncation, or
+    # the raw column — so the variable is annotated as what they have in common.
+    moment: ColumnElement[Any]
     if not with_time:
         moment = literal(None)
     elif trunc:
         moment = _bucketed(trunc, settings.display_timezone)
     else:
-        moment = Vote.created_at
+        moment = Vote.created_at.expression
 
     result = db.execute(
         select(moment.label("moment"), Vote.choice)

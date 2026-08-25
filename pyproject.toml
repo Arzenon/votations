@@ -24,6 +24,11 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.27",
     "ruff>=0.15",
+    "mypy>=1.14",
+    # Stubs for the one third-party import mypy cannot infer. Pillow is
+    # deliberately absent: it builds `app/static/og.png` by hand and is not a
+    # dependency of the application — see `scripts/make_og_image.py`.
+    "types-defusedxml>=0.7",
 ]
 
 [tool.ruff]
@@ -67,6 +72,31 @@ ignore = [
 "tests/*" = ["S101", "S105", "S106", "S311", "ARG001", "SLF001"]
 # Seeding sample data uses a seeded PRNG for reproducibility, not for secrets.
 "scripts/seed.py" = ["S311"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app", "scripts"]
+
+# Deliberately not `strict`. The point here is to check the types the code
+# already declares — and this codebase declares a lot of them, on every model
+# column, every CRUD signature and every helper — rather than to demand an
+# annotation on each of the forty route handlers, whose signatures FastAPI
+# already reads and validates at runtime. `check_untyped_defs` is what makes the
+# unannotated bodies get checked anyway, which is where the value is.
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+no_implicit_optional = true
+# An `Any` that arrives from an untyped third-party call is silent by design;
+# one produced by our own code usually means a signature that lost its type.
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+# Pillow is a tool for regenerating one committed PNG, not a dependency; the
+# script that imports it is run by hand from a throwaway virtualenv.
+module = ["PIL.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

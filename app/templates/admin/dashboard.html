@@ -18,8 +18,8 @@
 <p class="disclaimer" role="status">
   <strong>Import automatique en retard.</strong>
   {% if last_import %}
-    Dernier import réussi le {{ last_import.strftime('%d/%m/%Y à %H:%M') }} (UTC),
-    soit plus de {{ import_stale_after_hours }} h.
+    Dernier import réussi le {{ last_import | french_datetime }}, soit plus de
+    {{ import_stale_after_hours }} h.
   {% else %}
     Aucun import n'a encore abouti.
   {% endif %}
@@ -39,7 +39,9 @@
     <tr>
       <td><a href="/loi/{{ law.slug }}">{{ law.title }}</a></td>
       <td><span class="status status-{{ state }}">{{ state | law_status }}</span></td>
-      <td>{% if law.closes_at %}{{ law.closes_at.strftime('%d/%m/%Y %H:%M') }}{% else %}—{% endif %}</td>
+      {# The form takes and shows Paris time; `strftime` on the stored instant
+             showed UTC, so a vote entered to close at 20 h read back as 18 h here. #}
+      <td>{% if law.closes_at %}{{ law.closes_at | french_datetime }}{% else %}—{% endif %}</td>
       <td>
         {{ tallies[law.id].total }}
         (P {{ tallies[law.id].counts['for'] }} /

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import random
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 
@@ -20,7 +21,11 @@ def _utc(days: int = 0, hours: int = 0) -> datetime:
     return utcnow() + timedelta(days=days, hours=hours)
 
 
-SAMPLE_LAWS = [
+# Heterogeneous by design: alongside the Law columns each entry carries a
+# `votes` count map and a `demographics` map, both popped out before the row is
+# built. Annotated rather than inferred so the two extras do not make every
+# column read back as `object`.
+SAMPLE_LAWS: list[dict[str, Any]] = [
     {
         "slug": "transparence-algorithmes-plateformes",
         "title": "Loi sur la transparence des algorithmes des grandes plateformes",
@@ -171,8 +176,11 @@ SAMPLE_LAWS = [
 
 def _seed_votes(db, law: Law, counts: dict[str, int]) -> None:
     rng = random.Random(law.slug)  # deterministic per law
-    window_start = law.opens_at
-    window_end = law.closes_at
+    window_start, window_end = law.opens_at, law.closes_at
+    if window_start is None or window_end is None:
+        # Sample votes are spread across the voting window, so there has to be
+        # one. Saying which law is missing it beats a TypeError on a subtraction.
+        raise ValueError(f"{law.slug} : des votes d'exemple sans fenêtre de vote")
     span = (window_end - window_start).total_seconds()
     n = 0
     for choice, count in counts.items():

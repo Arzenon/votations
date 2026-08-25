@@ -67,7 +67,7 @@
 
 {% if drafted_at %}
 <p class="disclaimer">
-  <strong>Brouillon généré par IA</strong> le {{ drafted_at.strftime('%d/%m/%Y à %H:%M') }},
+  <strong>Brouillon généré par IA</strong> le {{ drafted_at | french_datetime }},
   conservé pour ne pas être refacturé. Les blocs factuels sont rédigés à partir du texte
   officiel ; les arguments sont <strong>cités mot pour mot</strong> des comptes rendus de
   séance, auteur et lien compris. Rien n'a été vérifié : relisez avant publication.
@@ -191,6 +191,17 @@
       </tbody>
     </table>
   </div>
+  {# Only the most recent page is shown here. The complete history is the public
+     one, paginated, on the results page — this form is for editing, not for
+     auditing, and the audit belongs where a reader can perform it. #}
+  {% if revision_total > revisions | length %}
+  <p class="meta">
+    {{ revisions | length }} modifications les plus récentes sur {{ revision_total }}.
+    {% if law.is_public %}
+    <a href="/loi/{{ law.slug }}/resultats#historique">Voir l'historique public complet</a>.
+    {% endif %}
+  </p>
+  {% endif %}
   {% elif law.published %}
   <p class="meta">Aucune modification depuis la publication.</p>
   {% endif %}

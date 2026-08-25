@@ -48,7 +48,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 # `target: base` explicitly. Check that before adding a service.
 FROM base AS dev
 USER root
-RUN pip install "pytest>=8.3" "ruff>=0.15"
+RUN pip install "pytest>=8.3" "ruff>=0.15" "mypy>=1.14" "types-defusedxml>=0.7"
 COPY tests ./tests
 RUN chown -R votations:votations /app
 USER votations

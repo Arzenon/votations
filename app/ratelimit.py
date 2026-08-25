@@ -34,6 +34,23 @@ _MAX_TRACKED = 20_000
 _SWEEP_EVERY = 512
 _since_sweep = 0
 
+# The table is shared by every request thread: the routes are sync `def`, so
+# Starlette runs each one on its own thread, up to `db_max_threads` of them.
+# Both the sweep and the eviction walk the whole dict, and walking it while
+# another thread inserts a new address raises "dictionary changed size during
+# iteration" — an unhandled 500 on the vote route. Counting a deque that another
+# thread is trimming fails the same way.
+#
+# The window is narrow while the table is small (a fast comprehension is rarely
+# preempted) and widens as it grows — that is, it opens up precisely under the
+# flood this limiter exists to slow down. The critical section is a handful of
+# dict operations, nothing that blocks, and the request is about to spend orders
+# of magnitude longer on a database round trip.
+#
+# Holding it across the read-then-append in `too_many` is a second, smaller fix:
+# two simultaneous votes from one address could both see room under the limit.
+_hits_lock = threading.Lock()
+
 
 def client_key(request: Request) -> str:
     """The client address, reading X-Forwarded-For from the *trusted* end.
@@ -63,6 +80,9 @@ def too_many(request: Request, *, limit: int, window_seconds: int, bucket: str =
         return False
     now = time.monotonic()
     cutoff = now - window_seconds
+    # Both of these read settings and neither touches the table, so they are
+    # computed before the lock is taken: the critical section holds nothing it
+    # does not need to.
     key = f"{bucket}|{client_key(request)}"
 
     # The sweep runs over *every* bucket, so it may not use this bucket's cutoff:
@@ -71,30 +91,31 @@ def too_many(request: Request, *, limit: int, window_seconds: int, bucket: str =
     # configured window is the only cutoff that is safe for all of them.
     stale_before = now - _widest_window()
 
-    _since_sweep += 1
-    if _since_sweep >= _SWEEP_EVERY:
-        _since_sweep = 0
-        _forget_stale(stale_before)
-
-    seen = _hits.get(key)
-    if seen is None:
-        if len(_hits) >= _MAX_TRACKED:
+    with _hits_lock:
+        _since_sweep += 1
+        if _since_sweep >= _SWEEP_EVERY:
+            _since_sweep = 0
             _forget_stale(stale_before)
-        if len(_hits) >= _MAX_TRACKED:
-            # Still full after a sweep: every tracked address is active inside its
-            # window, which is a flood rather than traffic. Evict the least
-            # recently seen instead of refusing this caller — turning a flood into
-            # a site-wide refusal of everyone not already tracked would hand an
-            # attacker the outage they were looking for.
-            _forget_oldest()
-        seen = _hits.setdefault(key, deque())
 
-    while seen and seen[0] < cutoff:
-        seen.popleft()
-    if len(seen) >= limit:
-        return True
-    seen.append(now)
-    return False
+        seen = _hits.get(key)
+        if seen is None:
+            if len(_hits) >= _MAX_TRACKED:
+                _forget_stale(stale_before)
+            if len(_hits) >= _MAX_TRACKED:
+                # Still full after a sweep: every tracked address is active inside
+                # its window, which is a flood rather than traffic. Evict the least
+                # recently seen instead of refusing this caller — turning a flood
+                # into a site-wide refusal of everyone not already tracked would
+                # hand an attacker the outage they were looking for.
+                _forget_oldest()
+            seen = _hits.setdefault(key, deque())
+
+        while seen and seen[0] < cutoff:
+            seen.popleft()
+        if len(seen) >= limit:
+            return True
+        seen.append(now)
+        return False
 
 
 def over_limit(request: Request, *, limit: int, window_seconds: int, bucket: str = "vote") -> bool:
@@ -106,11 +127,13 @@ def over_limit(request: Request, *, limit: int, window_seconds: int, bucket: str
     """
     if limit <= 0:
         return False
-    seen = _hits.get(f"{bucket}|{client_key(request)}")
-    if not seen:
-        return False
+    key = f"{bucket}|{client_key(request)}"
     cutoff = time.monotonic() - window_seconds
-    return sum(1 for hit in seen if hit >= cutoff) >= limit
+    with _hits_lock:
+        seen = _hits.get(key)
+        if not seen:
+            return False
+        return sum(1 for hit in seen if hit >= cutoff) >= limit
 
 
 def _widest_window() -> float:
@@ -130,6 +153,7 @@ def _widest_window() -> float:
 
 
 def _forget_stale(cutoff: float) -> None:
+    """Drop every entry last seen before ``cutoff``. Caller holds ``_hits_lock``."""
     for key in [k for k, v in _hits.items() if not v or v[-1] < cutoff]:
         _hits.pop(key, None)
 
@@ -139,7 +163,7 @@ def _forget_oldest(fraction: float = 0.1) -> None:
 
     Called only when the table is full of entries that are all still inside their
     window. A whole batch goes at once so a sustained flood does not pay for an
-    O(n) scan on every single request.
+    O(n) scan on every single request. Caller holds ``_hits_lock``.
     """
     if not _hits:
         return
@@ -199,7 +223,8 @@ def active_exports() -> int:
 def reset() -> None:
     """Clear all counters (tests, and a deliberate operational reset)."""
     global _since_sweep, _active_exports
-    _hits.clear()
-    _since_sweep = 0
+    with _hits_lock:
+        _hits.clear()
+        _since_sweep = 0
     with _active_lock:
         _active_exports = 0

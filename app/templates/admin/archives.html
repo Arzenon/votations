@@ -22,7 +22,7 @@
     {% for law in laws %}
     <tr>
       <td>{{ law.title }}</td>
-      <td>{{ law.archived_at.strftime('%d/%m/%Y') }}</td>
+      <td>{{ law.archived_at | french_date }}</td>
       <td>{{ tallies[law.id].total }}</td>
       <td class="actions">
         <form action="/admin/lois/{{ law.id }}/restaurer" method="post">

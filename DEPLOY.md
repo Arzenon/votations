@@ -43,6 +43,16 @@ Un démarrage qui échoue dit lequel : lisez le message plutôt que de le contou
 Les migrations sont appliquées au démarrage de `app`. Créez ensuite votre
 première loi depuis `/admin`.
 
+> **Un seul conteneur `app`.** `docker/entrypoint.sh` lance `alembic upgrade head`
+> avant de démarrer le serveur. Avec une seule instance c'est exactement ce qu'il
+> faut : le schéma est à jour avant la première requête, sans étape manuelle à
+> oublier. Avec plusieurs répliques, elles démarreraient ensemble et appliqueraient
+> la même migration en même temps — au mieux l'une échoue et redémarre en boucle,
+> au pire deux `ALTER TABLE` se croisent. Le jour où la charge demande une seconde
+> réplique, sortez d'abord la migration de l'entrypoint : un service `migrate` qui
+> tourne une fois et s'arrête, dont les autres dépendent
+> (`depends_on: { migrate: { condition: service_completed_successfully } }`).
+
 ## Ce que la pile fait tourner
 
 | Service | Rôle |

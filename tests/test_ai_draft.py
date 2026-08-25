@@ -3,6 +3,7 @@
 import base64
 from datetime import date
 
+import pytest
 from markupsafe import escape
 
 from app import ai
@@ -477,3 +478,47 @@ def test_draft_route_requires_auth(client, db_session):
 
 def test_draft_route_404_for_unknown_import(client, db_session):
     assert client.post("/admin/imports/999/brouillon", headers=_admin_auth()).status_code == 404
+
+
+
+# --- The AI corpus is measured, not just trimmed ------------------------------
+
+
+def test_an_oversized_debate_corpus_is_refused_before_it_is_billed():
+    """`generate_draft` measured its input; `select_arguments` only guessed."""
+    from app.ai import AiDraftError, select_arguments
+    from app.debates import Speech
+    from app.legifrance import LawText
+
+    class _Client:
+        class messages:  # mirrors the SDK's client.messages.* shape
+            @staticmethod
+            def count_tokens(**_kw):
+                return type("R", (), {"input_tokens": 10_000_000})()
+
+            @staticmethod
+            def parse(**_kw):  # pragma: no cover - must never be reached
+                raise AssertionError("the model was called despite the size guard")
+
+    law = LawText(
+        nor="ABCX2600001L",
+        law_code="2026-1",
+        title="Loi",
+        nature="LOI",
+        signed_on=None,
+        eli_url=None,
+    )
+    speeches = [
+        Speech(
+            speech_id="s1",
+            speaker="Mme A",
+            quality="",
+            chamber="Assemblée nationale",
+            section="Discussion générale",
+            spoken_on=None,
+            text="x" * 500,
+            url="https://an.fr/cr",
+        )
+    ]
+    with pytest.raises(AiDraftError, match="trop volumineux"):
+        select_arguments(law, speeches, client=_Client())

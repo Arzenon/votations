@@ -2,9 +2,12 @@
 
 import csv
 import io
+import json
 from datetime import UTC, datetime, timedelta
 
+from app import ratelimit
 from app.config import get_settings
+from app.crud import results as results_crud
 from app.models import Vote
 
 
@@ -155,3 +158,81 @@ def test_a_large_export_is_streamed_not_buffered(client, open_law, db_session):
         assert "content-length" not in response.headers
         chunks = list(response.iter_text())
     assert len("".join(chunks).strip().splitlines()) == 251  # header + rows
+
+
+
+# --- A8: the exports stream and are throttled --------------------------------
+
+
+def test_the_json_export_is_valid_and_streamed(client, db_session, open_law):
+    for _ in range(5):
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+        client.cookies.clear()
+
+    r = client.get(f"/loi/{open_law.slug}/export.json")
+    assert r.status_code == 200
+    body = json.loads(r.text)
+    assert body["law"]["slug"] == open_law.slug
+    assert len(body["votes"]) == 5
+    assert set(body["votes"][0]) == {"law_id", "choice", "created_at"}
+    assert "votes_note" in body
+
+
+def test_the_json_export_is_valid_when_a_law_has_no_votes(client, open_law):
+    body = json.loads(client.get(f"/loi/{open_law.slug}/export.json").text)
+    assert body["votes"] == []
+
+
+def test_exports_are_rate_limited_far_below_voting(client, open_law, monkeypatch):
+    monkeypatch.setattr(get_settings(), "export_rate_limit", 2, raising=False)
+    ratelimit.reset()
+    codes = [client.get(f"/loi/{open_law.slug}/export.csv").status_code for _ in range(4)]
+    assert codes[:2] == [200, 200]
+    assert codes[2:] == [429, 429]
+
+
+# --- Days are days where the reader lives ------------------------------------
+
+
+def _vote_at(db_session, law, moment: datetime, n: int = 60, tag: str = "a") -> None:
+    for i in range(n):
+        db_session.add(
+            Vote(
+                law_id=law.id,
+                voter_token=f"tz-{tag}-{i}",
+                choice="for",
+                created_at=moment + timedelta(seconds=i),
+            )
+        )
+    db_session.commit()
+
+
+def test_a_vote_just_after_midnight_in_paris_counts_as_that_day(client, open_law, db_session):
+    """Truncating in UTC filed 00:30 Paris under the previous day.
+
+    Visibly wrong on a curve headed « jour par jour », and wrong in the export
+    too — which must round on the same boundaries as the curve, or it partitions
+    the votes a second, different way.
+    """
+    assert get_settings().display_timezone == "Europe/Paris"
+    # 2026-05-03 22:30 UTC is 2026-05-04 00:30 in Paris (CEST, +02:00).
+    _vote_at(db_session, open_law, datetime(2026, 5, 3, 22, 30, tzinfo=UTC))
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [b.label for b in buckets] == ["2026-05-04"]
+
+    rows = list(csv.DictReader(io.StringIO(client.get(f"/loi/{open_law.slug}/export.csv").text)))
+    assert rows
+    assert {row["created_at"] for row in rows} == {"2026-05-04"}
+
+
+def test_the_export_and_the_curve_agree_on_the_boundary(client, open_law, db_session):
+    """Whatever the rule is, both sides must apply the same one."""
+    # 23:00 and 01:00 Paris: the same UTC day, two different days where the
+    # reader lives. Both sides must land on the same pair.
+    _vote_at(db_session, open_law, datetime(2026, 5, 3, 21, 0, tzinfo=UTC), n=30, tag="veille")
+    _vote_at(db_session, open_law, datetime(2026, 5, 3, 23, 0, tzinfo=UTC), n=30, tag="apres")
+
+    curve_days = {b.label for b in results_crud.evolution(db_session, open_law.id)}
+    rows = list(csv.DictReader(io.StringIO(client.get(f"/loi/{open_law.slug}/export.csv").text)))
+    assert {row["created_at"] for row in rows} == curve_days == {"2026-05-03", "2026-05-04"}

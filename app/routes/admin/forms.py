@@ -16,34 +16,66 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime
 
 from fastapi import Depends, Form
+from sqlalchemy import String
 
-from app.config import get_settings
+from app.config import display_zone
+from app.models import Law
 from app.security import is_safe_url, safe_url
 
-# Column widths from `app.models.law`. Checked here so an over-long paste is a
-# message about the field rather than a database error and a 500 page.
-MAX_LENGTHS = {
-    "title": 500,
-    "official_ref": 255,
-    "legifrance_url": 1000,
+#: The prose blocks are ``Text`` columns, so the database imposes no width on
+#: them and nothing here did either. A whole loi de finances pasted into « Ce que
+#: dit la loi » — by accident, or by one of the authenticated users V3 opens this
+#: form to — landed as a multi-megabyte row that the home page then read in full
+#: to render a 200-character excerpt. These are generous: the charter asks for
+#: three to five short paragraphs, and the drafts come in under 5 000 characters.
+#:
+#: Sized so the whole form stays inside the 256 kB request body Caddy accepts —
+#: two prose blocks plus two full argument lists — because a limit the edge
+#: refuses first is one the administrator meets as a bare 413 with no field named.
+_PROSE_LIMITS = {
+    "summary_text": 20_000,
+    "practical_changes": 20_000,
 }
+
+#: The same for one argument's quoted text. The longest real speech in a sitting
+#: record runs to a few thousand characters, and an argument is a sentence or two
+#: out of one.
+MAX_ARGUMENT_CHARS = 5_000
+
+
+def _column_limits() -> dict[str, int]:
+    """The declared width of each ``String`` column the form writes.
+
+    Read off the model rather than copied from it. The copy was correct and had
+    no way to stay that way: widening a column left the form still refusing at
+    the old limit, and narrowing one left it accepting values the database would
+    reject with a 500.
+    """
+    limits = {}
+    for name in ("title", "official_ref", "legifrance_url"):
+        column_type = Law.__table__.c[name].type
+        if not isinstance(column_type, String) or column_type.length is None:
+            # Turning one of these into an unbounded `Text` is a legitimate
+            # decision, but it has to be a decision: silently reading no limit
+            # here would drop the check on that field and nobody would notice.
+            raise TypeError(
+                f"laws.{name} n'est plus une colonne String de largeur déclarée ; "
+                "adaptez la validation du formulaire"
+            )
+        limits[name] = column_type.length
+    return limits
+
+
+# Checked here so an over-long paste is a message about the field rather than a
+# database error and a 500 page.
+MAX_LENGTHS = {**_column_limits(), **_PROSE_LIMITS}
 
 
 class InvalidFormValue(ValueError):
     """A field the administrator typed cannot be read; rendered as a 400 page."""
-
-
-def _display_tz() -> ZoneInfo:
-    """The zone administrators write opening and closing times in.
-
-    No fallback: ``Settings`` validates the zone at boot, so an unknown one can
-    no longer reach this and silently shift every scheduled time to UTC.
-    """
-    return ZoneInfo(get_settings().display_timezone)
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -60,7 +92,7 @@ def parse_dt(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value.strip())
     except ValueError as exc:
         raise InvalidFormValue(f"date ou heure illisible : « {value} »") from exc
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_display_tz())
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=display_zone())
 
 
 def dt_local(value: datetime | None) -> str:
@@ -68,8 +100,8 @@ def dt_local(value: datetime | None) -> str:
     if not value:
         return ""
     if value.tzinfo is None:
-        value = value.replace(tzinfo=ZoneInfo("UTC"))
-    return value.astimezone(_display_tz()).strftime("%Y-%m-%dT%H:%M")
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(display_zone()).strftime("%Y-%m-%dT%H:%M")
 
 
 def parse_arguments(raw: str | None, *, field: str) -> list[dict]:
@@ -104,9 +136,16 @@ def parse_arguments(raw: str | None, *, field: str) -> list[dict]:
                 f"« {field} », entrée {index} : le lien « {source} » n'est pas une "
                 "adresse http(s) et ne peut pas être publié"
             )
+        text = str(entry.get("text", ""))
+        if len(text) > MAX_ARGUMENT_CHARS:
+            raise InvalidFormValue(
+                f"« {field} », entrée {index} : {len(text)} caractères ; la limite "
+                f"est de {MAX_ARGUMENT_CHARS}. Un argument est une citation, pas un "
+                "compte rendu."
+            )
         out.append(
             {
-                "text": str(entry.get("text", "")),
+                "text": text,
                 "source": safe_url(source),
                 "author": str(entry.get("author", "")),
             }
@@ -243,8 +282,12 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
         title=title,
         official_ref=official_ref,
         legifrance_url=safe_url(legifrance_url),
-        summary_text=raw.summary_text,
-        practical_changes=raw.practical_changes,
+        summary_text=_checked(raw.summary_text, field="summary_text", label="Ce que dit la loi"),
+        practical_changes=_checked(
+            raw.practical_changes,
+            field="practical_changes",
+            label="Ce que ça change en pratique",
+        ),
         arguments_for=parse_arguments(raw.arguments_for, field="Arguments des partisans"),
         arguments_against=parse_arguments(raw.arguments_against, field="Arguments des opposants"),
         opens_at=opens,
@@ -276,8 +319,8 @@ def draft_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
         title=raw.title.strip()[: MAX_LENGTHS["title"]],
         official_ref=raw.official_ref.strip()[: MAX_LENGTHS["official_ref"]],
         legifrance_url=safe_url(raw.legifrance_url.strip()),
-        summary_text=raw.summary_text,
-        practical_changes=raw.practical_changes,
+        summary_text=raw.summary_text[: MAX_LENGTHS["summary_text"]],
+        practical_changes=raw.practical_changes[: MAX_LENGTHS["practical_changes"]],
         arguments_for=lenient(raw.arguments_for, "Arguments des partisans"),
         arguments_against=lenient(raw.arguments_against, "Arguments des opposants"),
         opens_at=None,

@@ -176,18 +176,6 @@ def create_app() -> FastAPI:
     check_production_config(settings)
     configure_logging()
 
-    # The OpenAPI schema enumerates every administration route. Useful locally,
-    # gratuitous reconnaissance in production.
-    docs = (
-        {}
-        if not settings.is_production
-        else {
-            "docs_url": None,
-            "redoc_url": None,
-            "openapi_url": None,
-        }
-    )
-
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # The routes are sync `def`, so Starlette runs each one in this thread
@@ -205,7 +193,19 @@ def create_app() -> FastAPI:
         # Drafts can run for minutes; do not make a redeploy wait for one.
         shutdown_drafting()
 
-    app = FastAPI(title="Votations Françaises", lifespan=lifespan, **docs)
+    # The OpenAPI schema enumerates every administration route. Useful locally,
+    # gratuitous reconnaissance in production, so all three are switched off
+    # there. Spelled out rather than unpacked from a dict of overrides: FastAPI's
+    # own defaults are exactly these paths, and naming them keeps the intent — and
+    # the types — visible.
+    hide_docs = settings.is_production
+    app = FastAPI(
+        title="Votations Françaises",
+        lifespan=lifespan,
+        docs_url=None if hide_docs else "/docs",
+        redoc_url=None if hide_docs else "/redoc",
+        openapi_url=None if hide_docs else "/openapi.json",
+    )
 
     app.add_middleware(SecurityHeaders, headers=default_headers(settings))
 

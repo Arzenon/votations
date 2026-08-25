@@ -93,6 +93,7 @@ def law_form_context(
     eli_url: str = "",
     typed: dict | None = None,
     revisions: list | None = None,
+    revision_total: int = 0,
 ) -> dict:
     """Everything ``admin/law_form.html`` needs, from one place."""
     return {
@@ -114,4 +115,8 @@ def law_form_context(
         "draft_error": prefill.draft_error if prefill else "",
         "ai_enabled": bool(prefill) and bool(get_settings().anthropic_api_key),
         "revisions": list(revisions or []),
+        # How many exist in all, against how many are shown: the form displays
+        # only the most recent page, and saying so beats a table that silently
+        # stops.
+        "revision_total": revision_total,
     }

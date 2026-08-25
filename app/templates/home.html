@@ -21,7 +21,10 @@
       <span class="status status-{{ state }}">{{ state | law_status }}</span>
       <h3>{{ law.title }}</h3>
       {% if law.summary_text %}<p>{{ law.summary_text[:200] }}{% if law.summary_text|length > 200 %}…{% endif %}</p>{% endif %}
-      {% if law.closes_at %}<p class="meta">Clôture : {{ law.closes_at.strftime('%d/%m/%Y') }}</p>{% endif %}
+      {# `french_date`, not `strftime`: the column is a UTC instant, so formatting it
+         raw published the previous day for anything closing between midnight and
+         2 h Paris. The filter renders it in the zone the vote was scheduled in. #}
+      {% if law.closes_at %}<p class="meta">Clôture : {{ law.closes_at | french_date }}</p>{% endif %}
     </a>
   </li>
   {% endfor %}

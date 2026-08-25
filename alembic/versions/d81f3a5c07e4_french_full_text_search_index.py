@@ -15,8 +15,9 @@ down_revision: str | None = 'c5a71e4b9d02'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Must stay equivalent to `app.crud.laws._SEARCH_VECTOR_SQL`, or the planner stops
-# using this index and every search falls back to a sequential scan.
+# Must stay equivalent to `app.models.law.SEARCH_VECTOR_SQL`, which is where the
+# expression now lives — beside the table it indexes. If the two drift the planner
+# stops using this index and every search falls back to a sequential scan.
 #
 # `coalesce` and `||`, not `concat_ws`: an index expression must be IMMUTABLE and
 # `concat_ws` is not. Column names are unqualified here because that is the form

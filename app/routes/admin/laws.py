@@ -15,7 +15,7 @@ from app.models import STATUS_IMPORTED
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form
 from app.routes.admin.guard import require_admin
-from app.routes.public import law_page_context
+from app.routes.public.laws import law_page_context
 from app.templating import templates
 
 router = APIRouter()
@@ -117,10 +117,14 @@ def edit_law_form(
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
+    # The most recent page only. The full history, paginated, is the public one on
+    # the results page — which is where a reader checks it, and where it belongs.
+    # Not `_` for the page count: that name is already the admin guard's parameter.
+    recent, total, _pages = laws_crud.revisions(db, law.id)
     return templates.TemplateResponse(
         request,
         "admin/law_form.html",
-        law_form_context(law=law, revisions=laws_crud.revisions(db, law.id)),
+        law_form_context(law=law, revisions=recent, revision_total=total),
     )
 
 

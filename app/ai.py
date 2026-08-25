@@ -24,13 +24,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from app.config import get_settings
 from app.debates import Speech
 from app.legifrance import LawText
+
+if TYPE_CHECKING:  # the SDK is imported lazily below, so the feature stays optional
+    from anthropic.types import MessageParam
 
 
 class AiDraftError(RuntimeError):
@@ -98,7 +101,9 @@ def _user_prompt(law: LawText) -> str:
     return body
 
 
-def _refuse_if_oversized(client: Any, *, system: str, messages: list, what: str) -> None:
+def _refuse_if_oversized(
+    client: Any, *, system: str, messages: list[MessageParam], what: str
+) -> None:
     """Measure the request before sending it, so an outlier is refused not billed.
 
     Applied to both calls. The argument selection used to rely on a character
@@ -136,7 +141,7 @@ def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
     if not law.articles:
         raise AiDraftError("le texte officiel ne contient aucun article exploitable")
 
-    messages = [{"role": "user", "content": _user_prompt(law)}]
+    messages: list[MessageParam] = [{"role": "user", "content": _user_prompt(law)}]
     _refuse_if_oversized(client, system=SYSTEM_PROMPT, messages=messages, what="texte")
 
     try:
@@ -329,7 +334,9 @@ def select_arguments(
         "« Au plus » : n'atteins ces nombres que si les débats fournissent autant de "
         "passages qui exposent réellement un motif."
     )
-    messages = [{"role": "user", "content": f"{_pool_prompt(law, pool)}\n\n{instruction}"}]
+    messages: list[MessageParam] = [
+        {"role": "user", "content": f"{_pool_prompt(law, pool)}\n\n{instruction}"}
+    ]
     _refuse_if_oversized(
         client, system=ARGUMENTS_SYSTEM_PROMPT, messages=messages, what="corpus de séance"
     )

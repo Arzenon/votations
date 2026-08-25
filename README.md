@@ -42,7 +42,13 @@ Tests et qualité (dans le conteneur) :
 docker compose -f docker-compose.dev.yml run --rm app pytest
 docker compose -f docker-compose.dev.yml run --rm app ruff check .
 docker compose -f docker-compose.dev.yml run --rm app ruff format --check .
+docker compose -f docker-compose.dev.yml run --rm app mypy
 ```
+
+`mypy` lit sa configuration dans `pyproject.toml` : il vérifie `app/` et
+`scripts/`, sans exiger d'annotation sur les gestionnaires de routes — dont
+FastAPI lit déjà la signature — mais en contrôlant le corps des fonctions non
+annotées. Il n'a pas de base de données à joindre et tourne en quelques secondes.
 
 L'outillage de test vit dans l'étage `dev` de l'image. L'image de production n'en
 contient rien : chaque service de `docker-compose.prod.yml` nomme explicitement
@@ -85,7 +91,7 @@ app/
   models/            Law, Vote, ImportedLaw (aucune donnée personnelle stockée)
   crud/              laws, votes, results (agrégats simples + export anonyme), imports
   auth/              Couche d'authentification enfichable (voir ci-dessous)
-  routes/            public, admin, auth
+  routes/            public/ (pages, lois, exports), admin/, auth
   assemblee.py       Import des lois promulguées (données ouvertes AN)
   legifrance.py      Texte officiel d'une loi (données ouvertes JO/DILA)
   ai.py              Brouillon IA : blocs factuels + sélection d'arguments

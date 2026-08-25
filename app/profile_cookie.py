@@ -27,6 +27,7 @@ repeatable on purpose to deflate a category.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 from fastapi import Request, Response
@@ -99,41 +100,57 @@ def _load(request: Request) -> dict[str, dict[str, str]]:
         return {}
 
 
-def read(request: Request, law_id: int) -> dict[str, str]:
-    """The categories this browser previously contributed **to this law**, or {}."""
-    return _load(request).get(str(law_id), {})
+@dataclass
+class ProfileStore:
+    """The decoded cookie: every law this browser has voted on, and how.
 
+    Decoded **once per request**. Casting a vote needs both halves of it — what
+    this browser contributed to *this* law, so the counters can be moved, and the
+    other laws' entries, so writing one does not drop the rest — and reading it
+    twice meant verifying the signature and parsing the JSON twice for an answer
+    that cannot have changed in between.
 
-def write(request: Request, response: Response, law_id: int, profile: dict[str, str]) -> None:
-    """Remember the categories contributed to this law, keeping the other laws.
-
-    Takes the request as well as the response because the cookie holds every law
-    this browser has voted on: writing one law's entry means re-emitting the
-    others rather than replacing them.
+    Holding it as an object rather than caching the decode behind the old
+    module-level ``read``/``write`` keeps that visible at the call site: the
+    cookie is loaded where the request starts handling a vote, and the same
+    object is asked and then told.
     """
-    profile = clean_profile(profile)
-    store = _load(request)
-    if not profile:
-        # Nothing to record for this law. Leave whatever is already stored alone
-        # rather than emitting a cookie that says nothing.
-        return
 
-    # Re-insert at the end so the most recently used law is the last to be
-    # dropped when the store is trimmed.
-    store.pop(str(law_id), None)
-    store[str(law_id)] = profile
+    laws: dict[str, dict[str, str]]
 
-    value = _fit(store)
-    if value is None:
-        return
-    response.set_cookie(
-        COOKIE_NAME,
-        value,
-        max_age=_COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        secure=get_settings().cookie_secure,
-    )
+    def for_law(self, law_id: int) -> dict[str, str]:
+        """The categories this browser previously contributed to this law, or {}."""
+        return self.laws.get(str(law_id), {})
+
+    def remember(self, response: Response, law_id: int, profile: dict[str, str]) -> None:
+        """Record the categories contributed to this law, keeping the other laws."""
+        profile = clean_profile(profile)
+        if not profile:
+            # Nothing to record for this law. Leave whatever is already stored
+            # alone rather than emitting a cookie that says nothing.
+            return
+
+        # Re-insert at the end so the most recently used law is the last to be
+        # dropped when the store is trimmed.
+        self.laws.pop(str(law_id), None)
+        self.laws[str(law_id)] = profile
+
+        value = _fit(self.laws)
+        if value is None:
+            return
+        response.set_cookie(
+            COOKIE_NAME,
+            value,
+            max_age=_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=get_settings().cookie_secure,
+        )
+
+
+def load(request: Request) -> ProfileStore:
+    """Read and verify the cookie once, for the rest of this request."""
+    return ProfileStore(_load(request))
 
 
 def _fit(store: dict[str, dict[str, str]]) -> str | None:

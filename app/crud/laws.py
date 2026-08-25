@@ -7,8 +7,18 @@ import re
 import unicodedata
 from datetime import datetime
 
-from sqlalchemy import Select, and_, func, literal, literal_column, or_, select
+from sqlalchemy import (
+    ColumnClause,
+    Select,
+    and_,
+    func,
+    literal,
+    literal_column,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.postgresql import REGCONFIG
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer
 
 from app.crud import count_matching, paginate
@@ -67,6 +77,12 @@ _LIST_DEFERRED = (
     defer(Law.arguments_for),
     defer(Law.arguments_against),
 )
+
+#: For the listings that do not even show an excerpt. The home page renders the
+#: first 200 characters of `summary_text`, so it needs the column; the search
+#: results and the administration table show only titles, references and dates,
+#: and were fetching whole summaries to throw them away.
+_TITLES_ONLY_DEFERRED = (*_LIST_DEFERRED, defer(Law.summary_text))
 
 
 def get_by_slug(db: Session, slug: str) -> Law | None:
@@ -131,7 +147,7 @@ def search(
     page, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
-            stmt.options(*_LIST_DEFERRED)
+            stmt.options(*_TITLES_ONLY_DEFERRED)
             .order_by(Law.created_at.desc())
             .offset(offset)
             .limit(page_size)
@@ -175,7 +191,7 @@ def _tsquery(query: str) -> str:
 #:
 #: The same expression the index is built on — defined beside the table, so the
 #: two cannot drift and quietly leave every search on a sequential scan.
-_SEARCH_VECTOR = literal_column(SEARCH_VECTOR_QUERY_SQL)
+_SEARCH_VECTOR: ColumnClause[str] = literal_column(SEARCH_VECTOR_QUERY_SQL)
 
 
 def _apply_search(stmt: Select, query: str) -> Select:
@@ -221,14 +237,45 @@ def _apply_status(stmt: Select, status: str | None) -> Select:
     return stmt
 
 
+#: How many slugs :func:`create` will try before giving up. Each pass re-reads
+#: the table, so the loop only turns while another transaction is committing the
+#: exact slug this one just picked — a handful of attempts is already generous.
+_SLUG_ATTEMPTS = 5
+
+
 def create(db: Session, **fields) -> Law:
-    if not fields.get("slug"):
-        fields["slug"] = unique_slug(db, fields.get("title", ""))
-    law = Law(**fields)
-    db.add(law)
-    db.commit()
-    db.refresh(law)
-    return law
+    """Insert a law, deriving a unique slug from its title when none is given.
+
+    :func:`unique_slug` reads the slugs that exist and returns the first free
+    one, which two simultaneous creations can answer identically: the read is not
+    part of the insert. ``laws.slug`` is unique, so one of them used to fail with
+    an IntegrityError and a 500 page. Retrying is the honest repair — on the next
+    pass the loser can see the slug the winner committed and moves on to the next
+    suffix.
+
+    An explicitly supplied slug is not retried: colliding with an existing law is
+    then the caller's own mistake, and re-deriving would produce the collision
+    again.
+    """
+    explicit = bool(fields.get("slug"))
+    attempt = 0
+    while True:
+        attempt += 1
+        if not explicit:
+            fields["slug"] = unique_slug(db, fields.get("title", ""))
+        law = Law(**fields)
+        db.add(law)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            # Past this many losses something other than a race is wrong, and
+            # spinning would only hide it.
+            if explicit or attempt >= _SLUG_ATTEMPTS:
+                raise
+            continue
+        db.refresh(law)
+        return law
 
 
 def _as_text(value) -> str:
@@ -276,15 +323,34 @@ def update(db: Session, law: Law, **fields) -> Law:
     return law
 
 
-def revisions(db: Session, law_id: int) -> list[LawRevision]:
-    """Every recorded change to this law, newest first."""
-    return list(
+#: Revisions per page. Each row carries the whole before and after value of a
+#: field, so twenty of them is already a long page — a summary rewritten twice is
+#: four full presentation blocks of text.
+REVISIONS_PAGE_SIZE = 20
+
+
+def revisions(
+    db: Session, law_id: int, *, page: int = 1, page_size: int = REVISIONS_PAGE_SIZE
+) -> tuple[list[LawRevision], int, int]:
+    """Recorded changes to this law, newest first. Returns (rows, total, pages).
+
+    Paginated because this is rendered on a *public* page and the underlying
+    table has no ceiling: every edit to a published law adds a row holding both
+    the old and the new value of a field, and those values are whole presentation
+    blocks. A law corrected a few hundred times would otherwise have shipped all
+    of it in one table, to every reader of its results.
+    """
+    stmt = select(LawRevision).where(LawRevision.law_id == law_id)
+    total = count_matching(db, stmt)
+    page, pages, offset = paginate(page, total, page_size)
+    rows = list(
         db.scalars(
-            select(LawRevision)
-            .where(LawRevision.law_id == law_id)
-            .order_by(LawRevision.changed_at.desc(), LawRevision.id.desc())
+            stmt.order_by(LawRevision.changed_at.desc(), LawRevision.id.desc())
+            .offset(offset)
+            .limit(page_size)
         )
     )
+    return rows, total, pages
 
 
 def count_revisions(db: Session, law_id: int) -> int:
@@ -336,7 +402,7 @@ def list_all(
     page, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
-            stmt.options(*_LIST_DEFERRED)
+            stmt.options(*_TITLES_ONLY_DEFERRED)
             .order_by(Law.created_at.desc())
             .offset(offset)
             .limit(page_size)
