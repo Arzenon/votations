@@ -42,6 +42,13 @@ SEANCE_ACTE = "AN1-DEBATS-SEANCE"
 
 AN_DOSSIER_URL_TEMPLATE = "https://www.assemblee-nationale.fr/dyn/{legislature}/dossiers/{uid}"
 
+# The largest single dossier worth reading, uncompressed. Real ones are tens of
+# kilobytes; a `zipfile` member declares its own uncompressed size, and reading
+# one without looking first is how a few kilobytes of archive become gigabytes of
+# memory. The same rule the Journal Officiel reader already applies to its tar
+# members — see `app.legifrance.MAX_MEMBER_BYTES`.
+MAX_DOSSIER_BYTES = 32 * 1024 * 1024
+
 
 class AssembleeFetchError(RuntimeError):
     """Raised on any network/HTTP/archive/parse problem so callers keep old rows."""
@@ -167,32 +174,41 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
     get = get or _default_getter
     blob = get(settings.an_dossiers_url)
 
-    try:
-        archive = zipfile.ZipFile(io.BytesIO(blob))
-        names = [
-            n for n in archive.namelist() if n.startswith(DOSSIER_PREFIX) and n.endswith(".json")
-        ]
-    except zipfile.BadZipFile as exc:
-        raise AssembleeFetchError(f"archive illisible : {exc}") from exc
-    if not names:
-        raise AssembleeFetchError("aucun dossier parlementaire dans l'archive")
-
     since = _import_floor(settings)
     laws: list[PromulgatedLaw] = []
-    for name in names:
-        try:
-            dossier = json.loads(archive.read(name))["dossierParlementaire"]
-        except (KeyError, TypeError, ValueError, zipfile.BadZipFile):
-            continue  # one malformed dossier must not abort the whole import
-        acte = _find_promulgation(dossier)
-        if acte is None:
-            continue
-        law = _build(dossier, acte)
-        if law is None:
-            continue
-        if since and law.promulgated_on < since:
-            continue
-        laws.append(law)
+
+    # Closed on the way out: the archive holds the whole 10 MB blob open, and this
+    # runs in a container with a memory limit precisely because it does.
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            entries = [
+                info
+                for info in archive.infolist()
+                if info.filename.startswith(DOSSIER_PREFIX) and info.filename.endswith(".json")
+            ]
+            if not entries:
+                raise AssembleeFetchError("aucun dossier parlementaire dans l'archive")
+
+            for info in entries:
+                if info.file_size > MAX_DOSSIER_BYTES:
+                    # Read the declared size, not the member: no real dossier is
+                    # this large, so this is a malformed or hostile archive.
+                    continue
+                try:
+                    dossier = json.loads(archive.read(info))["dossierParlementaire"]
+                except (KeyError, TypeError, ValueError, zipfile.BadZipFile):
+                    continue  # one malformed dossier must not abort the whole import
+                acte = _find_promulgation(dossier)
+                if acte is None:
+                    continue
+                law = _build(dossier, acte)
+                if law is None:
+                    continue
+                if since and law.promulgated_on < since:
+                    continue
+                laws.append(law)
+    except zipfile.BadZipFile as exc:
+        raise AssembleeFetchError(f"archive illisible : {exc}") from exc
 
     laws.sort(key=lambda law: (law.promulgated_on, law.law_code), reverse=True)
     return laws

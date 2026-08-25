@@ -23,6 +23,11 @@ services:
       retries: 5
 
   app:
+    # Built once, under a name, and reused by the three job services below: they
+    # run the same code from the same image. Declaring `build:` on each of them
+    # made `docker compose build` produce four identical images under four names,
+    # and left room for them to drift apart on a partial rebuild.
+    image: votations-app:local
     # `target` is mandatory, not decoration: with none, Docker builds the *last*
     # stage of the Dockerfile, which is `dev` — pytest, ruff and the test suite,
     # shipped to production. Naming `base` is what keeps them out.
@@ -91,11 +96,14 @@ services:
       - caddy_config:/config
 
   insee-refresh:
-    build:
-      context: .
-      target: base
+    image: votations-app:local
+    # Built by `app`, never fetched: without this, a registry lookup for a tag
+    # that only exists on this host is the first thing `up` would try.
+    pull_policy: never
     restart: unless-stopped
     depends_on:
+      app:
+        condition: service_started
       db:
         condition: service_healthy
     # The same `.env` as the app. Without it this container ran on the shipped
@@ -122,11 +130,14 @@ services:
           memory: 512m
 
   assemblee-refresh:
-    build:
-      context: .
-      target: base
+    image: votations-app:local
+    # Built by `app`, never fetched: without this, a registry lookup for a tag
+    # that only exists on this host is the first thing `up` would try.
+    pull_policy: never
     restart: unless-stopped
     depends_on:
+      app:
+        condition: service_started
       db:
         condition: service_healthy
     # The same `.env` as the app — this is the container that most needs it. The
@@ -163,11 +174,14 @@ services:
   # directory is committed (with a .gitkeep) because Docker would otherwise
   # create it as root on first `up`, and the container could not write into it.
   content-export:
-    build:
-      context: .
-      target: base
+    image: votations-app:local
+    # Built by `app`, never fetched: without this, a registry lookup for a tag
+    # that only exists on this host is the first thing `up` would try.
+    pull_policy: never
     restart: unless-stopped
     depends_on:
+      app:
+        condition: service_started
       db:
         condition: service_healthy
     # Runs as *you*, not as the image's own user, so the snapshots belong to the

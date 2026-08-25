@@ -105,9 +105,11 @@ def draft_import(
     if item is None:
         raise HTTPException(404)
 
-    already_running = item.draft_status == DRAFT_PENDING
-    if not ((item.draft and not regenerer) or already_running):
-        imports_crud.mark_draft_pending(db, item)
+    # A stored draft is shown as it is unless « Régénérer » was pressed. Anything
+    # else means a run is wanted — and `mark_draft_pending` is what decides
+    # whether *this* request is the one that starts it: the claim is a conditional
+    # UPDATE, so a double-click schedules (and bills) exactly one run.
+    if not (item.draft and not regenerer) and imports_crud.mark_draft_pending(db, item):
         schedule_draft(item.id)
 
     if request.headers.get("HX-Request"):

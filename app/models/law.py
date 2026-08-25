@@ -9,7 +9,7 @@ that every claim is sourced and attributed, and symmetry can be enforced.
 from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, query_expression
 
 from app.db import Base, as_utc, utcnow
 
@@ -72,6 +72,17 @@ class Law(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+    #: The first few hundred characters of `summary_text`, cut by the database.
+    #:
+    #: Not a column and not stored: it is filled in only by the listing that
+    #: renders an excerpt, through ``with_expression`` — see
+    #: :func:`app.crud.laws.list_published`. Everywhere else it is None, which is
+    #: the point. The home page shows 200 characters of a summary whose column has
+    #: no width limit and whose form accepts 20 000, so reading the whole thing
+    #: for every card meant the cost of that page was set by the longest text
+    #: anybody had ever pasted.
+    excerpt: Mapped[str | None] = query_expression()
 
     @property
     def is_archived(self) -> bool:

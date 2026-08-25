@@ -20,7 +20,10 @@
     <a href="/loi/{{ law.slug }}">
       <span class="status status-{{ state }}">{{ state | law_status }}</span>
       <h3>{{ law.title }}</h3>
-      {% if law.summary_text %}<p>{{ law.summary_text[:200] }}{% if law.summary_text|length > 200 %}…{% endif %}</p>{% endif %}
+      {# `excerpt`, not `summary_text`: the database cuts it to 201 characters so
+         this page never reads a whole presentation to show two lines of one.
+         The 201st character is how we know there was more to say. #}
+      {% if law.excerpt %}<p>{{ law.excerpt[:200] }}{% if law.excerpt|length > 200 %}…{% endif %}</p>{% endif %}
       {# `french_date`, not `strftime`: the column is a UTC instant, so formatting it
          raw published the previous day for anything closing between midnight and
          2 h Paris. The filter renders it in the zone the vote was scheduled in. #}

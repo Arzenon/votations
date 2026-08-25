@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 from types import SimpleNamespace
 
+from markupsafe import escape
+
 from app import ratelimit
 from app.config import get_settings
 from tests.helpers import admin_headers, basic_auth
@@ -309,3 +311,31 @@ def test_the_table_survives_being_swept_while_it_is_written(monkeypatch):
 
     assert not failures, f"concurrent access raised {failures[0]!r}"
     rl.reset()
+
+
+def test_a_refusal_tells_the_client_when_to_come_back(client, open_law, monkeypatch):
+    """A 429 with no `Retry-After` invites an immediate retry.
+
+    Which is the one thing neither the visitor nor the server wants — and the
+    limit is keyed on an address that a mobile carrier shares between thousands
+    of people, so the client retrying is very often not the one that spent it.
+    """
+    monkeypatch.setattr(get_settings(), "vote_rate_limit", 1, raising=False)
+    ratelimit.reset()
+
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    refused = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
+
+    assert refused.status_code == 429
+    assert refused.headers.get("retry-after") == "60"
+
+
+def test_a_refusal_does_not_blame_the_reader(client, open_law, monkeypatch):
+    """The message has to leave room for the very likely case: a shared address."""
+    monkeypatch.setattr(get_settings(), "vote_rate_limit", 1, raising=False)
+    ratelimit.reset()
+
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    refused = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
+
+    assert "partagent" in refused.text or escape("n'y êtes") in refused.text

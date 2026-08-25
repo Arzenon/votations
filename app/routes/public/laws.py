@@ -44,6 +44,18 @@ def _demographic_form_context() -> dict:
     }
 
 
+def _back_to(law: Law) -> str:
+    """This law's own URL, built from the stored slug rather than the path.
+
+    The two are the same string today — `visible` looked the law up by that very
+    parameter, and every slug in the table went through `slugify`, which strips
+    anything a header could be split on. Building the `Location` from the column
+    means it stays true of code that has not been written yet: a slug is what the
+    database holds, not what the caller typed.
+    """
+    return f"/loi/{law.slug}"
+
+
 def _carry_cookies(source: Response, target: Response) -> Response:
     """Move any Set-Cookie an auth/profile helper wrote onto the real response."""
     for key, value in source.raw_headers:
@@ -59,8 +71,9 @@ GONE_NOTICE = "Cette votation n'est plus disponible. Rechargez la page pour voir
 CLOSED_NOTICE = "Cette votation vient de se clore : votre vote n'a pas pu être enregistré."
 NO_CHOICE_NOTICE = "Choisissez « Pour », « Contre » ou « Abstention » avant de valider."
 TOO_MANY_NOTICE = (
-    "Trop de votes ont été envoyés depuis votre connexion en quelques minutes. "
-    "Réessayez dans un instant."
+    "Beaucoup de votes ont été envoyés depuis votre connexion ces dernières "
+    "minutes — une connexion internet est souvent partagée entre plusieurs "
+    "personnes, vous n'y êtes peut-être pour rien. Réessayez dans une minute."
 )
 
 
@@ -226,7 +239,7 @@ def cast_vote(
     except ValueError:
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=NO_CHOICE_NOTICE)
-        return RedirectResponse(f"/loi/{slug}", status_code=303)
+        return RedirectResponse(_back_to(law), status_code=303)
 
     carrier = Response()  # collects the cookies the helpers below set
     voter_token = auth.get_voter_token(request, carrier)
@@ -236,7 +249,7 @@ def cast_vote(
     except votes_crud.VotingClosed:
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE)
-        return RedirectResponse(f"/loi/{slug}", status_code=303)
+        return RedirectResponse(_back_to(law), status_code=303)
 
     # Optional, anonymous: folded once into aggregate counters (no per-voter row).
     # The categories a voter already contributed come back from their own device,
@@ -265,7 +278,7 @@ def cast_vote(
         )
         return _carry_cookies(carrier, fragment)
 
-    return _carry_cookies(carrier, RedirectResponse(f"/loi/{slug}", status_code=303))
+    return _carry_cookies(carrier, RedirectResponse(_back_to(law), status_code=303))
 
 
 @router.get("/loi/{slug}/resultats", response_class=HTMLResponse)
@@ -280,7 +293,7 @@ def results_page(
     law = visible(db, slug)
     if law is None:
         return not_found(request)
-    # One count of this law's votes, shared by everything below that needs it.
+    # One pass over this law's votes, shared by everything below that needs it.
     # Four separate COUNT(*)s used to answer the same question per render.
     tally = results_crud.tally(db, law.id)
     evolution = results_crud.evolution(db, law.id, total=tally.total)
@@ -301,7 +314,7 @@ def results_page(
             # it explicitly means the template does not have to reach into
             # `breakdowns[0]` and take the list being non-empty on faith.
             "min_cell_count": get_settings().min_cell_count,
-            "provision": demo_crud.provision_rate(db, law.id),
+            "provision": demo_crud.provision_rate(db, law.id, tally=tally),
             "export_note": results_crud.export_note(db, law.id, total=tally.total),
             "revisions": revision_rows,
             "revision_total": revision_total,

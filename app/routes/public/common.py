@@ -59,19 +59,38 @@ def visible(db: Session, slug: str) -> Law | None:
     return law if law is not None and law.is_public else None
 
 
+# What a refused visitor is told to do, and what a well-behaved client reads.
+# Both refusals below carry it: a 429 with no `Retry-After` invites an immediate
+# retry, which is the one thing neither the visitor nor the server wants.
+_RETRY_AFTER = {"Retry-After": "60"}
+
+# Said the same way in both refusals, and worth saying carefully. The limit is
+# keyed on a network address, and an address is shared — by a mobile carrier, an
+# office, a campus. So the person reading this has very often done nothing at
+# all, and a message that says « vous avez envoyé trop de votes » accuses them of
+# something that is not true, on the one page where being fair matters most.
+_SHARED_CONNECTION = (
+    "Cette limite s'applique à une connexion internet, et beaucoup de personnes "
+    "en partagent une — c'est le cas de la plupart des connexions mobiles. Il est "
+    "donc possible que vous n'y soyez pour rien."
+)
+
+
 def too_many_votes(request: Request) -> HTMLResponse:
     """Politely refuse a burst without explaining the exact threshold."""
     return templates.TemplateResponse(
         request,
         "erreur.html",
         {
-            "titre": "Trop de votes en peu de temps",
+            "titre": "Trop de votes depuis cette connexion",
             "message": (
-                "Trop de votes ont été envoyés depuis votre connexion en quelques "
-                "minutes. Réessayez dans un instant."
+                "Beaucoup de votes ont été envoyés depuis votre connexion ces "
+                f"dernières minutes. {_SHARED_CONNECTION} Réessayez dans une "
+                "minute : votre vote sera enregistré normalement."
             ),
         },
         status_code=429,
+        headers=_RETRY_AFTER,
     )
 
 
@@ -80,14 +99,15 @@ def too_many_exports(request: Request) -> HTMLResponse:
         request,
         "erreur.html",
         {
-            "titre": "Trop de téléchargements",
+            "titre": "Trop de téléchargements depuis cette connexion",
             "message": (
-                "Trop de fichiers ont été téléchargés depuis votre connexion en "
-                "quelques minutes. Les données restent disponibles : réessayez "
-                "dans un instant."
+                "Beaucoup de fichiers ont été téléchargés depuis votre connexion "
+                f"ces dernières minutes. {_SHARED_CONNECTION} Les données restent "
+                "publiques et complètes : réessayez dans une minute."
             ),
         },
         status_code=429,
+        headers=_RETRY_AFTER,
     )
 
 

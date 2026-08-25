@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import Settings, check_production_config, get_settings
+from app.crud import imports as imports_crud
 from app.db import SessionLocal
 from app.drafting import shutdown_drafting
 from app.logging_config import configure_logging, get_logger
@@ -169,6 +170,28 @@ def _wants_html(request: Request) -> bool:
     return "text/html" in request.headers.get("accept", "")
 
 
+def _release_interrupted_drafts() -> None:
+    """Hand back the rows a previous process was still drafting when it stopped.
+
+    Deliberately swallows every failure. The database may not be reachable at the
+    instant we boot — the entrypoint migrates first, but nothing guarantees the
+    connection survives to here — and refusing to start the site over a piece of
+    administrative housekeeping would trade a stuck banner for an outage.
+    """
+    db = SessionLocal()
+    try:
+        released = imports_crud.release_interrupted_drafts(db)
+        if released:
+            log.warning(
+                "%s brouillon(s) interrompu(s) par un arrêt précédent — repassés en échec",
+                released,
+            )
+    except Exception:
+        log.exception("impossible de libérer les brouillons interrompus")
+    finally:
+        db.close()
+
+
 def create_app() -> FastAPI:
     # Refuse to serve real votes on placeholder secrets. Raising here stops the
     # container at boot instead of quietly running a forgeable configuration.
@@ -189,6 +212,7 @@ def create_app() -> FastAPI:
             settings.db_max_threads,
             settings.db_pool_size,
         )
+        _release_interrupted_drafts()
         yield
         # Drafts can run for minutes; do not make a redeploy wait for one.
         shutdown_drafting()

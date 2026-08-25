@@ -347,7 +347,12 @@ def test_the_pages_that_are_the_same_for_everyone_may_be_cached(client):
     and the administration and wrong here: forbidding every cache means a popular
     votation recomputes the same aggregates once per reader.
     """
-    for path in ("/", "/recherche"):
+    # Every page that is the same for everyone, not just the two that had it:
+    # the legal notices, the privacy page and the authentication page carry
+    # nothing about the reader either, and were being recomputed and re-sent on
+    # every single view — while `app/routes/public/pages.py` said in its own
+    # docstring that they all opted in.
+    for path in ("/", "/recherche", "/connexion", "/vie-privee", "/mentions-legales"):
         cache = client.get(path).headers["cache-control"]
         assert cache == "public, max-age=60", f"{path} carries {cache!r}"
 

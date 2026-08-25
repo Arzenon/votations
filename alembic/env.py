@@ -16,7 +16,14 @@ from app.db import Base, include_object
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers` defaults to True, which switches off every logger
+    # that already exists — including the application's own. That is harmless when
+    # `alembic upgrade` is its own process, which is how the container runs it,
+    # and silently wrong the moment migrations run inside a process that also logs:
+    # the test suite migrates once per session, and every `log.warning` in the app
+    # went nowhere for the rest of it. A migration environment has no business
+    # reconfiguring somebody else's loggers.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # A caller may point the migrations at another database (the test suite does).
 # Only fall back to the application settings when nothing has been set, so

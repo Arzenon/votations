@@ -52,7 +52,10 @@ class ImportedLaw(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source: Mapped[str] = mapped_column(String(16), default=SOURCE_ASSEMBLEE)
-    dossier_uid: Mapped[str] = mapped_column(String(32), index=True)
+    # Not indexed on its own: every query that looks a dossier up gives the source
+    # as well, which is what `uq_imported_law_source_uid` above is keyed on. The
+    # standalone index was never chosen by the planner.
+    dossier_uid: Mapped[str] = mapped_column(String(32))
 
     legislature: Mapped[str] = mapped_column(String(8), default="")
     procedure: Mapped[str] = mapped_column(String(100), default="")

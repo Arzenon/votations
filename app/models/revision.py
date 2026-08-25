@@ -17,7 +17,7 @@ credential pair, so naming it would imply an accountability the MVP cannot back.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, desc
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, utcnow
@@ -25,12 +25,23 @@ from app.db import Base, utcnow
 
 class LawRevision(Base):
     __tablename__ = "law_revisions"
+    __table_args__ = (
+        # There is one query on this table that matters — the page of history a
+        # reader turns, newest first, for one law — and it was served by two
+        # separate indexes, neither of which could give it both the filter and
+        # the order. This one does, in the order the page reads them, so a law
+        # with a long history pages without sorting its whole history first.
+        Index(
+            "ix_law_revisions_law_changed",
+            "law_id",
+            desc("changed_at"),
+            desc("id"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    law_id: Mapped[int] = mapped_column(ForeignKey("laws.id", ondelete="CASCADE"), index=True)
-    changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, index=True
-    )
+    law_id: Mapped[int] = mapped_column(ForeignKey("laws.id", ondelete="CASCADE"))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # The column that changed, e.g. "summary_text". Rendered through
     # `app.labels.field_label` so no English column name reaches a French page.

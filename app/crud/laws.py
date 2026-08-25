@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session, defer, with_expression
 
 from app.crud import count_matching, paginate
 from app.db import utcnow
@@ -56,14 +56,36 @@ def slugify(value: str) -> str:
     return re.sub(r"[-\s]+", "-", value)[:255] or "loi"
 
 
+#: Room kept for the ``-nn`` a collision appends, inside `laws.slug`'s width.
+_SLUG_SUFFIX_ROOM = 8
+
+
 def unique_slug(db: Session, title: str) -> str:
-    base = slugify(title)
-    slug = base
+    """The first free slug derived from ``title``.
+
+    One query rather than one per candidate: the loop used to ask the database
+    "is `loi-x` taken? `loi-x-2`? `loi-x-3`?" one round trip at a time, so a
+    title shared by n laws cost n of them. Reading the whole family at once and
+    choosing in Python costs one, whatever n is.
+
+    The base is trimmed so the suffix fits: `slugify` already cuts at the column's
+    255 characters, which left no room for the `-2` and turned a collision between
+    two very long titles into a value the column could not hold.
+    """
+    base = slugify(title)[: 255 - _SLUG_SUFFIX_ROOM]
+    taken = set(
+        db.scalars(
+            select(Law.slug).where(
+                or_(Law.slug == base, Law.slug.like(f"{_escape_like(base)}-%", escape="\\"))
+            )
+        )
+    )
+    if base not in taken:
+        return base
     n = 2
-    while db.scalar(select(Law.id).where(Law.slug == slug)):
-        slug = f"{base}-{n}"
+    while f"{base}-{n}" in taken:
         n += 1
-    return slug
+    return f"{base}-{n}"
 
 
 #: Deferred on every list view. These are the expensive part of a law — the
@@ -78,11 +100,19 @@ _LIST_DEFERRED = (
     defer(Law.arguments_against),
 )
 
-#: For the listings that do not even show an excerpt. The home page renders the
-#: first 200 characters of `summary_text`, so it needs the column; the search
-#: results and the administration table show only titles, references and dates,
-#: and were fetching whole summaries to throw them away.
+#: For every listing: none of them renders a whole summary. The search results
+#: and the administration table show only titles, references and dates; the home
+#: page shows an excerpt, which it gets as :data:`_EXCERPT` below rather than by
+#: reading the column and throwing most of it away.
 _TITLES_ONLY_DEFERRED = (*_LIST_DEFERRED, defer(Law.summary_text))
+
+#: How much of a summary the home page shows before trailing off.
+EXCERPT_CHARS = 200
+
+#: The excerpt, cut by the database. One character more than is displayed, which
+#: is exactly what the template needs to know whether to add an ellipsis — and
+#: the whole reason this is a `left()` and not a slice in Python.
+_EXCERPT = with_expression(Law.excerpt, func.left(Law.summary_text, EXCERPT_CHARS + 1))
 
 
 def get_by_slug(db: Session, slug: str) -> Law | None:
@@ -99,10 +129,13 @@ def _published(stmt: Select) -> Select:
 
 
 def list_published(db: Session, *, limit: int = 50) -> list[Law]:
-    """Published, non-archived laws, newest first (home page)."""
+    """Published, non-archived laws, newest first (home page).
+
+    Carries :attr:`~app.models.law.Law.excerpt`, not the whole summary.
+    """
     stmt = (
         _published(select(Law))
-        .options(*_LIST_DEFERRED)
+        .options(*_TITLES_ONLY_DEFERRED, _EXCERPT)
         .order_by(Law.created_at.desc())
         .limit(limit)
     )

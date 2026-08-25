@@ -11,7 +11,13 @@ from app.ai import AiDraftError, LawDraft, SelectedArguments, generate_draft
 from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.legifrance import Article, LawText
-from app.models import ImportedLaw
+from app.models import (
+    DRAFT_FAILED,
+    DRAFT_IDLE,
+    DRAFT_PENDING,
+    DRAFT_READY,
+    ImportedLaw,
+)
 from tests.conftest import drain_drafts
 
 
@@ -141,10 +147,10 @@ def test_without_a_key_the_feature_reports_itself_unavailable():
         settings.anthropic_api_key = previous
 
 
-def _stage(db_session) -> ImportedLaw:
+def _stage(db_session, uid: str = "DLR5L17N001") -> ImportedLaw:
     item = ImportedLaw(
         source="assemblee",
-        dossier_uid="DLR5L17N001",
+        dossier_uid=uid,
         legislature="17",
         procedure="Proposition de loi ordinaire",
         title="Loi de test",
@@ -210,7 +216,7 @@ def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=Non
             raise fail
         return LAW
 
-    def generate(law):
+    def generate(law, *, client=None):
         if calls is not None:
             calls.append(1)
         return draft
@@ -219,7 +225,9 @@ def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=Non
     monkeypatch.setattr("app.drafting.generate_draft", generate)
     monkeypatch.setattr("app.drafting.fetch_speeches", lambda seances: list(speeches))
     if arguments is not None:
-        monkeypatch.setattr("app.drafting.select_arguments", lambda law, sp: arguments)
+        monkeypatch.setattr(
+            "app.drafting.select_arguments", lambda law, sp, client=None: arguments
+        )
 
 
 def _draft(client, item_id, **data):
@@ -340,7 +348,7 @@ def test_a_cached_draft_survives_a_restart(client, db_session, background_db, mo
     assert stored.draft["practical_changes"] == DRAFT.practical_changes
 
     # No model available at all now — the draft must still come back.
-    def gone(law):
+    def gone(law, *, client=None):
         raise AssertionError("must not call the model for a cached draft")
 
     monkeypatch.setattr("app.drafting.generate_draft", gone)
@@ -522,3 +530,77 @@ def test_an_oversized_debate_corpus_is_refused_before_it_is_billed():
     ]
     with pytest.raises(AiDraftError, match="trop volumineux"):
         select_arguments(law, speeches, client=_Client())
+
+
+# --- A draft the process did not live to finish -------------------------------
+
+
+def test_a_draft_interrupted_by_a_restart_is_released(client, db_session):
+    """`en_cours` means "a thread here is on it", and no thread outlives the process.
+
+    A redeploy cancels what is queued and a crash takes it with it, leaving rows
+    claiming a run nobody was performing — with every exit closed: the banner
+    polls for an outcome that will never be written, « masquer » only clears a
+    *failed* draft, and « Régénérer » refuses to reschedule a row it believes is
+    already running.
+    """
+    item = _stage(db_session)
+    imports_crud.mark_draft_pending(db_session, item)
+    assert item.draft_status == DRAFT_PENDING
+
+    released = imports_crud.release_interrupted_drafts(db_session)
+
+    assert released == 1
+    db_session.refresh(item)
+    assert item.draft_status == DRAFT_FAILED
+    assert item.draft_error == imports_crud.INTERRUPTED_MESSAGE
+
+    # And now the administrator can act on it again: the banner is dismissible…
+    r = client.post(
+        f"/admin/imports/{item.id}/brouillon/masquer", headers=_admin_auth()
+    )
+    assert r.status_code in (200, 303)
+    db_session.refresh(item)
+    assert item.draft_status != DRAFT_PENDING
+
+
+def test_releasing_leaves_finished_drafts_alone(db_session):
+    """Only a run that was in flight is a run that was interrupted."""
+    ready = _stage(db_session, uid="DLR5L17N901")
+    imports_crud.save_draft(db_session, ready, draft={"summary_text": "x"})
+    idle = _stage(db_session, uid="DLR5L17N902")
+
+    assert imports_crud.release_interrupted_drafts(db_session) == 0
+
+    db_session.refresh(ready)
+    db_session.refresh(idle)
+    assert ready.draft_status == DRAFT_READY
+    assert idle.draft_status == DRAFT_IDLE
+
+
+def test_the_draft_claim_is_won_once(db_session):
+    """Two clicks in the same second must schedule — and bill — exactly one run."""
+    item = _stage(db_session)
+
+    assert imports_crud.mark_draft_pending(db_session, item) is True
+    assert imports_crud.mark_draft_pending(db_session, item) is False, (
+        "a row already running must not be claimed a second time"
+    )
+    assert item.draft_status == DRAFT_PENDING
+
+
+def test_a_second_click_does_not_queue_a_second_job(
+    client, db_session, background_db, monkeypatch
+):
+    """The route's gate is the claim, so the queue never grows a duplicate."""
+    calls: list[int] = []
+    _patch_job(monkeypatch, calls=calls)
+    item = _stage(db_session)
+
+    for _ in range(3):
+        client.post(
+            f"/admin/imports/{item.id}/brouillon", headers=_admin_auth(), data={"regenerer": "1"}
+        )
+    drain_drafts()
+
+    assert len(calls) == 1, f"the model was asked {len(calls)} times for one draft"

@@ -9,11 +9,15 @@ path from the one it was written for.
 from __future__ import annotations
 
 import base64
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.logging_config import LOGGER_NAME
 from app.models import DemographicTally, Law
 
 
@@ -73,3 +77,35 @@ def publish_laws(db: Session, n: int) -> None:
             )
         )
     db.commit()
+
+
+class _Collect(logging.Handler):
+    def __init__(self, into: list[str]) -> None:
+        super().__init__()
+        self.into = into
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.into.append(record.getMessage())
+
+
+@contextmanager
+def captured_logs(name: str = LOGGER_NAME, level: int = logging.WARNING) -> Iterator[list[str]]:
+    """What the application logger emitted inside the block, as a list of lines.
+
+    Not ``caplog``: :func:`app.logging_config.configure_logging` sets
+    ``propagate = False`` on the application logger — deliberately, so its records
+    go to one stderr handler and nowhere else — and pytest's fixture listens on
+    the root logger, which therefore never sees them. Attaching to the logger
+    itself is what makes them assertable.
+    """
+    logger = logging.getLogger(name)
+    lines: list[str] = []
+    handler = _Collect(lines)
+    previous = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(min(level, previous or level))
+    try:
+        yield lines
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)

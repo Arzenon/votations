@@ -10,6 +10,7 @@ from app import assemblee
 from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.models import STATUS_IGNORED, STATUS_NEW, ImportedLaw
+from tests.helpers import captured_logs
 
 
 def _basic(user: str, pw: str) -> dict:
@@ -245,3 +246,47 @@ def test_creating_a_law_from_an_import_prefills_and_links(client, db_session):
 def test_unknown_import_id_is_404(client, db_session):
     r = client.get("/admin/lois/nouvelle?import_id=999", headers=_admin_auth())
     assert r.status_code == 404
+
+
+def test_an_oversized_field_skips_its_row_and_keeps_the_others(db_session):
+    """One dossier the columns cannot hold must not throw away the whole export.
+
+    The export goes in as a single statement, so Postgres refuses the *statement*
+    rather than the row: an over-long title used to take every other law with it,
+    the job exited non-zero, and the container retried in a minute — for ever, on
+    a value the Assemblée nationale was not going to change on our account.
+    """
+    records = _fetch()
+    limit = ImportedLaw.__table__.c["title"].type.length
+    records[0].title = "T" * (limit + 1)
+
+    with captured_logs() as logs:
+        created, refreshed = imports_crud.sync(db_session, records=records)
+
+    assert (created, refreshed) == (1, 0), "the good law still landed"
+    titles = {item.title for item in imports_crud.list_by_status(db_session)[0]}
+    assert not any(t.startswith("TTT") for t in titles), "the oversized row was not written"
+    said = "\n".join(logs)
+    assert records[0].dossier_uid in said, "the skipped dossier must be named"
+    assert "title" in said, "the log must name the field that did not fit"
+
+
+def test_a_row_that_fits_exactly_is_kept(db_session):
+    """The check is a refusal of what cannot be stored, not a margin of its own."""
+    records = _fetch()
+    limit = ImportedLaw.__table__.c["title"].type.length
+    records[0].title = "T" * limit
+
+    created, _refreshed = imports_crud.sync(db_session, records=records)
+    assert created == 2
+
+
+def test_a_dossier_larger_than_the_cap_is_not_read(db_session):
+    """A zip member declares its own uncompressed size; read that, not the member."""
+    huge = json.dumps(
+        {"dossierParlementaire": {"uid": "X", "padding": "p" * (assemblee.MAX_DOSSIER_BYTES + 10)}}
+    )
+    blob = _zip({"huge": huge})
+    # No promulgation acte anywhere, so the honest answer is an empty list rather
+    # than an error — the point is that it got there without inflating the member.
+    assert assemblee.fetch_promulgated_laws(get=lambda url: blob) == []

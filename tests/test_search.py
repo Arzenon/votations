@@ -1,6 +1,8 @@
 """V1: advanced search filtering and anti-manipulation evolution gating."""
 
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import event
 
 from app.config import get_settings
@@ -143,3 +145,51 @@ def test_search_ignores_punctuation_a_visitor_types(client, db_session):
     make_law(db_session, slug="loi-ponct", title="Loi sur l'eau", summary_text="Texte.")
     for query in ("l'eau", "eau !", "(eau)", "eau & | :"):
         assert laws_crud.search(db_session, query=query)[1] == 1, query
+
+
+def test_the_curve_keeps_the_days_nobody_voted(db_session, open_law, monkeypatch):
+    """A quiet day is drawn flat, not deleted.
+
+    The chart spaces its points by position, not by date, so a dropped day made
+    thirty quiet days look exactly like thirty busy ones — and flattened out the
+    one thing the page says this curve is for: « une mobilisation organisée
+    laisse un pic sur une journée ».
+    """
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    base = datetime(2026, 5, 4, 12, 0, tzinfo=UTC)
+    for i in range(3):
+        db_session.add(Vote(law_id=open_law.id, voter_token=f"a{i}", choice="for", created_at=base))
+    for i in range(3):
+        db_session.add(
+            Vote(
+                law_id=open_law.id,
+                voter_token=f"b{i}",
+                choice="for",
+                created_at=base + timedelta(days=4),
+            )
+        )
+    db_session.commit()
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [b.label for b in buckets] == [
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+    ]
+    assert [sum(b.counts.values()) for b in buckets] == [3, 0, 0, 0, 3]
+
+
+def test_the_curve_does_not_invent_days_outside_the_votes(db_session, open_law, monkeypatch):
+    """The range still stops where the voting did, at both ends."""
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    moment = datetime(2026, 5, 4, 12, 0, tzinfo=UTC)
+    for i in range(4):
+        db_session.add(
+            Vote(law_id=open_law.id, voter_token=f"c{i}", choice="for", created_at=moment)
+        )
+    db_session.commit()
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [b.label for b in buckets] == ["2026-05-04"]

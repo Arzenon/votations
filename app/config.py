@@ -72,8 +72,25 @@ class Settings(BaseSettings):
     display_timezone: str = "Europe/Paris"
 
     # Vote rate limit: at most this many votes from one address per window.
-    vote_rate_limit: int = Field(default=20, ge=0)
-    vote_rate_window_seconds: int = Field(default=300, ge=1)
+    #
+    # **An address is not a person.** French mobile carriers put thousands of
+    # subscribers behind one CGNAT address, and so does every workplace, campus
+    # and shared connection. The limit is therefore spent by *everyone* on that
+    # address together: a votation that goes round on social media can refuse
+    # people who have not voted once, on a platform whose entire premise is that
+    # you get to have your say. That is a far likelier harm than the one this
+    # setting defends against.
+    #
+    # So it is deliberately loose. What actually enforces one vote per person is
+    # the signed cookie and the uniqueness constraint behind it; this only makes
+    # a script that mints fresh cookies in a loop slow, and a determined attacker
+    # rotates addresses anyway. Sixty votes per ten minutes still costs such a
+    # script a day and a half per ten thousand ballots, and leaves room for a
+    # busy carrier pool. Raise it further if you serve a lot of mobile traffic —
+    # the honest reading of a 429 here is "this address is shared", not "this
+    # person is voting too much".
+    vote_rate_limit: int = Field(default=60, ge=0)
+    vote_rate_window_seconds: int = Field(default=600, ge=1)
 
     # Failed administrator logins tolerated from one address per window, so the
     # provisional HTTP Basic guard cannot be brute-forced at network speed.
@@ -82,9 +99,12 @@ class Settings(BaseSettings):
 
     # Open-data downloads tolerated from one address per window. Far lower than
     # the vote limit: an export is a full scan of a law's votes, and legitimate
-    # use is a handful of downloads, not a loop.
-    export_rate_limit: int = Field(default=10, ge=0)
-    export_rate_window_seconds: int = Field(default=300, ge=1)
+    # use is a handful of downloads, not a loop. The same shared-address caveat
+    # applies (see `vote_rate_limit`), which is why the window is wide rather than
+    # the rate high — a newsroom or a class downloading both formats for a few
+    # laws in one sitting must not be refused, a loop still is.
+    export_rate_limit: int = Field(default=20, ge=0)
+    export_rate_window_seconds: int = Field(default=600, ge=1)
 
     # Exports streaming at the same time, across all callers. An export holds a
     # pooled database connection for as long as the client takes to read it, so

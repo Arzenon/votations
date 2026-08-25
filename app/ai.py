@@ -40,6 +40,28 @@ class AiDraftError(RuntimeError):
     """Raised when no draft can be produced; the admin writes the blocks by hand."""
 
 
+def build_client() -> Any:
+    """An Anthropic client, or the refusal that says the feature is switched off.
+
+    Public because one draft makes four requests across the two functions below —
+    a token count and a completion each — and they are worth making down one
+    connection. Each function used to build its own client and drop it
+    unreferenced, so a draft opened two TLS connections to do the work of one and
+    closed neither on purpose.
+
+    The SDK import stays inside the function: with no key configured the feature
+    is simply absent, and it must not become an import-time dependency of the app.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        raise AiDraftError(
+            "aucune clé API configurée — renseignez ANTHROPIC_API_KEY pour activer les brouillons"
+        )
+    import anthropic
+
+    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+
 class LawDraft(BaseModel):
     """The two factual blocks. Anything not supported by the text stays empty."""
 
@@ -128,15 +150,7 @@ def _refuse_if_oversized(
 def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
     """Draft the two factual blocks for this law. Raises AiDraftError on failure."""
     settings = get_settings()
-    if client is None:
-        if not settings.anthropic_api_key:
-            raise AiDraftError(
-                "aucune clé API configurée — renseignez ANTHROPIC_API_KEY pour "
-                "activer les brouillons"
-            )
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = build_client() if client is None else client
 
     if not law.articles:
         raise AiDraftError("le texte officiel ne contient aucun article exploitable")
@@ -304,15 +318,7 @@ def select_arguments(
     max_reserves = settings.ai_reserves_max if max_reserves is None else max_reserves
     if not speeches:
         raise AiDraftError("aucune intervention exploitable dans les comptes rendus")
-    if client is None:
-        if not settings.anthropic_api_key:
-            raise AiDraftError(
-                "aucune clé API configurée — renseignez ANTHROPIC_API_KEY pour "
-                "activer les brouillons"
-            )
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = build_client() if client is None else client
 
     # Roughly 3.6 characters per token in French; leave room for the instructions.
     budget = int(settings.ai_max_input_tokens * 3.6 * 0.8)

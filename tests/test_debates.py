@@ -198,3 +198,35 @@ def test_speech_is_the_shape_the_selector_expects():
         url="u",
     )
     assert "Mme X" in s.attribution and "08/04/2026" in s.attribution
+
+
+def test_an_identifier_that_is_not_one_is_never_fetched():
+    """The uid goes into a URL, so it must look like a uid before it gets there.
+
+    It reaches us from the government export by way of our own staging table.
+    This is not a suspicion about the Assemblée nationale: it is that a value
+    which ends up in an outbound request should be one we recognise, whatever
+    path it took. A `../` here would aim the fetch at another document.
+    """
+    asked: list[str] = []
+
+    def get(url: str) -> bytes:
+        asked.append(url)
+        return b"{}"
+
+    speeches = fetch_speeches([{"reunion_ref": "../../etc/passwd", "odj_ref": "x"}], get=get)
+
+    assert speeches == []
+    assert asked == [], "a malformed identifier must not reach the network"
+
+
+def test_an_ordinary_identifier_still_goes_through():
+    asked: list[str] = []
+
+    def get(url: str) -> bytes:
+        asked.append(url)
+        return b"{}"
+
+    fetch_speeches([{"reunion_ref": "RUANR5L17S2026PO861108N4", "odj_ref": "x"}], get=get)
+    assert asked, "a real identifier must still be fetched"
+    assert "RUANR5L17S2026PO861108N4" in asked[0]

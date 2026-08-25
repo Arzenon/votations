@@ -85,7 +85,24 @@ def _as_text(node: object) -> str:
     return node.strip() if isinstance(node, str) else ""
 
 
+# What an Assemblée nationale identifier looks like: "RUANR5L17S2026PO861108N4",
+# "CRSANR5L17S2026IDS31234". Letters, digits, and nothing that means anything to
+# a URL.
+_UID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+
+
 def _get_json(get: Getter, uid: str) -> dict:
+    """Fetch and decode one open-data document, by identifier.
+
+    The identifier is checked against what an identifier can look like before it
+    is put in a URL. It arrives from the government export by way of our own
+    staging table, so this is not a suspicion about the Assemblée nationale — it
+    is that a value which reaches an outbound request should be a value we
+    recognise, whatever the path it took to get here. A `../` in this position
+    would aim the fetch at another document on that host.
+    """
+    if not _UID_RE.match(uid):
+        raise DebatesFetchError(f"identifiant de séance inattendu : {uid!r}")
     try:
         return json.loads(get(OPENDATA_URL.format(uid=uid)))
     except ValueError as exc:

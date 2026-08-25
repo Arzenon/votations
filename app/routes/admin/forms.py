@@ -210,6 +210,19 @@ class LawForm:
         }
 
 
+#: Values a checkbox field may carry that mean "off". A browser omits an
+#: unchecked box entirely and sends "on" for a checked one, so `bool(value)` was
+#: right for every request a browser makes — and wrong for the ones this form
+#: also has to survive: a replayed POST, a curl, and the V3 API-shaped callers the
+#: roadmap invites. `published=false` publishing a law is not a failure mode worth
+#: keeping for the sake of one character.
+_FALSY_CHECKBOX = frozenset({"", "0", "false", "off", "no", "non"})
+
+
+def _checkbox(value: str) -> bool:
+    return value.strip().lower() not in _FALSY_CHECKBOX
+
+
 @dataclass
 class RawLawForm:
     """The form exactly as posted. Declared once, read two ways."""
@@ -292,7 +305,7 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
         arguments_against=parse_arguments(raw.arguments_against, field="Arguments des opposants"),
         opens_at=opens,
         closes_at=closes,
-        published=bool(raw.published),
+        published=_checkbox(raw.published),
         opens_at_raw=raw.opens_at,
         closes_at_raw=raw.closes_at,
     )
@@ -325,7 +338,7 @@ def draft_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
         arguments_against=lenient(raw.arguments_against, "Arguments des opposants"),
         opens_at=None,
         closes_at=None,
-        published=bool(raw.published),
+        published=_checkbox(raw.published),
         opens_at_raw=raw.opens_at,
         closes_at_raw=raw.closes_at,
     )

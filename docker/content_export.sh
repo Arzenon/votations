@@ -9,19 +9,14 @@
 # mangled can be read back out of yesterday's file.
 set -e
 
+. "$(dirname "$0")/periodic.sh"
+
 HEARTBEAT="${HEARTBEAT_FILE:-/tmp/export-alive}"
 EXPORT_DIR="${CONTENT_EXPORT_DIR:-/exports}"
 KEEP_DAYS="${CONTENT_KEEP_DAYS:-5}"
 
-LONG="${CONTENT_EXPORT_INTERVAL:-86400}"   # 24 hours
-SHORT="${CONTENT_RETRY_INTERVAL:-60}"      # seconds, before the first success
-
-while true; do
-  if python -m scripts.content export --dir "$EXPORT_DIR" --keep-days "$KEEP_DAYS"; then
-    : > "$HEARTBEAT"
-    sleep "$LONG"
-  else
-    echo "→ export du contenu pas encore possible ; nouvel essai dans ${SHORT}s"
-    sleep "$SHORT"
-  fi
-done
+run_periodically \
+	"${CONTENT_EXPORT_INTERVAL:-86400}" \
+	"${CONTENT_RETRY_INTERVAL:-60}" \
+	"export du contenu" \
+	python -m scripts.content export --dir "$EXPORT_DIR" --keep-days "$KEEP_DAYS"

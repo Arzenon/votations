@@ -92,8 +92,10 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml logs --tail=30 app
 ```
 
-Les conteneurs de rafraîchissement partagent l'image de l'application ; les
-reconstruire aussi, d'où le `--build` sans nom de service.
+Les conteneurs de rafraîchissement **partagent** l'image de l'application
+(`votations-app:local`) : seul `app` la construit, les autres s'y réfèrent. D'où
+le `--build` sans nom de service — il reconstruit `app`, et les trois jobs
+repartent sur la même image, sans possibilité de diverger d'elle.
 
 ## Sauvegardes
 
@@ -114,7 +116,16 @@ docker compose -f docker-compose.prod.yml exec db-backup \
 
 Le script refuse d'écrire une sauvegarde vide ou tronquée, et refuse de démarrer
 un dump s'il reste moins de 500 Mo libres : une partition pleine arrête PostgreSQL,
-donc les votes en cours.
+donc les votes en cours. Il nettoie aussi ce qu'une exécution tuée en cours de
+route a laissé — le dump non compressé est le plus gros fichier qu'il écrive, et
+il échappait au ménage des anciennes sauvegardes.
+
+> **`restore` remplace la base, littéralement.** Elle vide le schéma avant de
+> relire le fichier : un dump rejoué par-dessus un schéma existant s'arrêtait à la
+> première table déjà présente, laissant une base à moitié restaurée. L'archive est
+> vérifiée (`gunzip -t`) **avant** que quoi que ce soit ne soit effacé, donc un
+> fichier tronqué se solde par un refus et une base intacte. Restaurez toujours
+> dans une base jetable d'abord — voir « À ne pas oublier ».
 
 ### Hors de la machine
 
@@ -251,6 +262,11 @@ rien tourné.
   porte le numéro de législature et changera ; l'import échouerait alors en
   silence. Le tableau de bord affiche la date du dernier import réussi et alerte
   au-delà de 48 h. Cette bannière veut dire : lisez les journaux du service.
+
+  Le job ne s'acharne pas en attendant : après un échec il réessaie au bout d'une
+  minute, puis double l'attente jusqu'à une heure (`docker/periodic.sh`). Un
+  premier démarrage se rattrape donc en une minute, et une source qui a vraiment
+  déménagé n'interroge plus un service public 1 440 fois par jour pour rien.
 
   ```bash
   docker compose -f docker-compose.prod.yml logs --tail=50 assemblee-refresh

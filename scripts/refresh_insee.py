@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 
 from sqlalchemy import delete
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import SessionLocal
 from app.insee import InseeFetchError, fetch_reference
@@ -42,9 +42,11 @@ def main() -> int:
                     )
                 )
         db.commit()
-    except (OperationalError, ProgrammingError) as exc:
+    except SQLAlchemyError as exc:
+        # Any database refusal, not only "the schema is not migrated yet": the
+        # containerised loop reads a traceback as a crash and retries in seconds.
         db.rollback()
-        print(f"INSEE refresh skipped — schema not ready: {exc}", file=sys.stderr)
+        print(f"INSEE refresh skipped — database: {exc}", file=sys.stderr)
         return 1
     finally:
         db.close()

@@ -74,6 +74,7 @@ def privacy(request: Request):
         request,
         "vie_privee.html",
         {"contact_email": get_settings().legal_contact_email},
+        headers=PUBLIC_PAGE_CACHE,
     )
 
 
@@ -92,6 +93,7 @@ def legal_notice(request: Request):
         request,
         "mentions_legales.html",
         {**fields, "complete": all(fields.values())},
+        headers=PUBLIC_PAGE_CACHE,
     )
 
 

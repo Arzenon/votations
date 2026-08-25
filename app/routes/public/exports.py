@@ -103,7 +103,10 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
     if refused is not None:
         return refused
 
-    total = results_crud.count_votes(db, law.id)
+    # One pass over the votes answers both the total and how many carried a
+    # profile; the two used to be a COUNT and a COUNT … FILTER over the same rows.
+    tally = results_crud.tally(db, law.id)
+    total = tally.total
 
     # Demographic aggregates are included only where they clear cell suppression.
     demographics = [
@@ -122,7 +125,7 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
         for bd in demo_crud.all_breakdowns(db, law.id)
         if bd.shown
     ]
-    provision = demo_crud.provision_rate(db, law.id)
+    provision = demo_crud.provision_rate(db, law.id, tally=tally)
     envelope = {
         "law": {"id": law.id, "slug": law.slug, "title": law.title},
         "demographics": demographics,

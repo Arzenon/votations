@@ -9,6 +9,13 @@
 		max_size 256KB
 	}
 
+	# The liveness probe is for the container, not for the internet. Docker runs
+	# it against localhost:8000 inside the app container, so it never comes
+	# through here — which makes refusing it at the edge free. It carries no
+	# personal data, but it does answer "is the database up?" to anybody who
+	# asks, and that is a question the public has no reason to be able to ask.
+	respond /sante 404
+
 	# The app is not published outside the compose network: this is the only door.
 	reverse_proxy app:8000 {
 		# Overwrite rather than append. Caddy's default appends the peer address

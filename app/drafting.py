@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from app.ai import AiDraftError, generate_draft, select_arguments
+from app.ai import AiDraftError, build_client, generate_draft, select_arguments
 from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.db import SessionLocal
@@ -109,6 +109,13 @@ def build_draft(item_id: int, *, session_factory: Callable[[], Session] | None =
     settings = get_settings()
     deadline = _Deadline.start(settings.ai_draft_deadline_seconds)
     db = (session_factory or SessionLocal)()
+    # One client for the whole job, closed in the `finally` below. The two calls
+    # this job makes are four requests to the same host, and building a client
+    # inside each of them opened two connections to make them — see
+    # `app.ai.build_client`. Left as None when there is no key: `generate_draft`
+    # then raises the "feature switched off" refusal exactly as it always did,
+    # which is the message the administrator needs to see.
+    client = build_client() if settings.anthropic_api_key else None
     try:
         item = imports_crud.get_by_id(db, item_id)
         if item is None:
@@ -125,7 +132,7 @@ def build_draft(item_id: int, *, session_factory: Callable[[], Session] | None =
             deadline.check("texte officiel")
             law_text = fetch_law_text(item.nor, item.jo_date)
             deadline.check("rédaction des blocs factuels")
-            draft = generate_draft(law_text)
+            draft = generate_draft(law_text, client=client)
         except (LegifranceFetchError, AiDraftError, DeadlineExceeded) as exc:
             log.warning("brouillon échoué pour l'import %s : %s", item_id, exc)
             imports_crud.fail_draft(db, item, message=f"LOI n° {item.law_code} : {exc}")
@@ -144,7 +151,7 @@ def build_draft(item_id: int, *, session_factory: Callable[[], Session] | None =
                 deadline.check("comptes rendus de séance")
                 speeches = fetch_speeches(item.seances)
                 deadline.check("sélection des arguments")
-                arguments = select_arguments(law_text, speeches)
+                arguments = select_arguments(law_text, speeches, client=client)
                 notes = list(arguments.notes)
             except (DebatesFetchError, AiDraftError, DeadlineExceeded) as exc:
                 notes.append(f"Arguments non proposés : {exc}")
@@ -180,3 +187,5 @@ def build_draft(item_id: int, *, session_factory: Callable[[], Session] | None =
             log.exception("impossible d'enregistrer l'échec du brouillon %s", item_id)
     finally:
         db.close()
+        if client is not None:
+            client.close()

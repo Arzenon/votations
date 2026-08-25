@@ -154,7 +154,10 @@ class DemographicTally(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    law_id: Mapped[int] = mapped_column(ForeignKey("laws.id", ondelete="CASCADE"), index=True)
+    # Not indexed on its own: `uq_demo_cell` above leads with this column, so it
+    # already answers both the per-law read and the ON DELETE CASCADE. A second
+    # index on the same prefix only cost writes.
+    law_id: Mapped[int] = mapped_column(ForeignKey("laws.id", ondelete="CASCADE"))
     dimension: Mapped[str] = mapped_column(String(16))  # "age" | "sexe"
     category: Mapped[str] = mapped_column(String(32))  # e.g. "35-49" | "femme"
     choice: Mapped[str] = mapped_column(String(16))  # for | against | abstain

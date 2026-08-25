@@ -2,11 +2,14 @@
 
 import re
 
+from markupsafe import escape
+
 from app import ratelimit
 from app.config import get_settings
 from app.crud import results as results_crud
 from app.crud import votes as votes_crud
 from app.models import Vote, VoteChoice
+from app.routes.public.laws import TOO_MANY_NOTICE
 
 
 def test_one_vote_per_voter_then_changeable(client, open_law, db_session):
@@ -109,7 +112,10 @@ def test_htmx_vote_over_the_rate_limit_is_not_silent(client, open_law, monkeypat
     r = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"}, headers=HX)
     assert r.status_code == 200
     assert not _is_whole_page(r.text)
-    assert "Trop de votes" in r.text
+    # Escaped, because that is how the template emits it — the apostrophes in the
+# French copy become entities. Comparing against the constant rather than a
+# copy of its wording keeps this a test of the behaviour, not of the phrasing.
+    assert escape(TOO_MANY_NOTICE) in r.text
 
 
 def _checked_choice(html: str) -> str | None:
@@ -131,7 +137,7 @@ def test_a_refused_vote_keeps_the_choice_already_recorded(client, open_law, monk
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"}, headers=HX)
     refused = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "abstain"}, headers=HX)
 
-    assert "Trop de votes" in refused.text
+    assert escape(TOO_MANY_NOTICE) in refused.text
     assert _checked_choice(refused.text) == "for", (
         "the refusal must show what is on file, not the rejected attempt"
     )

@@ -18,6 +18,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.crud import results
+from app.crud.results import Tally
 from app.models import (
     DIMENSION_AGE,
     DIMENSION_LABELS,
@@ -283,19 +285,18 @@ class ProvisionRate:
     percentage: float
 
 
-def provision_rate(db: Session, law_id: int) -> ProvisionRate:
+def provision_rate(db: Session, law_id: int, *, tally: Tally | None = None) -> ProvisionRate:
     """How many voters chose to share a profile — context for reading breakdowns.
 
     Derived from the existing ``demographics_recorded`` flag on votes; no extra
-    storage, and one query rather than two.
+    storage, and no per-voter profile anywhere.
+
+    ``tally`` is the same optional-argument idiom the rest of the aggregation
+    uses: both numbers here come out of the scan :func:`~app.crud.results.tally`
+    already performs, so a caller that has one hands it over instead of walking
+    every vote on the law a second time to answer a question about the same rows.
     """
-    total, with_profile = db.execute(
-        select(
-            func.count(),
-            func.count().filter(Vote.demographics_recorded.is_(True)),
-        ).where(Vote.law_id == law_id)
-    ).one()
-    total = total or 0
-    with_profile = with_profile or 0
-    pct = round(100 * with_profile / total, 1) if total else 0.0
-    return ProvisionRate(total_votes=total, with_profile=with_profile, percentage=pct)
+    if tally is None:
+        tally = results.tally(db, law_id)
+    pct = round(100 * tally.with_profile / tally.total, 1) if tally.total else 0.0
+    return ProvisionRate(total_votes=tally.total, with_profile=tally.with_profile, percentage=pct)

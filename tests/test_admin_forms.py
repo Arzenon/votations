@@ -197,3 +197,48 @@ def test_the_column_limits_are_read_off_the_model_not_copied():
 
     for name in ("title", "official_ref", "legifrance_url"):
         assert MAX_LENGTHS[name] == Law.__table__.c[name].type.length
+
+
+# --- The publication checkbox -------------------------------------------------
+
+
+def test_an_unchecked_box_does_not_publish(client, db_session):
+    """A browser omits the field entirely when the box is not ticked."""
+    client.post(
+        "/admin/lois",
+        headers=admin_headers(),
+        data={"title": "Loi discrète", "summary_text": "x"},
+    )
+    law = db_session.query(Law).filter_by(title="Loi discrète").one()
+    assert law.published is False
+
+
+def test_the_word_false_does_not_publish_a_law(client, db_session):
+    """`bool("false")` is True, and this field decides whether people can vote.
+
+    No browser sends it — a checkbox is absent or "on" — but this form is also
+    posted by replayed requests and by curl, and V3 opens it to every
+    authenticated user. Publishing on a value that says the opposite is not a
+    failure mode worth keeping for the sake of one character.
+    """
+    # The title carries the index, not the word: `law_form` strips the title, so
+    # a value with spaces around it would not be the title we looked up.
+    for index, word in enumerate(("false", "0", "off", "non", " False ")):
+        title = f"Loi non publiee {index}"
+        client.post(
+            "/admin/lois",
+            headers=admin_headers(),
+            data={"title": title, "summary_text": "x", "published": word},
+        )
+        law = db_session.query(Law).filter_by(title=title).one()
+        assert law.published is False, f"« {word} » published the law"
+
+
+def test_a_ticked_box_still_publishes(client, db_session):
+    client.post(
+        "/admin/lois",
+        headers=admin_headers(),
+        data={"title": "Loi publiée", "summary_text": "x", "published": "on"},
+    )
+    law = db_session.query(Law).filter_by(title="Loi publiée").one()
+    assert law.published is True

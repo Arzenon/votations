@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -50,22 +50,37 @@ class Tally:
     total: int
     counts: dict[str, int]
     percentages: dict[str, float]
+    #: How many of these votes came with an optional profile. Counted here rather
+    #: than by a query of its own because it is the same scan: the results page
+    #: needs both numbers, and asking twice meant walking every vote on the law
+    #: twice to answer one question about them. Holds a count of votes, never a
+    #: category — the profile itself is still stored nowhere.
+    with_profile: int = 0
 
 
-def _tally_from_counts(counts: dict[str, int]) -> Tally:
+#: One pass over a law's votes answers both questions the pages ask of them.
+_COUNT_COLUMNS = (
+    func.count(),
+    func.count().filter(Vote.demographics_recorded.is_(True)),
+)
+
+
+def _tally_from_counts(counts: dict[str, int], with_profile: int = 0) -> Tally:
     total = sum(counts.values())
     pct = {k: (round(100 * v / total, 1) if total else 0.0) for k, v in counts.items()}
-    return Tally(total=total, counts=counts, percentages=pct)
+    return Tally(total=total, counts=counts, percentages=pct, with_profile=with_profile)
 
 
 def tally(db: Session, law_id: int) -> Tally:
     rows = db.execute(
-        select(Vote.choice, func.count()).where(Vote.law_id == law_id).group_by(Vote.choice)
+        select(Vote.choice, *_COUNT_COLUMNS).where(Vote.law_id == law_id).group_by(Vote.choice)
     ).all()
     counts = {c.value: 0 for c in VoteChoice}
-    for choice, n in rows:
+    profiled = 0
+    for choice, n, with_profile in rows:
         counts[choice] = n
-    return _tally_from_counts(counts)
+        profiled += with_profile
+    return _tally_from_counts(counts, profiled)
 
 
 def tallies_for(db: Session, law_ids: list[int]) -> dict[int, Tally]:
@@ -73,16 +88,18 @@ def tallies_for(db: Session, law_ids: list[int]) -> dict[int, Tally]:
     if not law_ids:
         return {}
     rows = db.execute(
-        select(Vote.law_id, Vote.choice, func.count())
+        select(Vote.law_id, Vote.choice, *_COUNT_COLUMNS)
         .where(Vote.law_id.in_(law_ids))
         .group_by(Vote.law_id, Vote.choice)
     ).all()
     counts: dict[int, dict[str, int]] = {
         law_id: {c.value: 0 for c in VoteChoice} for law_id in law_ids
     }
-    for law_id, choice, n in rows:
+    profiled: dict[int, int] = dict.fromkeys(law_ids, 0)
+    for law_id, choice, n, with_profile in rows:
         counts[law_id][choice] = n
-    return {law_id: _tally_from_counts(c) for law_id, c in counts.items()}
+        profiled[law_id] += with_profile
+    return {law_id: _tally_from_counts(c, profiled[law_id]) for law_id, c in counts.items()}
 
 
 def count_votes(db: Session, law_id: int) -> int:
@@ -96,13 +113,24 @@ class EvolutionBucket:
 
 
 def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[EvolutionBucket]:
-    """Daily vote counts over time (V1).
+    """Daily vote counts over time (V1), one bucket per calendar day.
 
     Returns an empty list until the total reaches ``min_bucket_volume`` so that
     low-volume votations cannot be used to re-identify or fingerprint voters.
 
     Bucketing happens in the database: reading every vote row back into Python to
     group it was the single most expensive query in the application.
+
+    **Days with no votes are filled in with zeros**, because the chart spaces its
+    points by position and not by date: a day nobody voted used to be deleted
+    rather than drawn flat, so thirty quiet days and thirty busy ones produced the
+    same picture. That is the one reading the page asks of this curve — « une
+    mobilisation organisée laisse un pic sur une journée » — and dropping the
+    quiet days is precisely what flattens the pic back out.
+
+    Nothing is revealed by the filling: a day absent from the old list already
+    meant "no votes", and the range still stops at the first and last day anyone
+    actually voted.
     """
     settings = get_settings()
     if total is None:
@@ -119,11 +147,29 @@ def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[Evo
         .order_by("bucket")
     ).all()
 
-    out: dict[str, dict[str, int]] = {}
+    out: dict[date, dict[str, int]] = {}
     for moment, choice, n in rows:
-        label = as_utc(moment).astimezone(zone).strftime("%Y-%m-%d")
-        out.setdefault(label, {c.value: 0 for c in VoteChoice})[choice] = n
-    return [EvolutionBucket(label=label, counts=counts) for label, counts in sorted(out.items())]
+        day = as_utc(moment).astimezone(zone).date()
+        out.setdefault(day, {c.value: 0 for c in VoteChoice})[choice] = n
+    if not out:
+        return []
+
+    # Walk calendar days rather than adding 24 hours: a DST boundary makes those
+    # two different things, and the day is what the label and the export agree on.
+    return [
+        EvolutionBucket(
+            label=day.isoformat(),
+            counts=out.get(day) or {c.value: 0 for c in VoteChoice},
+        )
+        for day in _days_between(min(out), max(out))
+    ]
+
+
+def _days_between(first: date, last: date) -> Iterator[date]:
+    day = first
+    while day <= last:
+        yield day
+        day += timedelta(days=1)
 
 
 def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:

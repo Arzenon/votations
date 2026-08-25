@@ -87,18 +87,23 @@ app/
   ratelimit.py       Compteurs en mémoire (vote, connexions admin)
   profile_cookie.py  Profil démographique facultatif, gardé côté navigateur
   logging_config.py  Journalisation sans adresse IP
+  templating.py      Instance Jinja partagée, filtres, empreinte des statiques
+  charts.py          La courbe d'évolution, dessinée en SVG côté serveur
   drafting.py        Le brouillon IA, exécuté en tâche de fond
   models/            Law, Vote, ImportedLaw (aucune donnée personnelle stockée)
   crud/              laws, votes, results (agrégats simples + export anonyme), imports
   auth/              Couche d'authentification enfichable (voir ci-dessous)
   routes/            public/ (pages, lois, exports), admin/, auth
+  opendata.py        Plomberie commune aux quatre sources de données ouvertes
   assemblee.py       Import des lois promulguées (données ouvertes AN)
   legifrance.py      Texte officiel d'une loi (données ouvertes JO/DILA)
+  insee.py           Parts nationales de référence (API Melodi, ouverte)
   ai.py              Brouillon IA : blocs factuels + sélection d'arguments
   debates.py         Interventions attribuées en séance (données ouvertes AN)
   templates/         base, home, law, results, search, connexion, admin/*
   static/            CSS minimal, htmx, app.js (rehaussement progressif)
 alembic/             Migrations
+docker/              Entrée du conteneur et les « cron » (voir periodic.sh)
 scripts/             Import AN/INSEE, export du contenu, sauvegarde, seed
 tests/               pytest
 ```
@@ -423,12 +428,22 @@ concerné, voici la carte :
   `Permissions-Policy` fermée ; le Caddyfile pose les mêmes, plus HSTS, et
   l'emporte quand il est là. Les deux, parce que dépendre d'un proxy particulier
   signifiait qu'un déploiement derrière autre chose n'avait plus aucun en-tête,
-  sans le moindre signal. Les pages ne sont par défaut **jamais mises en cache**
-  (`private, no-store`) : la page d'une loi affiche le bulletin de la personne qui
-  la lit. Seuls les fichiers statiques, empreintés par leur contenu, sont mis en
-  cache durablement. Aucun script ni style en ligne dans les gabarits :
-  les largeurs de barres et les confirmations passent par `static/app.js`, qui
-  n'est qu'un rehaussement — tout fonctionne sans JavaScript.
+  sans le moindre signal. Aucun script ni style en ligne dans les gabarits : les
+  largeurs de barres passent par `static/app.js`, qui n'est qu'un rehaussement —
+  tout fonctionne sans JavaScript.
+- **Mise en cache.** Le défaut est `private, no-store` : la page d'une loi affiche
+  le bulletin de la personne qui la lit, et l'administration des brouillons non
+  publiés. Les pages qui rendent les **mêmes octets pour tout le monde** en
+  sortent explicitement — accueil, recherche, connexion, vie privée, mentions
+  légales (une minute), résultats d'une votation ouverte (trente secondes, assez
+  court pour qu'une personne qui vient de voter voie son vote), résultats d'une
+  votation close (cinq minutes). Les fichiers statiques, empreintés par leur
+  contenu, sont mis en cache durablement.
+
+  Rien dans la pile fournie ne met en cache à la place de l'application : Caddy
+  ne le fait pas par défaut. Ces en-têtes servent donc aujourd'hui les
+  rechargements d'un même lecteur, et rendent utile l'ajout d'un CDN le jour où
+  le trafic le demandera.
 - **Surface exposée.** En production, `/docs`, `/redoc` et `/openapi.json` sont
   désactivés : le schéma énumère toutes les routes d'administration.
 - **Carte de partage.** `app/static/og.png` est un fichier statique, généré une
