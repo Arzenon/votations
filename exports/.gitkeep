@@ -1,0 +1,7 @@
+Les instantanés quotidiens du contenu éditorial sont écrits ici par le service
+`content-export` (voir DEPLOY.md, « Déménager, ou repartir sur une base neuve »).
+
+Ce dossier est suivi par git — et son contenu ignoré — pour une raison précise :
+il est monté dans le conteneur. S'il n'existait pas au moment du `docker compose
+up`, Docker le créerait lui-même, appartenant à root, et le conteneur ne pourrait
+pas y écrire.

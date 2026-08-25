@@ -33,7 +33,8 @@ class AnonymousProvider:
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._serializer = URLSafeSerializer(settings.secret_key, salt="voter-token")
+        # Every key that may verify, newest signing — see `Settings.signing_keys`.
+        self._serializer = URLSafeSerializer(settings.signing_keys, salt="voter-token")
 
     def _hash(self, raw_token: str) -> str:
         return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

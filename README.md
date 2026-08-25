@@ -99,6 +99,7 @@ app/
   templates/         base, home, law, results, search, connexion, admin/*
   static/            CSS minimal, htmx, app.js (rehaussement progressif)
 alembic/             Migrations
+scripts/             Import AN/INSEE, export du contenu, sauvegarde, seed
 tests/               pytest
 ```
 

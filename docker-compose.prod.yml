@@ -154,6 +154,47 @@ services:
           # memory; twice that is ample and bounds a decompression surprise.
           memory: 1g
 
+  # Daily snapshot of the editorial content, in a portable form. Separate from
+  # `db-backup` on purpose: that one protects the votes and restores only into
+  # this same schema, while this one is what you carry to another host.
+  #
+  # Bind-mounted rather than a named volume, so the files land in ./exports on
+  # the host and `cp` reaches them without going through `docker cp`. The
+  # directory is committed (with a .gitkeep) because Docker would otherwise
+  # create it as root on first `up`, and the container could not write into it.
+  content-export:
+    build:
+      context: .
+      target: base
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Runs as *you*, not as the image's own user, so the snapshots belong to the
+    # account that will copy them. `id -u` / `id -g` if 1000 is not your uid.
+    user: "${EXPORT_UID:-1000}:${EXPORT_GID:-1000}"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
+      CONTENT_EXPORT_INTERVAL: "86400"
+      CONTENT_KEEP_DAYS: "5"
+      HEARTBEAT_FILE: /tmp/export-alive
+      # That uid has no entry in the image's passwd, so give it a home it can write.
+      HOME: /tmp
+    entrypoint: ["./docker/content_export.sh"]
+    volumes:
+      - ./exports:/exports
+    healthcheck:
+      test: ["CMD-SHELL", "test $(find /tmp/export-alive -mmin -2880 2>/dev/null | wc -l) -eq 1"]
+      interval: 1h
+      timeout: 10s
+      retries: 2
+      start_period: 10m
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   # Daily dump of the only irreplaceable data on the platform: the votes.
   # Uses the Postgres image because it already ships pg_dump.
   db-backup:

@@ -9,3 +9,7 @@ venv/
 *.egg-info/
 build/
 dist/
+
+# Les instantanés de contenu, pas le dossier qui les reçoit.
+exports/*
+!exports/.gitkeep

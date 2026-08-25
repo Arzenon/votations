@@ -56,7 +56,7 @@ def _serializer() -> URLSafeSerializer:
     goes through this three times — read, read again, write. The key cannot
     change under a running process, so neither can the serializer.
     """
-    return URLSafeSerializer(get_settings().secret_key, salt="voter-profile")
+    return URLSafeSerializer(get_settings().signing_keys, salt="voter-profile")
 
 
 def clean_profile(profile: object) -> dict[str, str]:

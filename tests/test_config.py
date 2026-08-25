@@ -200,3 +200,71 @@ def test_the_example_file_carries_no_real_secret():
             assert line.strip() == "ANTHROPIC_API_KEY="
         if line.startswith("SECRET_KEY="):
             assert "change-me" in line
+
+
+# --- Carrying a signing key across a move -------------------------------------
+
+
+def test_a_fallback_key_is_offered_to_the_verifier_oldest_first():
+    settings = Settings(
+        secret_key="la-nouvelle", secret_key_fallbacks="la-vieille, l-avant-vieille"
+    )
+    assert settings.secret_key_fallbacks == ["la-vieille", "l-avant-vieille"]
+    # itsdangerous signs with the last and verifies with any.
+    assert settings.signing_keys[-1] == "la-nouvelle"
+
+
+def test_no_fallback_is_the_ordinary_case():
+    assert Settings(secret_key="seule").signing_keys == ["seule"]
+
+
+def test_production_refuses_a_placeholder_among_the_fallbacks():
+    """A fallback is honoured exactly as the current key is.
+
+    A weak one there is a forgeable key in production, just one nobody is
+    looking at.
+    """
+    settings = Settings(
+        environment="production",
+        secret_key="x" * 40,
+        secret_key_fallbacks="dev-insecure-secret-change-me",
+        admin_password="mot-de-passe-solide",
+        cookie_secure=True,
+    )
+    with pytest.raises(InsecureConfiguration, match="SECRET_KEY_FALLBACKS"):
+        check_production_config(settings)
+
+
+def test_production_refuses_a_short_fallback():
+    settings = Settings(
+        environment="production",
+        secret_key="x" * 40,
+        secret_key_fallbacks="trop-courte",
+        admin_password="mot-de-passe-solide",
+        cookie_secure=True,
+    )
+    with pytest.raises(InsecureConfiguration, match="shorter than 32"):
+        check_production_config(settings)
+
+
+def test_production_refuses_a_rotation_that_rotated_nothing():
+    settings = Settings(
+        environment="production",
+        secret_key="x" * 40,
+        secret_key_fallbacks="x" * 40,
+        admin_password="mot-de-passe-solide",
+        cookie_secure=True,
+    )
+    with pytest.raises(InsecureConfiguration, match="repeats SECRET_KEY"):
+        check_production_config(settings)
+
+
+def test_a_real_rotation_boots():
+    settings = Settings(
+        environment="production",
+        secret_key="n" * 40,
+        secret_key_fallbacks="v" * 40,
+        admin_password="mot-de-passe-solide",
+        cookie_secure=True,
+    )
+    check_production_config(settings)

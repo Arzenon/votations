@@ -239,3 +239,53 @@ def test_the_cookie_cannot_grow_without_bound():
 
     profile_cookie.load(request).remember(response, 999, {"age": "25-34"})
     assert len(captured["value"].encode()) <= 4000
+
+
+# --- A key rotation must not re-open a votation -------------------------------
+
+
+def _rotate(monkeypatch, *, new: str, fallbacks: list[str]) -> None:
+    """Reboot the auth provider on a different key, as a new host would."""
+    import app.auth.base as auth_base
+    from app.auth.anonymous import AnonymousProvider
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "secret_key", new, raising=False)
+    monkeypatch.setattr(settings, "secret_key_fallbacks", fallbacks, raising=False)
+    profile_cookie._serializer.cache_clear()
+    monkeypatch.setattr(auth_base, "_provider", AnonymousProvider())
+
+
+def test_carrying_the_old_key_keeps_a_voter_identified(client, open_law, db_session, monkeypatch):
+    """Moving to another host must not hand everyone a second ballot.
+
+    SECRET_KEY signs the voter token, so a new host with a new key cannot read
+    the cookies its voters already carry: each is issued a fresh token, matching
+    no existing row, and the votation quietly accepts a second vote from someone
+    who had already voted.
+    """
+    old = get_settings().secret_key
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 1
+
+    _rotate(monkeypatch, new="une-toute-autre-cle-de-quarante-caracteres", fallbacks=[old])
+
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
+    votes = db_session.query(Vote).filter_by(law_id=open_law.id).all()
+    assert len(votes) == 1, "the same browser was counted twice across the rotation"
+    assert votes[0].choice == "against", "and it is still their vote to change"
+
+
+def test_dropping_the_fallback_does_log_everyone_out(client, open_law, db_session, monkeypatch):
+    """The other half of the contract, for a key you believe has leaked.
+
+    Rotating with no fallback stops forged cookies being honoured, at the price
+    of every voter being treated as new. That price is the point; this test is
+    what keeps it from being a surprise.
+    """
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+
+    _rotate(monkeypatch, new="une-cle-de-remplacement-sans-repli-du-tout", fallbacks=[])
+
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
+    assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 2
