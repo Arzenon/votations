@@ -45,7 +45,7 @@ services:
       # (or the host environment); with no key the feature is simply absent.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       # Seed sample laws on startup (set to 0 to disable).
-      SEED_ON_START: "1"
+      SEED_ON_START: "0"
     ports:
       - "8000:8000"
     volumes:
