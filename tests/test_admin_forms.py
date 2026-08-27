@@ -6,7 +6,6 @@ is the single richest source of off-by-an-hour bugs in the application.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -113,18 +112,81 @@ def test_a_nonsense_import_id_is_rejected_not_fatal(client, db_session):
 # --- B1 / B4 / B5: the form refuses instead of failing quietly ---------------
 
 
-def test_malformed_argument_json_is_refused_not_silently_wiped(client, db_session):
+def test_a_half_filled_argument_is_refused_not_silently_wiped(client, db_session):
+    """An author with no quote is an argument someone started and lost track of.
+
+    Dropping it quietly would lose an argument on a platform whose premise is
+    symmetry between the two sides — the same reason malformed JSON used to be
+    refused rather than swallowed, back when this field was JSON.
+    """
     law = make_law(db_session, slug="loi-args", arguments_for=[{"text": "gardé"}])
     r = client.post(
         f"/admin/lois/{law.id}",
         headers=admin_headers(),
-        data={"title": "Loi X", "arguments_for": '[{"text": "cassé",}]'},
+        data={
+            "title": "Loi X",
+            "arguments_for_text": "",
+            "arguments_for_author": "Mme X",
+            "arguments_for_source": "https://an.fr/cr",
+        },
         follow_redirects=False,
     )
     assert r.status_code == 400
-    assert "JSON illisible" in r.text
+    assert "citation est vide" in r.text
     db_session.refresh(law)
     assert law.arguments_for == [{"text": "gardé"}], "the existing arguments must survive"
+
+
+def test_an_entirely_empty_argument_row_is_simply_skipped(client, db_session):
+    """The page always renders one spare row; submitting it must not be an error."""
+    r = client.post(
+        "/admin/lois",
+        headers=admin_headers(),
+        data={
+            "title": "Loi sans argument",
+            "arguments_for_text": "",
+            "arguments_for_author": "",
+            "arguments_for_source": "",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    law = db_session.query(Law).filter_by(title="Loi sans argument").one()
+    assert law.arguments_for == []
+
+
+def test_arguments_are_paired_by_position(client, db_session):
+    """Three parallel lists, zipped in document order — no index in the names."""
+    r = client.post(
+        "/admin/lois",
+        headers=admin_headers(),
+        # Repeated fields, exactly as the browser posts them: a list per name,
+        # zipped by position on the server.
+        data={
+            "title": "Loi à deux arguments",
+            "arguments_for_text": [
+                "Premier argument, assez long pour être publié.",
+                "Second argument, tout aussi défendable.",
+            ],
+            "arguments_for_author": ["Mme A", "M. B"],
+            "arguments_for_source": ["https://an.fr/1", "https://an.fr/2"],
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    law = db_session.query(Law).filter_by(title="Loi à deux arguments").one()
+    assert law.arguments_for == [
+        {
+            "text": "Premier argument, assez long pour être publié.",
+            "author": "Mme A",
+            "source": "https://an.fr/1",
+        },
+        {
+            "text": "Second argument, tout aussi défendable.",
+            "author": "M. B",
+            "source": "https://an.fr/2",
+        },
+    ]
 
 
 def test_an_over_long_title_is_a_message_not_a_500(client):
@@ -165,11 +227,15 @@ def test_an_enormous_summary_is_refused_with_a_message(client):
 
 
 def test_an_argument_longer_than_a_quotation_is_refused(client):
-    payload = json.dumps([{"text": "y" * 5_001, "author": "A", "source": "https://x.example"}])
     r = client.post(
         "/admin/lois",
         headers=admin_headers(),
-        data={"title": "Loi", "arguments_for": payload},
+        data={
+            "title": "Loi",
+            "arguments_for_text": "y" * 5_001,
+            "arguments_for_author": "A",
+            "arguments_for_source": "https://x.example",
+        },
         follow_redirects=False,
     )
     assert r.status_code == 400

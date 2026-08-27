@@ -166,6 +166,10 @@ def law_page_context(
         "demographics_locked": demographics_locked,
         "revision_count": laws_crud.count_revisions(db, law.id),
         "preview": preview,
+        # For « Signaler une erreur » in the provenance note: the page admits the
+        # presentation may be wrong, so it has to say where to report it. Empty
+        # when no contact is configured, and the offer simply disappears.
+        "contact_email": get_settings().legal_contact_email,
         **_demographic_form_context(),
     }
 

@@ -1,7 +1,13 @@
 {% extends "base.html" %}
 {% block body_class %}admin-wide{% endblock %}
 {% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} — Administration{% endblock %}
-{% block scripts %}<script src="{{ asset_url('htmx.min.js') }}" defer></script>{% endblock %}
+{% block scripts %}
+<script src="{{ asset_url('htmx.min.js') }}" defer></script>
+{# Administration only. The public pages stay usable with JavaScript off; this
+   one is edited by a handful of known people, for whom the argument editor is
+   worth enhancing. See static/admin.js — the form still works without it. #}
+<script src="{{ asset_url('admin.js') }}" defer></script>
+{% endblock %}
 {% block content %}
 <p class="breadcrumb">
   <a href="/admin">← Administration</a>
@@ -126,13 +132,38 @@
     <textarea name="practical_changes" rows="10">{{ values.practical_changes }}</textarea>
   </label>
 
-  <label>Arguments des partisans (JSON : [{"text":"…","author":"…","source":"…"}])
-    <textarea name="arguments_for" rows="10">{{ values.arguments_for | readable_json }}</textarea>
-  </label>
+  {# Two identical editors, so the markup is written once. The charter asks for
+     symmetry between the two sides; here that is literal. #}
+  {% for side, legend in (('for', 'Arguments des partisans'), ('against', 'Arguments des opposants')) %}
+  <fieldset class="arguments-editor" data-arguments="{{ side }}">
+    <legend>{{ legend }}</legend>
+    <div class="argument-list">
+      {# Every stored argument, plus one blank row. The blank row is what makes
+         this usable with no JavaScript at all: the page still adds one argument
+         per save. With JavaScript, « Ajouter un argument » adds as many as you
+         like — see static/admin.js. #}
+      {% for arg in values['arguments_' + side] %}
+        {% with text = arg.text, author = arg.author, source = arg.source %}
+          {% include "admin/_argument_row.html" %}
+        {% endwith %}
+      {% endfor %}
+      {% with text = '', author = '', source = '' %}
+        {% include "admin/_argument_row.html" %}
+      {% endwith %}
+    </div>
+    <button type="button" class="secondary add-argument" data-add="{{ side }}">
+      + Ajouter un argument
+    </button>
+  </fieldset>
+  {% endfor %}
 
-  <label>Arguments des opposants (JSON : [{"text":"…","author":"…","source":"…"}])
-    <textarea name="arguments_against" rows="10">{{ values.arguments_against | readable_json }}</textarea>
-  </label>
+  {# Cloned by admin.js for each new row. Inert until then: the browser does not
+     render a <template>, and its fields are not submitted with the form. #}
+  <template id="argument-row-template">
+    {% with text = '', author = '', source = '', side = '__SIDE__' %}
+      {% include "admin/_argument_row.html" %}
+    {% endwith %}
+  </template>
 
   <div class="form-row">
     <label>Ouverture du vote <span class="hint">(heure de Paris)</span>
@@ -149,14 +180,31 @@
   </label>
 
   {% if prefill %}<input type="hidden" name="import_id" value="{{ prefill.id }}">{% endif %}
+  {# Tells the preview which row is being edited, so it keeps that law's real
+     tally, history and URL while showing the unsaved prose. Absent on a new law,
+     which has none of those yet. Ignored by the save routes. #}
+  {% if law %}<input type="hidden" name="law_id" value="{{ law.id }}">{% endif %}
 
   <div class="form-actions">
     <button type="submit">Enregistrer</button>
-    {% if law %}
-    <a class="button secondary" href="/admin/lois/{{ law.id }}/apercu" target="_blank"
-       rel="noopener">Aperçu public ↗</a>
-    {% endif %}
+    {# A submit, not a link — and that is the whole point. A link can only ask for
+       what is already saved, so checking your own work meant saving it first, and
+       on a new law, creating it. Posting the form instead previews what is in the
+       textareas right now.
+
+       `formaction`/`formmethod`/`formtarget` are plain HTML: the new tab, the
+       different destination and the skipped validation all happen without a line
+       of JavaScript. `formnovalidate` because a preview must not be refused for a
+       missing title — you preview precisely to find out what is still missing. #}
+    <button type="submit" class="secondary" formnovalidate
+            formaction="/admin/lois/apercu" formmethod="post" formtarget="_blank">
+      Aperçu public ↗
+    </button>
   </div>
+  <p class="meta form-hint">
+    L'aperçu ouvre un onglet avec la page telle qu'elle est saisie ici, sans rien
+    enregistrer.
+  </p>
 </form>
 
 {% if law %}

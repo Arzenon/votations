@@ -395,10 +395,15 @@ def test_reserves_are_shown_apart_and_never_prefilled(
     assert "Réserves exprimées" in r.text
     assert str(escape(reserve["text"])) in r.text
     assert "Hendrik Davi" in r.text
-    # Shown for information — never written into the opposition block.
-    against = r.text.split('name="arguments_against"')[1].split("</textarea>")[0]
-    assert "manque les moyens" not in against
-    assert against.strip().endswith("[]")
+    # Shown for information — never written into the opposition block. The block
+    # is now a list of rows rather than a JSON textarea, so what must be true is
+    # that no row of it carries the reserve.
+    rows = r.text.split('name="arguments_against_text"')[1:]
+    assert rows, "the opposition editor should still be rendered"
+    assert not any("manque les moyens" in row.split("</textarea>")[0] for row in rows)
+    assert all(row.split("</textarea>")[0].split(">", 1)[1].strip() == "" for row in rows), (
+        "the opposition block must be left empty for the administrator to fill"
+    )
 
     # And it survives the cache, like the rest of the draft.
     db_session.expire_all()

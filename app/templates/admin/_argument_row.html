@@ -1,0 +1,28 @@
+{# One argument: the quote, who said it, and where to check it.
+
+   The three fields carry no index in their names. The browser posts repeated
+   fields in document order, so the nth text belongs with the nth author and the
+   nth source — which is what lets a row be added by cloning this markup and
+   removed by deleting it, with nothing to renumber. See
+   `app.routes.admin.forms.ArgumentRows`.
+
+   Expects `side` ('for' / 'against'), and `text`, `author`, `source`. #}
+<div class="argument-row">
+  <label class="argument-text">Citation
+    <textarea name="arguments_{{ side }}_text" rows="3"
+              placeholder="Le passage, recopié mot pour mot">{{ text }}</textarea>
+  </label>
+  <div class="argument-meta">
+    <label>Auteur
+      <input type="text" name="arguments_{{ side }}_author" value="{{ author }}"
+             placeholder="Mme Louise Morel (rapporteure)">
+    </label>
+    <label>Source
+      <input type="url" name="arguments_{{ side }}_source" value="{{ source }}"
+             placeholder="https://…">
+    </label>
+  </div>
+  {# Removing is emptying: a row whose three fields are blank is skipped on save,
+     so this button needs no server route and no confirmation. #}
+  <button type="button" class="link-danger remove-argument">Retirer</button>
+</div>

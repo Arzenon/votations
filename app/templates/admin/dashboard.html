@@ -37,7 +37,18 @@
     {% for law in laws %}
     {% set state = law.status() %}
     <tr>
-      <td><a href="/loi/{{ law.slug }}">{{ law.title }}</a></td>
+      {# A draft has no public URL — `/loi/<slug>` answers 404 for anything not
+         published, by design — so linking every title there made the title of
+         every draft a dead link. Send those to the preview instead, which is the
+         page the administrator wanted anyway. #}
+      <td>
+        {% if law.is_public %}
+        <a href="/loi/{{ law.slug }}">{{ law.title }}</a>
+        {% else %}
+        <a href="/admin/lois/{{ law.id }}/apercu">{{ law.title }}</a>
+        <span class="hint">(aperçu)</span>
+        {% endif %}
+      </td>
       <td><span class="status status-{{ state }}">{{ state | law_status }}</span></td>
       {# The form takes and shows Paris time; `strftime` on the stored instant
              showed UTC, so a vote entered to close at 20 h read back as 18 h here. #}
@@ -50,7 +61,9 @@
       </td>
       <td class="actions">
         <a href="/admin/lois/{{ law.id }}">Éditer</a>
-        <a href="/loi/{{ law.slug }}/export.csv">Export</a>
+        {# Same 404 as the title link above: the export route refuses anything the
+           public may not see. A draft has no votes to export either. #}
+        {% if law.is_public %}<a href="/loi/{{ law.slug }}/export.csv">Export</a>{% endif %}
         {# Archiving, not deleting, and via a page the server renders: this used
            to destroy every vote on one click that JavaScript had to intercept. #}
         <a class="link-danger" href="/admin/lois/{{ law.id }}/archiver">Archiver…</a>

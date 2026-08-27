@@ -237,12 +237,34 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
   width: 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-}
+/* Who wrote the presentation, and what that is worth (charter: state the limits).
+   A `<details>`: three paragraphs between the arguments and the ballot is a lot
+   of page for something read once, so the explanation folds away — but the
+   summary line keeps the admission itself, so nothing about the limitation is
+   behind a click. Native, so it opens with JavaScript off. */
+.provenance { border-left: 3px solid #c9d6f0; background: #fafbfe; border-radius: var(--radius);
+  padding: 0.7rem 1rem; margin: 1.5rem 0; font-size: 0.92rem; color: var(--muted); }
+
+/* The whole line is the target, chevron included. `list-style: none` removes the
+   default triangle in Firefox and modern Chrome; the ::-webkit- rule covers the
+   older WebKit that ignores it. */
+.provenance > summary { cursor: pointer; list-style: none; position: relative;
+  padding-right: 1.5rem; color: var(--ink); font-weight: 600; }
+.provenance > summary::-webkit-details-marker { display: none; }
+
+/* Drawn from two borders rather than set as a character: `⌄` is missing from
+   enough font stacks to render as a blank or a tofu box, and this is the only
+   thing telling the reader there is anything to open. */
+.provenance > summary::after { content: ""; position: absolute; right: 0.25rem;
+  top: 0.35em; width: 0.45em; height: 0.45em; border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor; transform: rotate(45deg);
+  transition: transform 0.15s ease; }
+.provenance[open] > summary::after { transform: rotate(-135deg); top: 0.55em; }
+.provenance > p { margin: 0.75rem 0 0; }
+.provenance .wish { color: var(--ink); }
+
+/* Sits under the form buttons and explains what the second one does. */
+.form-hint { margin-top: 0.5rem; }
 
 /* Public record of edits made to a law after publication (charter: transparency). */
 .revised-note { background: #eef2fb; border: 1px solid #c9d6f0; border-radius: var(--radius);
@@ -250,6 +272,24 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
 .revision-value { max-width: 22rem; font-size: 0.85rem; color: var(--muted);
   overflow-wrap: anywhere; }
 table.revisions td { vertical-align: top; }
+
+/* The argument editor. Replaces two JSON textareas that asked an administrator
+   to be a programmer: one missing bracket and the whole block was unreadable. */
+.arguments-editor { border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.75rem 1rem 1rem; margin: 1.25rem 0; }
+.arguments-editor legend { font-weight: 600; padding: 0 0.4rem; }
+.argument-row { border-left: 3px solid var(--line); padding: 0.6rem 0 0.6rem 0.85rem;
+  margin-bottom: 0.85rem; position: relative; }
+.argument-row:last-child { margin-bottom: 0.5rem; }
+.argument-row label { display: block; font-size: 0.85rem; color: var(--muted);
+  margin-bottom: 0.4rem; }
+.argument-row textarea, .argument-row input { width: 100%; }
+/* Author and source side by side on a wide screen, stacked on a phone. */
+.argument-meta { display: flex; flex-wrap: wrap; gap: 0 1rem; }
+.argument-meta label { flex: 1 1 14rem; }
+.remove-argument { background: none; border: 0; padding: 0.1rem 0; cursor: pointer;
+  font-size: 0.82rem; text-decoration: underline; }
+.add-argument { font-size: 0.9rem; }
 
 /* Archiving and purging: the two-step replacement for one-click deletion. */
 .danger-zone { border: 1px solid #f0c9c9; background: #fdf5f5; border-radius: var(--radius);

@@ -294,7 +294,9 @@ def test_a_javascript_argument_source_is_refused_too(client, db_session):
         data={
             "title": "Loi piégée 2",
             "published": "1",
-            "arguments_for": '[{"text":"t","author":"a","source":"javascript:alert(1)"}]',
+            "arguments_for_text": "t",
+            "arguments_for_author": "a",
+            "arguments_for_source": "javascript:alert(1)",
         },
         follow_redirects=False,
     )
@@ -328,7 +330,9 @@ def test_ordinary_links_are_kept(client, db_session):
             "title": "Loi normale",
             "published": "1",
             "legifrance_url": "https://www.legifrance.gouv.fr/eli/loi/2026/1/1",
-            "arguments_for": '[{"text":"t","author":"a","source":"https://an.fr/cr"}]',
+            "arguments_for_text": "t",
+            "arguments_for_author": "a",
+            "arguments_for_source": "https://an.fr/cr",
         },
         follow_redirects=False,
     )

@@ -7,6 +7,7 @@ tables a screen reader can navigate.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from markupsafe import escape
@@ -185,3 +186,87 @@ def test_the_dashboard_shows_the_hour_the_administrator_typed(client, db_session
     body = client.get("/admin", headers=admin_headers()).text
     assert "30/06/2027 à 20:00" in body
     assert "30/06/2027 à 18:00" not in body
+
+
+# --- Saying who wrote the presentation (charter: state the limits) ------------
+
+
+def _flat(html: str) -> str:
+    """The page with its whitespace collapsed.
+
+    These are assertions about prose, and prose in a template is wrapped to fit
+    the file. Comparing against the raw HTML made every re-wrap a test failure
+    about nothing — the sentence is the same sentence whether or not a newline
+    fell in the middle of it.
+    """
+    return re.sub(r"\s+", " ", html)
+
+
+def test_the_law_page_says_how_its_presentation_was_written(client, open_law):
+    """The charter asks for the platform's limits to be permanent and prominent.
+
+    The banner on every page covers who *votes* here. This covers who *wrote* the
+    text being voted on — drafted with AI help from the official text, validated
+    by one volunteer who is not a jurist. A reader deciding a vote on that basis
+    is entitled to know it without going looking.
+    """
+    page = _flat(client.get(f"/loi/{open_law.slug}").text)
+
+    assert "Qui a écrit cette présentation" in page
+    assert escape("ni juriste, ni spécialiste du sujet") in page
+    assert escape("(assistée par IA)") in page
+    assert escape("référer aux textes officiels mis en lien") in page
+    assert escape("cités mot pour mot") in page, "the arguments are quoted, not written"
+    assert escape("député") in page, "the ambition is stated, not just the limitation"
+
+
+def test_the_note_is_a_collapsed_disclosure_asking_the_question(client, open_law):
+    """Folded away to save the page, behind the question it answers.
+
+    The summary deliberately does *not* summarise the answer. « une IA, relue par
+    une personne bénévole » was tried and removed: it reads as though the whole
+    page were machine-written, when the arguments are quotations selected from
+    real speeches and checked against them. A compressed answer that misdescribes
+    the thing is worse than a question the reader has to open.
+    """
+    page = _flat(client.get(f"/loi/{open_law.slug}").text)
+
+    assert "<details class=\"provenance\">" in page, "not a native disclosure"
+    assert "<details class=\"provenance\" open" not in page, "it should start closed"
+
+    summary = page.split("<summary>")[1].split("</summary>")[0].strip()
+    assert summary == escape("Qui a écrit cette présentation ?"), (
+        f"the visible line must be the question alone, got {summary!r}"
+    )
+
+
+def test_the_note_needs_no_javascript(client, open_law):
+    """`<details>` is HTML, not a script: it opens with scripting switched off.
+
+    The public pages are built for that, and this one is load-bearing — a
+    limitation nobody can unfold is a limitation nobody was told.
+    """
+    page = client.get(f"/loi/{open_law.slug}").text
+    assert "<details" in page
+    assert "provenance" not in page.split("<body")[0], "no script drives it"
+
+
+def test_the_note_sits_before_the_ballot(client, open_law):
+    """It is the last thing read before voting, not a footnote after it."""
+    page = _flat(client.get(f"/loi/{open_law.slug}").text)
+    assert page.index("Qui a écrit cette présentation") < page.index("<h2>Voter</h2>")
+
+
+def test_an_error_can_be_reported_when_a_contact_is_configured(client, open_law, monkeypatch):
+    """A page that admits it may be wrong has to say where to say so."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "legal_contact_email", "contact@exemple.fr", raising=False)
+    assert "mailto:contact@exemple.fr" in client.get(f"/loi/{open_law.slug}").text
+
+
+def test_no_contact_no_broken_offer(client, open_law, monkeypatch):
+    """Left unset, the offer disappears rather than pointing at nothing."""
+    monkeypatch.setattr(get_settings(), "legal_contact_email", "", raising=False)
+    page = _flat(client.get(f"/loi/{open_law.slug}").text)
+    assert "mailto:" not in page
+    assert "Qui a écrit cette présentation" in page, "the note itself must remain"

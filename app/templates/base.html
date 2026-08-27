@@ -43,7 +43,15 @@
     <div class="container">
       <strong>Aperçu</strong>
       <span>Cette page n'est pas publiée : personne d'autre ne peut la voir, et le vote est désactivé.</span>
+      {# A law previewed straight from the form has no id yet — it is not saved,
+         which is the whole point of that preview. Linking back regardless emitted
+         `/admin/lois/None`, a 404 on the one page whose job is to reassure. The
+         form it came from is a tab away in that case. #}
+      {% if law.id %}
       <a href="/admin/lois/{{ law.id }}">← Retour à l'édition</a>
+      {% else %}
+      <span>Fermez cet onglet pour revenir au formulaire.</span>
+      {% endif %}
     </div>
   </div>
   {% endif %}

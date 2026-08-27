@@ -11,9 +11,9 @@ from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import as_utc, get_db, utcnow
-from app.models import STATUS_IMPORTED
+from app.models import STATUS_IMPORTED, Law
 from app.routes.admin.context import cached_draft, law_form_context
-from app.routes.admin.forms import LawForm, law_form
+from app.routes.admin.forms import LawForm, law_form, preview_form
 from app.routes.admin.guard import require_admin
 from app.routes.public.laws import law_page_context
 from app.templating import templates
@@ -128,6 +128,76 @@ def edit_law_form(
     )
 
 
+def _preview(request: Request, db: Session, law: Law) -> HTMLResponse:
+    """Render one law through the real public template, saving nothing.
+
+    The public page's own context builder, not a copy of it: a copy drifts, and a
+    preview that has drifted from the page is worse than no preview.
+
+    The ballot is shown in the state the voting window implies, with its submit
+    button disabled: nothing here can accept a vote, and the vote route would
+    refuse one anyway while the law is not public.
+    """
+    return templates.TemplateResponse(
+        request,
+        "law.html",
+        law_page_context(db, law, status=law.scheduled_status(), preview=True),
+    )
+
+
+@router.get("/lois/{law_id}/apercu", response_class=HTMLResponse)
+def preview_law(
+    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+):
+    """The stored law, as the public page will show it once published.
+
+    A plain link, so it can be bookmarked and so the administration's own listing
+    has somewhere to point a draft at — a draft's public URL is a 404 by design,
+    which used to make its title in the dashboard a dead link.
+    """
+    law = laws_crud.get_by_id(db, law_id)
+    if law is None:
+        raise HTTPException(404)
+    return _preview(request, db, law)
+
+
+@router.post("/lois/apercu", response_class=HTMLResponse)
+def preview_edits(
+    request: Request,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+    form: LawForm = Depends(preview_form),
+    law_id: int | None = Form(None),
+):
+    """The page as the form currently reads, **without saving anything**.
+
+    The preview above can only show what is already stored, so seeing your own
+    work meant saving it first — and for a law that does not exist yet, creating
+    it. That is the wrong order: the reason to look at the public page is to
+    decide whether the text is good enough to keep, and the answer arrived after
+    the text had been kept.
+
+    So this one takes the posted form and renders it. The ``Law`` it builds is
+    never added to the session and never committed; it exists for the length of
+    one render. ``law_id`` identifies the row being edited, which is what lets an
+    existing law keep its real tally, its real history and its real URL while the
+    prose on the page is the unsaved prose in the textarea.
+    """
+    law = Law(**form.columns())
+    stored = laws_crud.get_by_id(db, law_id) if law_id else None
+    if stored is not None:
+        # Borrow the identity of the row being edited, and nothing else: the
+        # counts and the history on the page below are read by this id.
+        law.id = stored.id
+        law.slug = stored.slug
+        law.created_at = stored.created_at
+    else:
+        # A law that does not exist yet still has a URL to show — the one it will
+        # get on save. Derived, not reserved: nothing is written here.
+        law.slug = laws_crud.slugify(form.title)
+    return _preview(request, db, law)
+
+
 @router.post("/lois")
 def create_law(
     _: str = Depends(require_admin),
@@ -155,33 +225,6 @@ def update_law(
         raise HTTPException(404)
     laws_crud.update(db, law, **form.columns())
     return RedirectResponse("/admin", status_code=303)
-
-
-@router.get("/lois/{law_id}/apercu", response_class=HTMLResponse)
-def preview_law(
-    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
-):
-    """The public page of a law, as it will look once published.
-
-    Renders the real public template rather than an approximation, because the
-    whole point is to catch what the real one does — a summary that reads badly
-    in paragraphs, an argument block left empty, a title that wraps awkwardly.
-    Publishing to see your own work was the only way to check it before this.
-
-    The ballot is shown in the state the voting window implies, with its submit
-    button disabled: nothing here can accept a vote, and the vote route would
-    refuse one anyway since the law is not public.
-    """
-    law = laws_crud.get_by_id(db, law_id)
-    if law is None:
-        raise HTTPException(404)
-    return templates.TemplateResponse(
-        request,
-        "law.html",
-        # The public page's own context builder, not a copy of it: a copy drifts,
-        # and a preview that has drifted from the page is worse than no preview.
-        law_page_context(db, law, status=law.scheduled_status(), preview=True),
-    )
 
 
 @router.get("/lois/{law_id}/archiver", response_class=HTMLResponse)

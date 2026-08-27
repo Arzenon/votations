@@ -67,6 +67,52 @@
     </section>
   </div>
 
+  {# The charter asks that the platform's limitations be stated permanently and
+     prominently. The banner at the top of every page states the one about who
+     votes here; this is the one that had no home — who wrote the text you are
+     about to vote on, and how much that is worth. It sits after the presentation
+     and before the ballot on purpose: it is the last thing read before voting.
+
+     Collapsed, because three paragraphs between the arguments and the ballot is
+     a lot of page for something most readers will read once. `<details>` and not
+     JavaScript: it opens with scripting off, it is a real button to a screen
+     reader, and it is findable by the browser's own search.
+
+     The summary is the question and nothing else. A one-line summary of the
+     answer was tried and removed: « une IA, relue par une personne bénévole »
+     reads as though the whole page were machine-written, when the arguments are
+     quotations selected from real speeches and checked against them. Compressing
+     the answer misdescribed it, which is a worse failure here than asking the
+     reader for a click — and the question is plain enough that anyone wondering
+     who wrote this will open it. #}
+  <details class="provenance">
+    <summary>Qui a écrit cette présentation ?</summary>
+    <p>
+      Les deux premiers blocs résument le texte officiel avec l'aide d'une
+      intelligence artificielle, puis sont relus et validés par une personne
+      bénévole qui <strong>n'est ni juriste, ni spécialiste du sujet</strong>.
+      Ils peuvent donc contenir des erreurs, des
+      approximations ou des oublis, et rien ne les rattrape aujourd'hui. En cas
+      de doute, c'est le texte officiel qui fait foi : si vous le pouvez,
+      n'hésitez pas à vous référer aux textes officiels mis en lien sur cette
+      page.
+      {% if contact_email %}
+      <a href="mailto:{{ contact_email }}">Signaler une erreur</a>.
+      {% endif %}
+    </p>
+    <p>
+      Les arguments, eux, ne sont rédigés par personne ici : ce sont des passages
+      <strong>cités mot pour mot</strong> des comptes rendus des séances
+      publiques, avec le nom de leur auteur et un lien vers le compte rendu.
+    </p>
+    <p class="wish">
+      <strong>Ce travail devrait être celui de nos député·e·s.</strong> Exposer
+      une loi de façon neutre et compréhensible à celles et ceux qu'elle engage
+      fait partie du mandat. En attendant, cette plateforme s'en charge du mieux
+      qu'elle peut (assistée par IA).
+    </p>
+  </details>
+
   <section class="block vote-block">
     <h2>Voter</h2>
     {% if status == "open" %}
@@ -77,13 +123,18 @@
     {% endif %}
   </section>
 
-  {% if revision_count %}
+  {# Both links point at the results page, which a preview has no business
+     reaching: on a law that is not saved yet there is nothing behind the URL, and
+     on one that is, following it would quietly leave the preview. #}
+  {% if revision_count and not preview %}
   <p class="revised-note">
     Ce texte de présentation a été modifié {{ revision_count }} fois depuis sa
     publication. <a href="/loi/{{ law.slug }}/resultats#historique">Voir l'historique des modifications</a>.
   </p>
   {% endif %}
 
+  {% if not preview %}
   <p><a href="/loi/{{ law.slug }}/resultats">Voir les résultats détaillés et télécharger les données</a></p>
+  {% endif %}
 </article>
 {% endblock %}

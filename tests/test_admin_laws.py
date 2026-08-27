@@ -304,3 +304,126 @@ def test_the_admin_form_says_it_is_showing_only_the_recent_ones(client, db_sessi
     total = db_session.query(LawRevision).filter_by(law_id=law.id).count()
     body = client.get(f"/admin/lois/{law.id}", headers=admin_headers()).text
     assert f"sur {total}" in body
+
+
+# --- Previewing what is typed, not what is stored -----------------------------
+
+
+def test_the_preview_renders_unsaved_text_and_saves_nothing(client, db_session):
+    """Checking your own work used to require saving it first — and on a new law,
+    creating it. The answer arrived after the text had been kept."""
+    before = db_session.query(Law).count()
+
+    r = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={
+            "title": "Titre jamais enregistré",
+            "summary_text": "Paragraphe present uniquement dans le formulaire.",
+        },
+    )
+
+    assert r.status_code == 200
+    assert "Titre jamais enregistré" in r.text
+    assert "Paragraphe present uniquement dans le formulaire." in r.text
+    assert db_session.query(Law).count() == before, "the preview created a law"
+
+
+def test_the_preview_route_is_not_swallowed_by_the_update_route(client, db_session):
+    """`POST /lois/apercu` and `POST /lois/{law_id}` share a shape.
+
+    Registered the other way round, "apercu" is read as a law id and FastAPI
+    answers 422 before the preview is ever reached. This is the whole of that
+    regression, and it is invisible until someone clicks the button.
+    """
+    r = client.post(
+        "/admin/lois/apercu", headers=admin_headers(), data={"title": "T", "summary_text": "x"}
+    )
+    assert r.status_code == 200, "the literal route must be registered first"
+
+
+def test_previewing_an_existing_law_keeps_its_identity(client, db_session):
+    """The prose is the unsaved prose; the tally, the history and the URL are real."""
+    law = make_law(db_session, slug="loi-apercu", title="Titre enregistré")
+
+    r = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={"law_id": law.id, "title": "Titre en cours de frappe", "summary_text": "x"},
+    )
+
+    assert "Titre en cours de frappe" in r.text
+    assert f"/admin/lois/{law.id}" in r.text, "the way back to the form is lost"
+    db_session.expire_all()
+    assert db_session.get(Law, law.id).title == "Titre enregistré", "the preview wrote to the row"
+
+
+def test_a_preview_of_an_unsaved_law_offers_no_dead_link(client, db_session):
+    """It has no id, so every /admin/lois/<id> built from it was `/admin/lois/None`."""
+    r = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={"title": "Sans id", "summary_text": "x"},
+    )
+    assert "/admin/lois/None" not in r.text
+    assert "/resultats" not in r.text, "a results page that does not exist yet"
+
+
+def test_the_preview_never_refuses_a_half_typed_form(client, db_session):
+    """You preview precisely to find out what is still wrong; refusing is useless."""
+    r = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={
+            "title": "",  # the save route refuses this outright
+            "arguments_for": "[{bracket manquante",
+            "opens_at": "pas une date",
+        },
+    )
+    assert r.status_code == 200
+
+
+def test_the_preview_reads_the_dates_so_the_ballot_is_right(client, db_session):
+    """The window decides whether the page shows a ballot or a closed notice."""
+    closed = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={"title": "T", "summary_text": "x", "closes_at": "2020-01-01T09:00"},
+    )
+    assert "status-closed" in closed.text
+    assert "Votre vote" not in closed.text, "a closed votation shows results, not a ballot"
+
+    open_ = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={"title": "T", "summary_text": "x", "closes_at": "2099-01-01T09:00"},
+    )
+    assert "status-open" in open_.text
+    assert "Votre vote" in open_.text
+
+
+def test_the_preview_requires_the_admin_guard(client, db_session):
+    r = client.post("/admin/lois/apercu", data={"title": "T"})
+    assert r.status_code == 401
+
+
+def test_a_draft_is_linked_to_its_preview_not_to_a_404(client, db_session):
+    """`/loi/<slug>` answers 404 for anything unpublished, by design.
+
+    Linking every title there made the title of every draft in the dashboard a
+    dead link — which is how you find out, by clicking it.
+    """
+    draft = make_law(db_session, slug="loi-brouillon", title="Loi en brouillon", published=False)
+
+    dashboard = client.get("/admin", headers=admin_headers())
+    assert f'href="/admin/lois/{draft.id}/apercu"' in dashboard.text
+    assert f'href="/loi/{draft.slug}"' not in dashboard.text
+    assert client.get(f"/loi/{draft.slug}").status_code == 404, "still private, as intended"
+    assert client.get(f"/admin/lois/{draft.id}/apercu", headers=admin_headers()).status_code == 200
+
+
+def test_a_published_law_still_links_to_its_public_page(client, db_session):
+    law = make_law(db_session, slug="loi-publiee", title="Loi publiée")
+    dashboard = client.get("/admin", headers=admin_headers())
+    assert f'href="/loi/{law.slug}"' in dashboard.text
+    assert f"/loi/{law.slug}/export.csv" in dashboard.text
