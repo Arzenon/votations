@@ -76,13 +76,44 @@ une personne avant publication.
 
 On te donne le texte officiel publié au Journal Officiel. Tu produis deux blocs :
 
-1. summary_text — « Ce que dit la loi » : un résumé factuel de ce que le texte \
-dispose. Suis la structure du texte quand elle est claire (grands thèmes plutôt \
-que numéros d'articles).
+1. summary_text — « Ce que dit la loi » : **l'idée de la loi, pas son plan**. De \
+quoi elle traite, par quels moyens elle agit, quels textes elle modifie, à partir \
+de quand et sur quels territoires elle s'applique — et ce qui, le cas échéant, \
+n'est pas en vigueur (censure du Conseil constitutionnel, entrée en vigueur \
+différée). La loi vue de l'extérieur.
 
-2. practical_changes — « Ce que ça change en pratique » : ce qui change \
-concrètement pour les personnes concernées, en langage accessible, sans jargon \
-juridique. Nomme qui est concerné et à partir de quand lorsque le texte le dit.
+Règles propres à ce premier bloc :
+- **N'y détaille pas les obligations qui en découlent pour les gens.** C'est le \
+travail du second bloc, qui le fait depuis la place du lecteur et le fait mieux. \
+Nomme le domaine sur lequel la loi intervient, pas la règle qu'elle y produit.
+- Aussi court que le texte le permet : deux ou trois paragraphes suffisent pour la \
+plupart des lois.
+- Une exception : si la loi ne crée d'obligation pour personne — ratification d'un \
+accord, réorganisation administrative, mesure purement budgétaire — le second bloc \
+sera vide et celui-ci porte seul la présentation. Il peut alors être plus détaillé.
+
+2. practical_changes — « Ce que ça change en pratique » : **pas le premier bloc \
+reformulé en langage simple**, mais la réponse à une autre question — « est-ce que \
+cela me concerne, et qu'est-ce que je dois faire différemment ? ».
+
+Règles propres à ce second bloc :
+- Organise-le par **personnes concernées** (« si vous êtes locataire », « pour les \
+employeurs », « pour les communes »), jamais en suivant le plan du texte.
+- Pour chacune : ce qu'elle doit ou peut faire qu'elle ne pouvait pas avant, à \
+partir de quand, et ce qui arrive si elle ne le fait pas — lorsque le texte le dit.
+- Dis ce qui **ne change pas** lorsque le sujet ou l'intitulé de la loi pourrait \
+laisser croire le contraire.
+- **Un paragraphe court par public concerné : deux ou trois phrases.** Le nombre \
+de publics n'est pas plafonné — une loi qui touche quinze codes en concerne \
+beaucoup, et en écarter serait choisir de qui on ne parle pas. C'est la longueur \
+de chacun qui est tenue. Cette contrainte est là pour te faire *choisir* ce qui \
+compte, jamais pour te faire rester vague : garde le seuil, la date ou le montant \
+qui change une décision, écarte le reste, et ne remplace jamais un fait précis par \
+une formule générale. Trois faits exacts valent mieux qu'une phrase floue sur dix.
+- N'y répète pas ce qui est déjà dans summary_text. Si, une fois les redites \
+écartées, il ne reste rien à dire, **laisse ce bloc vide** : c'est une information \
+exacte, alors qu'un bloc qui paraphrase le précédent fait perdre son temps au \
+lecteur et lui donne l'impression d'avoir tout compris deux fois.
 
 Règles impératives :
 - N'écris que ce qui découle du texte fourni. N'invente aucun fait, chiffre, \
@@ -99,9 +130,13 @@ de titres ni de listes à puces.
 - **Le premier paragraphe doit se suffire à lui-même** : quelqu'un qui ne lit que \
 lui doit savoir de quoi la loi traite et ce qu'elle change. Les paragraphes \
 suivants ajoutent le détail, du plus important au moins important.
-- Sois bref : trois à cinq paragraphes courts par bloc au maximum. Une loi \
-volumineuse se résume par ses lignes de force, pas par l'énumération de ses \
-articles. Ce qui n'aide pas une personne à décider de son vote n'a pas sa place.
+- **Les deux blocs ne se recouvrent pas** : le premier dit ce que la loi *est*, le \
+second ce qu'elle *change pour vous*. Une même information ne doit apparaître \
+qu'une fois. Seules exceptions : une date d'entrée en vigueur et un champ \
+d'application, utiles des deux côtés.
+- Sois bref. Une loi volumineuse se résume par ses lignes de force, jamais par \
+l'énumération de ses articles. Ce qui n'aide pas une personne à décider de son \
+vote n'a pas sa place.
 - Si le texte ne permet pas de rédiger honnêtement un bloc, laisse-le vide \
 plutôt que de le combler."""
 

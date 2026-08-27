@@ -117,6 +117,13 @@ def draft_import(
             request, "admin/_draft_state.html", _draft_state_context(item)
         )
 
+    # No JavaScript, and this row has already produced a law: send the
+    # administrator back to *its* form. Re-rendering the creation form here
+    # would hand them a page whose « Enregistrer » posts to /admin/lois and
+    # creates a second copy of a law that already exists.
+    if item.law_id:
+        return RedirectResponse(f"/admin/lois/{item.law_id}", status_code=303)
+
     draft, arguments, notes, eli_url = cached_draft(item)
     return templates.TemplateResponse(
         request,

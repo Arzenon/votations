@@ -112,11 +112,26 @@ def new_law_form(
 
 @router.get("/lois/{law_id}", response_class=HTMLResponse)
 def edit_law_form(
-    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+    request: Request,
+    law_id: int,
+    # Show the cached AI draft in the four written fields instead of what is
+    # stored. Nothing is written by asking: the draft is loaded into the form and
+    # saved only if « Enregistrer » is pressed afterwards.
+    brouillon: int = 0,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
+
+    # The staged row this law came from, when it came from one. Without it the
+    # whole AI drafting feature lived on the *creation* form only and vanished
+    # the moment the law was saved — « Régénérer » included, so a presentation
+    # could never be redrafted once it existed.
+    prefill = imports_crud.get_by_law_id(db, law.id)
+    draft, arguments, notes, _eli = cached_draft(prefill) if brouillon else (None, None, [], "")
+
     # The most recent page only. The full history, paginated, is the public one on
     # the results page — which is where a reader checks it, and where it belongs.
     # Not `_` for the page count: that name is already the admin guard's parameter.
@@ -124,7 +139,15 @@ def edit_law_form(
     return templates.TemplateResponse(
         request,
         "admin/law_form.html",
-        law_form_context(law=law, revisions=recent, revision_total=total),
+        law_form_context(
+            law=law,
+            prefill=prefill,
+            draft=draft,
+            arguments=arguments,
+            notes=notes,
+            revisions=recent,
+            revision_total=total,
+        ),
     )
 
 
@@ -205,11 +228,31 @@ def create_law(
     form: LawForm = Depends(law_form),
     import_id: int | None = Form(None),
 ):
+    item = imports_crud.get_by_id(db, import_id) if import_id else None
+
+    # One dossier, one votation. Creating a second from the same staged row does
+    # not just duplicate the law — `set_status` below would re-point the import
+    # at the new one, so the original quietly loses the link to its own draft and
+    # nothing on either page says a twin exists.
+    #
+    # This is a guard, not the fix: the way to reach it was a banner pointing at
+    # the creation form from a page where a law already existed. But the link was
+    # only the way in, and a route that silently re-parents a votation should
+    # refuse on its own.
+    if item is not None and item.law_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Ce dossier a déjà produit une votation (n° {item.law_id}). "
+                "Modifiez-la plutôt que d'en créer une seconde : une seule "
+                "votation par dossier, sinon les votes se répartissent entre deux "
+                "pages qui portent le même texte."
+            ),
+        )
+
     law = laws_crud.create(db, **form.columns())
-    if import_id:
-        item = imports_crud.get_by_id(db, import_id)
-        if item is not None:
-            imports_crud.set_status(db, item, status=STATUS_IMPORTED, law_id=law.id)
+    if item is not None:
+        imports_crud.set_status(db, item, status=STATUS_IMPORTED, law_id=law.id)
     return RedirectResponse("/admin", status_code=303)
 
 

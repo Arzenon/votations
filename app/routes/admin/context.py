@@ -45,6 +45,17 @@ def form_values(
             "closes_at": dt_local(law.closes_at),
             "published": law.published,
         }
+        # Editing a law and explicitly asking to see the draft: the four written
+        # blocks come from the draft, everything else stays the law's own. The
+        # draft has nothing to say about a title, a voting window or a
+        # publication flag, and overwriting those with blanks would turn "show me
+        # the draft" into "lose my schedule".
+        if draft is not None:
+            base["summary_text"] = draft.summary_text
+            base["practical_changes"] = draft.practical_changes
+        if arguments is not None:
+            base["arguments_for"] = arguments.pour
+            base["arguments_against"] = arguments.contre
     else:
         base = {
             "title": prefill.title if prefill else "",
@@ -111,6 +122,9 @@ def law_form_context(
         "argument_notes": list(notes or []),
         "reserves": arguments.reserves if arguments else [],
         "has_draft": bool(prefill and prefill.draft),
+        # True when the fields below are showing the draft rather than what is
+        # stored, so the page can say so — nothing is written until « Enregistrer ».
+        "draft_loaded": law is not None and draft is not None,
         "draft_status": prefill.draft_status if prefill else "",
         "draft_error": prefill.draft_error if prefill else "",
         "ai_enabled": bool(prefill) and bool(get_settings().anthropic_api_key),

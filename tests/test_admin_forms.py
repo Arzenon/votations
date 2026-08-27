@@ -138,7 +138,12 @@ def test_a_half_filled_argument_is_refused_not_silently_wiped(client, db_session
 
 
 def test_an_entirely_empty_argument_row_is_simply_skipped(client, db_session):
-    """The page always renders one spare row; submitting it must not be an error."""
+    """A row added and then left blank must be skipped, not refused.
+
+    The page no longer renders a spare row, but « Ajouter un argument » can leave
+    one behind: adding a row and thinking better of it is ordinary, and it must
+    not be the difference between saving and a 400.
+    """
     r = client.post(
         "/admin/lois",
         headers=admin_headers(),

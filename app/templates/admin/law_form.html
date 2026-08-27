@@ -43,7 +43,26 @@
       Régénérer
     </button>
   {% endif %}
+  {# Editing an existing law: the draft has to be poured into the form by hand,
+     because the fields already hold something worth not losing by accident. On
+     the creation form there is nothing to overwrite, so it is pre-filled and this
+     link would be noise. #}
+  {% if law and has_draft %}
+    <a class="button secondary" href="/admin/lois/{{ law.id }}?brouillon=1">
+      Charger le brouillon dans le formulaire
+    </a>
+  {% endif %}
 </div>
+{% endif %}
+
+{% if draft_loaded %}
+<p class="disclaimer" role="status">
+  <strong>Les blocs ci-dessous affichent le brouillon IA</strong>, pas le texte
+  enregistré. Le titre, les dates et la publication n'ont pas été touchés.
+  <strong>Rien n'est enregistré</strong> tant que vous n'avez pas cliqué sur
+  « Enregistrer » — pour renoncer, revenez à
+  <a href="/admin/lois/{{ law.id }}">la version enregistrée</a>.
+</p>
 {% endif %}
 
 {% if prefill %}
@@ -138,18 +157,16 @@
   <fieldset class="arguments-editor" data-arguments="{{ side }}">
     <legend>{{ legend }}</legend>
     <div class="argument-list">
-      {# Every stored argument, plus one blank row. The blank row is what makes
-         this usable with no JavaScript at all: the page still adds one argument
-         per save. With JavaScript, « Ajouter un argument » adds as many as you
-         like — see static/admin.js. #}
+      {# The stored arguments and nothing else. There used to be a blank row at
+         the end, so the form could still add one argument with JavaScript off —
+         but « Ajouter un argument » below does that job, and a permanent empty
+         row on a side that is complete reads as an unfinished entry rather than
+         as an offer. #}
       {% for arg in values['arguments_' + side] %}
         {% with text = arg.text, author = arg.author, source = arg.source %}
           {% include "admin/_argument_row.html" %}
         {% endwith %}
       {% endfor %}
-      {% with text = '', author = '', source = '' %}
-        {% include "admin/_argument_row.html" %}
-      {% endwith %}
     </div>
     <button type="button" class="secondary add-argument" data-add="{{ side }}">
       + Ajouter un argument

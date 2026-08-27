@@ -16,9 +16,12 @@ from app.models import (
     DRAFT_IDLE,
     DRAFT_PENDING,
     DRAFT_READY,
+    STATUS_IMPORTED,
     ImportedLaw,
+    Law,
 )
 from tests.conftest import drain_drafts
+from tests.helpers import make_law
 
 
 def _basic(user: str, pw: str) -> dict:
@@ -91,6 +94,67 @@ def test_prompt_forbids_invention_and_position_taking():
     assert "Aucune prise de position" in system
     # Arguments are out of scope: the JO carries no attributable positions.
     assert "arguments" not in system.lower()
+
+
+def test_the_second_block_is_asked_for_something_the_first_cannot_say():
+    """« Ce que ça change » must not be « Ce que dit la loi » in plainer French.
+
+    The first version of this prompt asked only for a change of *register* —
+    « en langage accessible, sans jargon juridique » — and got what it asked
+    for: on a real draft, every one of the six facts in the second block was
+    already in the first. The reader paid twice for one payload, on the page
+    that also carries the arguments and the ballot.
+
+    So the prompt now asks the second block a different question, and says what
+    to do when the honest answer is nothing.
+    """
+    system = ai.SYSTEM_PROMPT
+    assert "pas le premier bloc" in system, "the restatement must be forbidden outright"
+    assert "N'y répète pas ce qui est déjà dans summary_text" in system
+    assert "laisse ce bloc vide" in system, "an empty block must be an allowed answer"
+    # Framed by who is affected, rather than by the shape of the text.
+    assert "personnes concernées" in system
+    assert "ne change pas" in system, "what stays the same is information too"
+
+
+def test_the_two_blocks_are_told_to_divide_the_work_both_ways():
+    """The no-repeat rule has to run in both directions, or it only moves the problem.
+
+    Telling the second block not to restate the first left the first free to walk
+    through the obligations the second was now covering — from the reader's side,
+    and better. On a real draft, two of the first block's four paragraphs were
+    what the second block already said.
+
+    So the first block is asked for the law seen from outside — subject,
+    mechanism, texts modified, scope, what is not in force — and told to leave the
+    resulting duties alone.
+    """
+    system = ai.SYSTEM_PROMPT
+    assert "l'idée de la loi, pas son plan" in system
+    assert "N'y détaille pas les obligations" in system, "block 1 must defer the duties"
+    assert "Les deux blocs ne se recouvrent pas" in system
+    # But a law that binds nobody still has to be presentable in one block.
+    assert "sera vide" in system
+
+
+def test_the_second_block_is_held_short_per_audience_not_capped_in_audiences():
+    """The brake belongs on each paragraph, not on how many people are named.
+
+    Given a division of labour and no length rule, the second block grew to 21
+    paragraphs and 3.7× the first — a law amending fifteen codes really does
+    concern that many people. Capping the *number* would mean choosing whose
+    situation goes unmentioned, which is the one editorial act this platform
+    exists not to make. So the length is held per audience.
+
+    And the constraint has to say what it is for. A model told only "be shorter"
+    hedges everything into vagueness; this one is told to drop what matters least
+    and keep the rest exact, because the reader who is affected needs the
+    threshold and the date, not a gentler sentence.
+    """
+    system = ai.SYSTEM_PROMPT
+    assert "Un paragraphe court par public concerné" in system
+    assert "n'est pas plafonné" in system, "the number of audiences must stay free"
+    assert "jamais pour te faire rester vague" in system, "shorter must not mean blurrier"
 
 
 def test_measures_before_sending_and_refuses_outsized_text():
@@ -395,13 +459,13 @@ def test_reserves_are_shown_apart_and_never_prefilled(
     assert "Réserves exprimées" in r.text
     assert str(escape(reserve["text"])) in r.text
     assert "Hendrik Davi" in r.text
-    # Shown for information — never written into the opposition block. The block
-    # is now a list of rows rather than a JSON textarea, so what must be true is
-    # that no row of it carries the reserve.
-    rows = r.text.split('name="arguments_against_text"')[1:]
-    assert rows, "the opposition editor should still be rendered"
-    assert not any("manque les moyens" in row.split("</textarea>")[0] for row in rows)
-    assert all(row.split("</textarea>")[0].split(">", 1)[1].strip() == "" for row in rows), (
+    # Shown for information — never written into the opposition block. That block
+    # is a list of rows, and with nothing selected against the text it has none:
+    # what must be true is that the editor is there and the reserve is not in it.
+    editor = r.text.split('data-arguments="against"')[1].split("</fieldset>")[0]
+    assert "Ajouter un argument" in editor, "the opposition editor should be rendered"
+    assert "manque les moyens" not in editor
+    assert 'name="arguments_against_text"' not in editor, (
         "the opposition block must be left empty for the administrator to fill"
     )
 
@@ -609,3 +673,184 @@ def test_a_second_click_does_not_queue_a_second_job(
     drain_drafts()
 
     assert len(calls) == 1, f"the model was asked {len(calls)} times for one draft"
+
+
+# --- Drafting stays reachable once the law exists -----------------------------
+
+
+def _imported_law(db_session, uid="DLR5L17N910"):
+    """A law created from a staged import, linked as the create route links them."""
+    item = _stage(db_session, uid=uid)
+    imports_crud.save_draft(
+        db_session,
+        item,
+        draft={
+            "summary_text": "Résumé proposé par le modèle.",
+            "practical_changes": "Ce que cela change, selon le modèle.",
+            "arguments_for": [{"text": "Pour, cité.", "author": "Mme A", "source": ""}],
+            "arguments_against": [],
+            "reserves": [],
+            "notes": [],
+            "eli_url": "",
+        },
+    )
+    law = make_law(
+        db_session,
+        slug="loi-importee",
+        title="Titre enregistré",
+        summary_text="Texte enregistré.",
+        published=False,
+    )
+    imports_crud.set_status(db_session, item, status=STATUS_IMPORTED, law_id=law.id)
+    return item, law
+
+
+def test_the_edit_form_of_an_imported_law_still_offers_the_draft(client, db_session):
+    """It offered nothing at all: the AI actions were on the creation form only.
+
+    So a presentation could be drafted exactly once, before the law existed, and
+    never again — « Régénérer » included. The cached draft, already paid for,
+    became unreachable the moment the law was saved.
+    """
+    _item, law = _imported_law(db_session)
+    settings, previous = _with_key("sk-test")
+    try:
+        page = client.get(f"/admin/lois/{law.id}", headers=_admin_auth()).text
+    finally:
+        settings.anthropic_api_key = previous
+
+    assert "Régénérer" in page
+    assert "Charger le brouillon dans le formulaire" in page
+
+
+def test_a_law_that_came_from_nowhere_offers_no_draft(client, db_session):
+    """Only a law with a staged row behind it has anything to redraft from."""
+    law = make_law(db_session, slug="loi-manuelle", title="Saisie à la main")
+    settings, previous = _with_key("sk-test")
+    try:
+        page = client.get(f"/admin/lois/{law.id}", headers=_admin_auth()).text
+    finally:
+        settings.anthropic_api_key = previous
+    assert "Régénérer" not in page
+    assert "brouillon" not in page.lower()
+
+
+def test_loading_the_draft_fills_the_blocks_and_keeps_the_rest(client, db_session):
+    """The draft has nothing to say about a title or a voting window.
+
+    Overwriting those with its silence would turn "show me the draft" into "lose
+    my schedule".
+    """
+    _item, law = _imported_law(db_session)
+    page = client.get(f"/admin/lois/{law.id}?brouillon=1", headers=_admin_auth()).text
+
+    assert escape("Résumé proposé par le modèle.") in page, "the draft is not shown"
+    assert "Texte enregistré." not in page, "the stored text should be replaced in the field"
+    assert escape("Titre enregistré") in page, "the title must survive"
+    # And it is still the *edit* form: saving must not create a second law.
+    assert f'action="/admin/lois/{law.id}"' in page
+
+
+def test_loading_the_draft_writes_nothing(client, db_session):
+    """Looking is not saving; « Enregistrer » is."""
+    _item, law = _imported_law(db_session)
+    client.get(f"/admin/lois/{law.id}?brouillon=1", headers=_admin_auth())
+
+    db_session.expire_all()
+    stored = db_session.get(Law, law.id)
+    assert stored.summary_text == "Texte enregistré."
+    assert stored.title == "Titre enregistré"
+
+
+def test_the_edit_form_says_the_draft_is_not_saved_yet(client, db_session):
+    _item, law = _imported_law(db_session)
+    page = client.get(f"/admin/lois/{law.id}?brouillon=1", headers=_admin_auth()).text
+    # Not `escape()`: this is literal text in the template, which Jinja emits
+    # verbatim. Only `{{ ... }}` expressions are escaped on the way out.
+    assert "Rien n'est enregistré" in page
+
+
+def test_without_javascript_drafting_returns_to_the_law_it_belongs_to(
+    client, db_session, background_db, monkeypatch
+):
+    """The plain POST used to answer with the *creation* form for an existing law.
+
+    Its « Enregistrer » posts to /admin/lois, so following it made a second copy
+    of a law that already existed.
+    """
+    _patch_job(monkeypatch)
+    item, law = _imported_law(db_session)
+
+    r = client.post(
+        f"/admin/imports/{item.id}/brouillon",
+        headers=_admin_auth(),
+        data={"regenerer": "1"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/admin/lois/{law.id}"
+
+
+def test_the_ready_banner_points_at_the_law_when_there_is_one(client, db_session):
+    """« Le brouillon est prêt » must not send you to the *creation* form.
+
+    This banner was written for the creation flow and always linked there. Once
+    it started appearing on the edit form too, following it after « Régénérer »
+    gave you a blank creation form holding the new draft — and saving that made a
+    second copy of the law you were editing, while re-pointing the import at the
+    copy.
+    """
+    item, law = _imported_law(db_session)
+    banner = client.get(
+        f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()
+    ).text
+
+    assert f"/admin/lois/{law.id}?brouillon=1" in banner
+    assert "/admin/lois/nouvelle" not in banner, "the creation form is the wrong door here"
+
+
+def test_the_ready_banner_still_points_at_creation_before_a_law_exists(client, db_session):
+    item = _stage(db_session, uid="DLR5L17N911")
+    imports_crud.save_draft(db_session, item, draft={"summary_text": "x"})
+    banner = client.get(
+        f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()
+    ).text
+    assert f"/admin/lois/nouvelle?import_id={item.id}" in banner
+
+
+def test_one_dossier_cannot_produce_a_second_votation(client, db_session):
+    """The guard behind the link: the route must refuse on its own.
+
+    Creating a second law from a staged row that already has one does not merely
+    duplicate it — `set_status` re-points the import at the newcomer, so the
+    original silently loses the link to its own draft.
+    """
+    item, law = _imported_law(db_session)
+    before = db_session.query(Law).count()
+
+    r = client.post(
+        "/admin/lois",
+        headers=_admin_auth(),
+        data={"title": "Une seconde copie", "summary_text": "x", "import_id": item.id},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 409
+    assert db_session.query(Law).count() == before, "a duplicate was created anyway"
+    db_session.expire_all()
+    assert db_session.get(ImportedLaw, item.id).law_id == law.id, "the import was re-pointed"
+
+
+def test_a_dossier_without_a_law_still_creates_one(client, db_session):
+    """The guard must not block the ordinary path it was added to protect."""
+    item = _stage(db_session, uid="DLR5L17N912")
+    r = client.post(
+        "/admin/lois",
+        headers=_admin_auth(),
+        data={"title": "Première votation", "summary_text": "x", "import_id": item.id},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    db_session.expire_all()
+    created = db_session.query(Law).filter_by(title="Première votation").one()
+    assert db_session.get(ImportedLaw, item.id).law_id == created.id

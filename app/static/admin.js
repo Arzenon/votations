@@ -55,16 +55,10 @@
 
     var remove = event.target.closest(".remove-argument");
     if (remove) {
-      var doomed = remove.closest(".argument-row");
-      var container = doomed.parentNode;
-      doomed.remove();
-      /* Never leave a side with nothing to type in: an editor with no rows
-       * offers no way back except reloading the page. */
-      if (!container.querySelector(".argument-row")) {
-        container.appendChild(
-          newRow(container.closest(".arguments-editor").dataset.arguments)
-        );
-      }
+      /* Removing the last row leaves the side empty, and that is allowed: a law
+       * with no argument on one side is a fact the page is meant to be able to
+       * state. « Ajouter un argument » is always there to start again. */
+      remove.closest(".argument-row").remove();
     }
   });
 })();

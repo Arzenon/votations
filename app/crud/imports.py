@@ -192,6 +192,18 @@ def get_by_id(db: Session, item_id: int) -> ImportedLaw | None:
     return db.get(ImportedLaw, item_id)
 
 
+def get_by_law_id(db: Session, law_id: int) -> ImportedLaw | None:
+    """The staged row a law was created from, if it came from one.
+
+    The link is set once, when the law is created (see the admin's create
+    route), and is what lets the edit form still offer the AI draft. Without it
+    the whole drafting feature was reachable only from the creation form and
+    disappeared the moment the law was saved — including the cached draft that
+    had already been paid for.
+    """
+    return db.scalar(select(ImportedLaw).where(ImportedLaw.law_id == law_id))
+
+
 def set_status(
     db: Session, item: ImportedLaw, *, status: str, law_id: int | object | None = _KEEP
 ) -> ImportedLaw:

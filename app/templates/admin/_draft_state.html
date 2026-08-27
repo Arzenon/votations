@@ -28,7 +28,17 @@
   {% elif draft_status == 'pret' %}
   <p class="disclaimer" role="status">
     <strong>Le brouillon est prêt.</strong>
+    {# Where "open it" leads depends on whether this dossier has already produced
+       a law. This banner used to appear only on the creation form, so it always
+       pointed at the creation form — then it started being shown on the edit form
+       too, and kept pointing there. Following it after « Régénérer » gave you a
+       *blank* creation form holding the new draft, and saving it created a second
+       copy of the law you were editing. #}
+    {% if item.law_id %}
+    <a href="/admin/lois/{{ item.law_id }}?brouillon=1">Charger le brouillon dans le formulaire</a>
+    {% else %}
     <a href="/admin/lois/nouvelle?import_id={{ item.id }}">Ouvrir le formulaire pré-rempli</a>
+    {% endif %}
     — ce qui remplacera ce que vous avez saisi ici.
   </p>
   {% endif %}
