@@ -73,11 +73,10 @@ class _FakeClient:
         self.messages = _Messages()
 
 
-def _sel(pour=(), contre=(), reserves=()):
+def _sel(pour=(), contre=()):
     return ArgumentSelection(
         pour=[ArgumentPick(speech_id=i, quote=q) for i, q in pour],
         contre=[ArgumentPick(speech_id=i, quote=q) for i, q in contre],
-        reserves=[ArgumentPick(speech_id=i, quote=q) for i, q in reserves],
     )
 
 
@@ -165,58 +164,22 @@ def test_a_unanimous_law_yields_an_empty_side_with_a_note():
     assert any("déséquilibre" in n for n in out.notes)
 
 
-def test_a_supporters_misgiving_is_a_reserve_not_an_argument_against():
-    """The wrinkle on a consensual law: criticism exists, opposition does not."""
-    client = _FakeClient(
-        _sel(
-            pour=[("cr-1", QUOTE_FOR)],
-            reserves=[("cr-2", QUOTE_AGAINST)],
-        )
-    )
-    out = select_arguments(LAW, SPEECHES, client=client)
+def test_the_prompt_keeps_a_supporters_criticism_out_of_the_opposition_block():
+    """« Réserves » is gone from the page; the reason it existed is not.
 
-    assert out.contre == [], "a reservation must never be filed as opposition"
-    assert len(out.reserves) == 1
-    assert out.reserves[0]["text"] == QUOTE_AGAINST
-    # Attributed exactly like an argument, from our record.
-    assert out.reserves[0]["author"].startswith("M. Paul Vasseur")
-    assert out.reserves[0]["source"] == "https://an.fr/cr#2"
-
-    note = " ".join(out.notes)
-    assert "Aucune opposition au texte" in note
-    assert "jamais comme des arguments d'opposants" in note
-
-
-def test_reserves_are_verified_verbatim_like_everything_else():
-    client = _FakeClient(
-        _sel(
-            pour=[("cr-1", QUOTE_FOR)],
-            reserves=[("cr-2", "une réserve que personne n'a jamais formulée en séance")],
-        )
-    )
-    out = select_arguments(LAW, SPEECHES, client=client)
-    assert out.reserves == []
-    assert any("introuvable" in n for n in out.notes)
-
-
-def test_reserves_alone_are_enough_to_be_worth_showing():
-    client = _FakeClient(_sel(reserves=[("cr-2", QUOTE_AGAINST)]))
-    out = select_arguments(LAW, SPEECHES, client=client)
-    assert out.reserves and not out.pour and not out.contre
-
-
-def test_real_opposition_still_takes_precedence_in_the_note():
-    client = _FakeClient(
-        _sel(
-            pour=[("cr-1", QUOTE_FOR)],
-            contre=[("cr-2", QUOTE_AGAINST)],
-            reserves=[("cr-2", "Ce texte ne prévoit aucun financement nouveau pour les hôpitaux")],
-        )
-    )
-    out = select_arguments(LAW, SPEECHES, client=client)
-    assert out.is_symmetric
-    assert len(out.reserves) == 1
-    assert not any("Aucune opposition" in n for n in out.notes)
+    It was a third bucket, so a speaker saying « nous voterons ce texte, mais il
+    manque les moyens » had somewhere to go other than « contre ». With the
+    bucket removed the instruction has to become an exclusion, or that sentence
+    lands in the opposition block and makes its author say the opposite of how
+    they voted — on the one page whose whole claim is not doing that.
+    """
+    system = ai.ARGUMENTS_SYSTEM_PROMPT
+    assert "Ne mélange pas les camps" in system
+    assert "ne les retiens d'aucun côté" in system, "the exclusion must be explicit"
+    assert "le contraire de son vote" in system, "and it must say why"
+    # And no third destination is offered any more.
+    assert "reserves" not in system
+    assert "reserves" not in ArgumentSelection.model_fields
 
 
 def test_everything_rejected_is_an_error_not_an_empty_page():
@@ -243,31 +206,27 @@ def test_per_side_cap_is_enforced():
     assert len(out.pour) == 2
 
 
-def test_caps_default_to_the_configured_values():
-    """Arguments are a pool to curate from; réserves stay tighter."""
+def test_caps_default_to_the_configured_value():
+    """Arguments are a pool to curate from, not a quota to publish whole."""
     settings = get_settings()
     client = _FakeClient(
         _sel(
             pour=[("cr-1", QUOTE_FOR)] * 9,
             contre=[("cr-2", QUOTE_AGAINST)] * 9,
-            reserves=[("cr-2", QUOTE_AGAINST)] * 9,
         )
     )
     out = select_arguments(LAW, SPEECHES, client=client)
     assert len(out.pour) == settings.ai_arguments_per_side
     assert len(out.contre) == settings.ai_arguments_per_side
-    assert len(out.reserves) == settings.ai_reserves_max
-    assert settings.ai_reserves_max <= settings.ai_arguments_per_side
 
 
 def test_the_model_is_told_the_numbers_are_ceilings_not_quotas():
     """Padding to hit a quota is the failure this guards against."""
     client = _FakeClient(_sel([("cr-1", QUOTE_FOR)]))
-    select_arguments(LAW, SPEECHES, client=client, per_side=5, max_reserves=3)
+    select_arguments(LAW, SPEECHES, client=client, per_side=5)
     prompt = client.seen["messages"][0]["content"]
     assert "au plus 5 passages pour chaque camp" in prompt
-    assert "au plus 3 réserves" in prompt
-    assert "n'atteins ces nombres que si" in prompt
+    assert "n'atteins ce nombre que si" in prompt
 
 
 def test_oversized_pools_are_trimmed_and_reported():
@@ -296,7 +255,6 @@ def test_prompt_tells_the_model_to_copy_not_to_write():
     assert "copiée à l'identique" in system
     assert "Ne reformule pas" in system
     assert "liste « contre » vide" in system  # empty side is allowed
-    assert "`reserves`" in system  # the third category is explained
     assert "N'invente jamais d'identifiant" in system
 
 

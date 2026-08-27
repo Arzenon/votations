@@ -7,7 +7,7 @@ import pytest
 from markupsafe import escape
 
 from app import ai
-from app.ai import AiDraftError, LawDraft, SelectedArguments, generate_draft
+from app.ai import AiDraftError, LawDraft, generate_draft
 from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.legifrance import Article, LawText
@@ -430,51 +430,6 @@ def test_regenerating_is_explicit(client, db_session, background_db, monkeypatch
     assert len(calls) == 2
 
 
-def test_reserves_are_shown_apart_and_never_prefilled(
-    client, db_session, background_db, monkeypatch
-):
-    """A supporter's misgiving is information, not an argument against."""
-    item = _stage(db_session)
-    # Arguments are only sought when the text was actually debated.
-    item.seances = [{"reunion_ref": "RU1", "odj_ref": "RU1PT1"}]
-    db_session.commit()
-    reserve = {
-        "text": "Nous voterons ce texte, mais il manque les moyens de l'appliquer.",
-        "author": "M. Hendrik Davi, séance du 08/04/2026 · Assemblée nationale",
-        "source": "https://an.fr/cr#9",
-    }
-    _patch_job(
-        monkeypatch,
-        arguments=SelectedArguments(
-            pour=[{"text": "Un argument pour.", "author": "Mme X", "source": "u"}],
-            contre=[],
-            reserves=[reserve],
-            notes=["Aucune opposition au texte dans les débats."],
-        ),
-    )
-
-    _draft(client, item.id)
-    r = _form(client, item.id)
-    assert r.status_code == 200
-    assert "Réserves exprimées" in r.text
-    assert str(escape(reserve["text"])) in r.text
-    assert "Hendrik Davi" in r.text
-    # Shown for information — never written into the opposition block. That block
-    # is a list of rows, and with nothing selected against the text it has none:
-    # what must be true is that the editor is there and the reserve is not in it.
-    editor = r.text.split('data-arguments="against"')[1].split("</fieldset>")[0]
-    assert "Ajouter un argument" in editor, "the opposition editor should be rendered"
-    assert "manque les moyens" not in editor
-    assert 'name="arguments_against_text"' not in editor, (
-        "the opposition block must be left empty for the administrator to fill"
-    )
-
-    # And it survives the cache, like the rest of the draft.
-    db_session.expire_all()
-    assert db_session.get(ImportedLaw, item.id).draft["reserves"] == [reserve]
-    assert "Réserves exprimées" in _form(client, item.id).text
-
-
 def test_a_draft_never_overwrites_what_the_admin_typed(
     client, db_session, background_db, monkeypatch
 ):
@@ -689,7 +644,6 @@ def _imported_law(db_session, uid="DLR5L17N910"):
             "practical_changes": "Ce que cela change, selon le modèle.",
             "arguments_for": [{"text": "Pour, cité.", "author": "Mme A", "source": ""}],
             "arguments_against": [],
-            "reserves": [],
             "notes": [],
             "eli_url": "",
         },

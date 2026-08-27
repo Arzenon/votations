@@ -196,8 +196,6 @@ class Settings(BaseSettings):
     # what gets published: extra quotes cost output tokens only (cents), while a
     # public page with five arguments a side is a lot to read. Curate before saving.
     ai_arguments_per_side: int = Field(default=5, ge=1)
-    # Réserves are supplementary information, so they stay tighter.
-    ai_reserves_max: int = Field(default=3, ge=0)
     # Whole-job deadline for a draft (archive downloads + model calls). Past this
     # the job gives up with a message rather than holding a worker indefinitely.
     ai_draft_deadline_seconds: int = Field(default=600, ge=1)

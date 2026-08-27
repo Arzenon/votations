@@ -183,17 +183,11 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
 
 /* Reservations: shown for information, deliberately not editable and never
    pre-filled into the argument blocks — a supporter's misgiving is not opposition. */
-.reserves {
   background: #fff; border: 1px solid var(--line); border-left: 3px solid #8a5a00;
   border-radius: var(--radius); padding: 0.9rem 1.1rem; margin: 1rem 0;
 }
-.reserves h2 { margin: 0 0 0.3rem; font-size: 1.05rem; }
-.reserves > p { margin: 0 0 0.7rem; font-size: 0.9rem; color: var(--muted); }
-.reserves ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.8rem; }
-.reserves blockquote {
   margin: 0; font-style: italic; border-left: 2px solid var(--line); padding-left: 0.8rem;
 }
-.reserves .attrib { margin: 0.25rem 0 0 0.8rem; font-size: 0.85rem; color: var(--muted); }
 
 /* --- Accessibility ------------------------------------------------------- */
 

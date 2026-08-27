@@ -229,9 +229,6 @@ class ArgumentPick(BaseModel):
 class ArgumentSelection(BaseModel):
     pour: list[ArgumentPick]
     contre: list[ArgumentPick]
-    # Criticism of the text from speakers who did not oppose it. Kept apart from
-    # `contre` so a supporter's misgiving is never presented as opposition.
-    reserves: list[ArgumentPick]
 
 
 @dataclass
@@ -240,7 +237,6 @@ class SelectedArguments:
 
     pour: list[dict] = field(default_factory=list)
     contre: list[dict] = field(default_factory=list)
-    reserves: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -276,13 +272,10 @@ sans que le juge puisse en contrôler l'usage » est un argument.
 un orateur énumère sans jamais justifier, cherche un autre passage ou un autre \
 orateur : mieux vaut moins d'arguments que des arguments creux.
 - Ne mélange pas les camps : un passage classé « contre » doit exprimer une \
-opposition au texte, pas une réserve d'un orateur qui le soutient.
-- **Le champ `reserves` recueille précisément ces critiques-là** : celles \
-formulées par des orateurs qui ne combattent pas le texte — « nous voterons ce \
-texte, mais il manque les moyens », « c'est un premier pas insuffisant ». Elles ne \
-sont jamais des arguments d'opposants : ne les classe pas en « contre ». Elles \
-sont affichées à part, comme information complémentaire, et suivent les mêmes \
-règles de citation exacte.
+opposition au texte, pas une réserve d'un orateur qui le soutient. « Nous voterons \
+ce texte, mais il manque les moyens », « c'est un premier pas insuffisant » sont \
+des critiques de partisans : **ne les retiens d'aucun côté**. Les publier comme \
+arguments d'opposants ferait dire à leur auteur le contraire de son vote.
 - Cherche l'équilibre : autant de passages d'un côté que de l'autre. Si le débat \
 ne contient sincèrement aucune opposition, renvoie une liste « contre » vide — \
 c'est une information exacte, et il vaut mieux la donner que de combler.
@@ -345,12 +338,10 @@ def select_arguments(
     *,
     client: Any | None = None,
     per_side: int | None = None,
-    max_reserves: int | None = None,
 ) -> SelectedArguments:
     """Select verbatim arguments for and against, from the sitting records."""
     settings = get_settings()
     per_side = settings.ai_arguments_per_side if per_side is None else per_side
-    max_reserves = settings.ai_reserves_max if max_reserves is None else max_reserves
     if not speeches:
         raise AiDraftError("aucune intervention exploitable dans les comptes rendus")
     client = build_client() if client is None else client
@@ -370,10 +361,9 @@ def select_arguments(
         notes.append(f"{dropped} intervention(s) écartée(s) faute de place dans la requête")
 
     instruction = (
-        f"Sélectionne au plus {per_side} passages pour chaque camp et au plus "
-        f"{max_reserves} réserves, en recopiant chaque passage mot pour mot. "
-        "« Au plus » : n'atteins ces nombres que si les débats fournissent autant de "
-        "passages qui exposent réellement un motif."
+        f"Sélectionne au plus {per_side} passages pour chaque camp, en recopiant "
+        "chaque passage mot pour mot. « Au plus » : n'atteins ce nombre que si les "
+        "débats fournissent autant de passages qui exposent réellement un motif."
     )
     messages: list[MessageParam] = [
         {"role": "user", "content": f"{_pool_prompt(law, pool)}\n\n{instruction}"}
@@ -400,35 +390,20 @@ def select_arguments(
 
     by_id = {s.speech_id: s for s in pool}
     result = SelectedArguments(notes=notes)
-    sides = (
-        ("pour", selection.pour),
-        ("contre", selection.contre),
-        ("reserves", selection.reserves),
-    )
+    sides = (("pour", selection.pour), ("contre", selection.contre))
     for side, picks in sides:
-        limit = max_reserves if side == "reserves" else per_side
-        for pick in picks[:limit]:
+        for pick in picks[:per_side]:
             argument, why = _verify(pick, by_id)
             if argument is None:
                 result.notes.append(why)
             else:
                 getattr(result, side).append(argument)
 
-    if not (result.pour or result.contre or result.reserves):
+    if not (result.pour or result.contre):
         raise AiDraftError("aucun passage n'a pu être vérifié dans les comptes rendus")
     if not result.is_symmetric:
-        if not result.contre and result.reserves:
-            # The honest reading of a consensual text: nobody argued against it, but
-            # some supporters criticised it. Say exactly that.
-            result.notes.append(
-                f"Aucune opposition au texte dans les débats. {len(result.reserves)} "
-                "réserve(s) exprimée(s) par des orateurs qui l'ont néanmoins soutenu, "
-                "affichée(s) plus bas — à reprendre ou non, mais jamais comme des "
-                "arguments d'opposants."
-            )
-        else:
-            result.notes.append(
-                f"déséquilibre : {len(result.pour)} pour / {len(result.contre)} contre — "
-                "à compléter ou à assumer explicitement"
-            )
+        result.notes.append(
+            f"déséquilibre : {len(result.pour)} pour / {len(result.contre)} contre — "
+            "à compléter ou à assumer explicitement"
+        )
     return result

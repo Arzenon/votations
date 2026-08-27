@@ -87,7 +87,6 @@ def cached_draft(item):
         SelectedArguments(
             pour=cached.get("arguments_for") or [],
             contre=cached.get("arguments_against") or [],
-            reserves=cached.get("reserves") or [],
         ),
         list(cached.get("notes") or []),
         cached.get("eli_url") or "",
@@ -120,7 +119,6 @@ def law_form_context(
         ),
         "drafted_at": prefill.drafted_at if prefill else None,
         "argument_notes": list(notes or []),
-        "reserves": arguments.reserves if arguments else [],
         "has_draft": bool(prefill and prefill.draft),
         # True when the fields below are showing the draft rather than what is
         # stored, so the page can say so — nothing is written until « Enregistrer ».

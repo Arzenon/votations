@@ -311,15 +311,17 @@ un bloc « contre » vide avec une note est exact ; fabriquer une objection pour
 remplir la case ne l'est pas. L'écart est signalé à l'administrateur, qui
 tranche.
 
-**Les réserves sont distinguées des oppositions.** Un texte peut être adopté sans
-qu'aucun orateur ne s'y oppose, tout en étant critiqué par des parlementaires qui
-le votent malgré tout (« nous voterons ce texte, mais il manque les moyens »).
-Classer ces critiques en « arguments des opposants » trahirait leurs auteurs ; les
-taire priverait le lecteur d'une information réelle. Elles sont donc extraites
-dans une catégorie à part, **affichées sous le formulaire à titre indicatif et
-jamais pré-remplies** dans les blocs d'arguments : à l'administrateur de décider
-s'il les reprend, en indiquant clairement la position de leur auteur. Elles
-obéissent à la même vérification mot pour mot que les arguments.
+**La critique d'un partisan n'est pas une opposition.** Un texte peut être adopté
+sans qu'aucun orateur ne s'y oppose, tout en étant critiqué par des parlementaires
+qui le votent malgré tout (« nous voterons ce texte, mais il manque les moyens »).
+Classer ces passages en « arguments des opposants » ferait dire à leurs auteurs le
+contraire de leur vote, sur la seule page dont la promesse est de ne pas faire
+cela. Le modèle a donc pour consigne de **ne les retenir d'aucun côté**.
+
+Ils étaient auparavant extraits dans une troisième catégorie, affichée sous le
+formulaire. Cette section a été retirée : personne ne s'en servait, et la garantie
+qui comptait n'était pas de les montrer à part mais de les tenir hors du bloc des
+opposants.
 
 **Le travail se fait en tâche de fond.** Un brouillon enchaîne le téléchargement
 d'archives du Journal Officiel (plusieurs mégaoctets, fouillées à la recherche
@@ -374,7 +376,7 @@ Réglages : `ANTHROPIC_API_KEY`, `AI_MODEL` (défaut `claude-opus-5`),
 `AI_EFFORT` (défaut `high` — `medium` divise à peu près par deux le coût d'un
 brouillon, `xhigh` et `max` existent au-dessus),
 `AI_MAX_INPUT_TOKENS`, `AI_MAX_SPEECHES` (interventions envoyées au modèle),
-`AI_ARGUMENTS_PER_SIDE`, `AI_RESERVES_MAX`, `AI_DRAFT_DEADLINE_SECONDS`.
+`AI_ARGUMENTS_PER_SIDE`, `AI_DRAFT_DEADLINE_SECONDS`.
 
 Les séances où un texte a été discuté sont enregistrées à l'import (colonne
 `seances`) : la référence de la réunion et celle du point à l'ordre du jour. Une

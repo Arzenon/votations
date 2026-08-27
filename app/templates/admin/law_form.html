@@ -105,29 +105,6 @@
 </ul>
 {% endif %}
 
-{% if reserves %}
-<section class="reserves">
-  <h2>Réserves exprimées</h2>
-  <p>
-    Critiques du texte formulées par des orateurs qui ne s'y sont
-    <strong>pas opposés</strong>. Ce ne sont pas des arguments d'opposants : elles ne
-    sont pas pré-remplies dans le formulaire. Reprenez-les si vous le jugez utile, en
-    indiquant clairement la position de leur auteur.
-  </p>
-  <ul>
-    {% for r in reserves %}
-    <li>
-      <blockquote>« {{ r.text }} »</blockquote>
-      <p class="attrib">
-        {{ r.author }}
-        {% set rsource = r.source | safe_href %}
-        {% if rsource %}· <a href="{{ rsource }}" rel="noopener noreferrer" target="_blank">compte rendu</a>{% endif %}
-      </p>
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
 
 <form class="law-form" id="law-form" method="post"
       action="{% if law %}/admin/lois/{{ law.id }}{% else %}/admin/lois{% endif %}">

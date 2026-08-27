@@ -164,7 +164,6 @@ def build_draft(item_id: int, *, session_factory: Callable[[], Session] | None =
                 "practical_changes": draft.practical_changes,
                 "arguments_for": arguments.pour if arguments else [],
                 "arguments_against": arguments.contre if arguments else [],
-                "reserves": arguments.reserves if arguments else [],
                 "notes": notes,
                 "eli_url": law_text.eli_url or "",
             },
