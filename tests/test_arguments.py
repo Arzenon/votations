@@ -331,3 +331,37 @@ def test_a_debate_that_fits_is_never_trimmed_by_the_window():
         select_arguments(LAW, speeches, client=client)
     prompt = client.seen["messages"][0]["content"]
     assert all(f"[{s.speech_id}]" in prompt for s in speeches), "a fitting debate was cut"
+
+
+# --- Quotes taken from a joint discussion --------------------------------------
+
+
+def test_a_quote_from_a_joint_discussion_carries_a_warning():
+    """Verified, attributed — and possibly about the neighbouring text.
+
+    `app.debates` keeps the speeches of a « discussion générale commune » rather
+    than losing them, which is what gave « fin de vie » its arguments back. The
+    price is that a passage may be arguing about the text debated alongside ours,
+    and no amount of checking downstream can tell. So the note has to reach the
+    person who proofreads before publication — that is the entire basis on which
+    keeping them is defensible.
+    """
+    joint = [
+        Speech(**{**vars(SPEECHES[0]), "joint_debate": True}),
+        Speech(**vars(SPEECHES[1])),
+    ]
+    client = _FakeClient(_sel([("cr-1", QUOTE_FOR)], [("cr-2", QUOTE_AGAINST)]))
+
+    out = select_arguments(LAW, joint, client=client)
+
+    assert len(out.pour) == 1 and len(out.contre) == 1
+    warning = next((n for n in out.notes if "discussion commune" in n), None)
+    assert warning is not None, out.notes
+    assert "1 passage" in warning, warning
+
+
+def test_an_ordinary_discussion_raises_no_such_warning():
+    """Or the warning would be noise, and get read as noise."""
+    client = _FakeClient(_sel([("cr-1", QUOTE_FOR)], [("cr-2", QUOTE_AGAINST)]))
+    out = select_arguments(LAW, SPEECHES, client=client)
+    assert not any("discussion commune" in n for n in out.notes)

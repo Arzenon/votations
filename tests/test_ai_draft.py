@@ -112,6 +112,16 @@ def test_the_second_block_is_asked_for_something_the_first_cannot_say():
     assert "pas le premier bloc" in system, "the restatement must be forbidden outright"
     assert "N'y répète pas ce qui est déjà dans summary_text" in system
     assert "laisse ce bloc vide" in system, "an empty block must be an allowed answer"
+    # But allowed for one reason only. Left as "nothing remains to say once the
+    # repetitions are removed", it fired on a law that plainly changed things for
+    # farmers: the first block had been made concrete enough to cover the ground,
+    # the no-repeat rule pointed the same way, and « ce que ça change en pratique »
+    # came back as an empty string on a 61-article agriculture act.
+    assert "Ne laisse ce bloc vide que si la loi ne crée d'obligation" in system
+    assert "il est à écrire" in system, "an empty block must not be reachable by attrition"
+    # And the tie-break that makes the no-repeat rule survivable: the reader's
+    # side wins, so overlap shortens block 1 rather than emptying block 2.
+    assert "elle appartient au \\\n second" in system or "elle appartient au" in system
     # Framed by who is affected, rather than by the shape of the text.
     assert "personnes concernées" in system
     assert "ne change pas" in system, "what stays the same is information too"
@@ -154,7 +164,107 @@ def test_the_second_block_is_held_short_per_audience_not_capped_in_audiences():
     system = ai.SYSTEM_PROMPT
     assert "Un paragraphe court par public concerné" in system
     assert "n'est pas plafonné" in system, "the number of audiences must stay free"
-    assert "jamais pour te faire rester vague" in system, "shorter must not mean blurrier"
+    # The count follows readers, not provisions — see the granularity test below,
+    # which is how a sector-specific law stops producing nineteen paragraphs.
+    assert "nombre de **lecteurs** concernés" in system
+
+    # The cap must not be argued with in the same breath. It used to be: nine words
+    # setting the limit, then ninety walking it back — « chacun portant beaucoup »,
+    # « jamais pour te faire rester vague », « garde le seuil, la date ou le
+    # montant », « Trois faits exacts valent mieux qu'une phrase floue sur dix ».
+    # The model weighed the two sides and wrote longer: paragraphs went from 540 to
+    # 747 characters on average, and those over 800 from one to seven.
+    #
+    # The tell is in this same prompt. Block 1's brevity rule carries no
+    # counterweight and lands exactly — three paragraphs, on both laws, on every
+    # run. So the fix was subtraction, plus somewhere for the overflow to go.
+    for undercut in (
+        "chacun portant beaucoup",
+        "jamais pour te faire rester vague",
+        "Trois faits exacts valent mieux",
+    ):
+        assert undercut not in system, f"the cap is undercut again by: {undercut}"
+    # One clause of anti-vagueness survives — it was the load-bearing half. There
+    # was briefly a second clause here sending the overflow to the official text;
+    # it drew no uptake at all — zero mentions across a 16 000-character block — so
+    # it went the way of any instruction nothing acts on.
+    assert "va au texte officiel" not in system
+    assert "sans jamais remplacer un fait précis par une formule générale" in system
+
+
+def test_the_prompt_says_each_thing_once():
+    """Duplicated rules drift, and the loosest wording wins.
+
+    Measured on the real prompt: brevity was stated seven times in seven wordings,
+    and an empty second block was licensed four times under two incompatible
+    conditions — the permissive one (« si le texte ne permet pas de rédiger
+    honnêtement un bloc ») sitting in final position, thirty lines after the strict
+    one that was supposed to have replaced it. « Ce que ça change en pratique » then
+    came back empty on a 61-article agriculture act.
+    """
+    system = ai.SYSTEM_PROMPT
+    # The loose licence is gone; the precise one remains.
+    assert "laisse-le vide plutôt que de le combler" not in system
+    assert "Ne laisse ce bloc vide que si la loi ne crée d'obligation" in system
+    # The ratification case is stated twice, and twice is right: once to say block 1
+    # may then run longer, once to say block 2 may then be empty. Same condition,
+    # two different consequences — that is working redundancy, not drift. What was
+    # removed is the third statement, which carried no consequence of its own.
+    assert system.count("ratification d'un accord") == 2
+    assert "Si la loi se borne à ratifier un accord international" not in system
+    # And block 1 no longer asks for the very thing its next rule forbids: it used
+    # to want « par quels moyens elle agit » and then « pas la règle qu'elle y
+    # produit », and the draft duly opened on a list of moyens.
+    assert "par quels moyens elle agit" not in system
+    assert "Nomme le domaine sur lequel la loi intervient" in system
+
+
+def test_an_audience_is_how_someone_describes_themselves():
+    """Granularity, not a cap — and the difference is the whole point.
+
+    Measured on two real drafts: the loi de programmation militaire produced 22
+    audiences and read well, because they are things people are — « un jeune
+    Français », « si vous déménagez », « pour les communes ». The loi
+    d'urgence agricole produced 19 and read as a specialist circular, because
+    they are things articles address — « betteravier », « irrigant », « éleveur
+    d'ovins », « si vous siégez en commission locale de l'eau ». Same length,
+    same paragraph count, opposite usefulness: a reader outside farming appeared
+    in none of the nineteen, and a farmer in two or three.
+
+    So the fix cannot be a cap on the count. It is a rule about what counts as an
+    audience — the word someone would use for themselves — with the specifics
+    kept inside the paragraph.
+    """
+    system = ai.SYSTEM_PROMPT
+    assert "façon dont quelqu'un se décrit lui-même" in system
+    assert "ça, c'est moi" in system, "the test the model applies must be the reader's"
+    # Regrouping must never become dropping: that is the editorial act the
+    # platform exists not to make, and the reason the count stays uncapped.
+    assert "Ne supprime jamais la mesure" in system
+    assert "l'écarter parce que peu de gens sont concernés, jamais" in system
+    # Most-concerned first, so stopping early still leaves you informed.
+    assert "Commence par les publics les plus nombreux" in system
+
+
+def test_the_first_block_is_written_for_someone_who_never_opened_a_code():
+    """Three habits measured on the real drafts, each costing the reader.
+
+    In the three drafts reviewed, the *last* paragraph of every « Ce que dit la
+    loi » was administrative plumbing — decrees still to come, ordonnances
+    extending the law overseas, transfers between administrations — and it ran to
+    roughly a third of the block (1031 of 3046 characters on one, 932 of 2626 on
+    another). Add a ten-code enumeration in a single 1272-character sentence, and
+    article numbers a voter cannot use, and the block that decides whether
+    someone keeps reading is the one written for a lawyer.
+    """
+    system = ai.SYSTEM_PROMPT
+    assert "Ne cite aucun numéro d'article ni de code" in system
+    assert "N'énumère pas les codes modifiés" in system
+    assert "Ne consacre pas de paragraphe à la mécanique administrative" in system
+    # But the censure itself is news a voter needs — only its numbering is not.
+    assert "Dis *ce que* le Conseil" in system
+    # And a territory still matters where the law does not reach.
+    assert "ne s'y applique pas" in system
 
 
 def test_measures_before_sending_and_refuses_outsized_text():

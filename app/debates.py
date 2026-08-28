@@ -14,16 +14,35 @@ Design notes:
 - Two small fetches per sitting: the réunion (~2 kB) names its compte rendu and
   its agenda, then the compte rendu (~600 kB) carries the speeches. No corpus
   download and nothing stored.
-- A sitting can debate several bills. The dossier's ``odj_ref`` identifies which
-  agenda item is ours, and its position in the réunion's agenda equals the
-  ``valeur_ptsodj`` the compte rendu tags each paragraph with — so speeches about
-  another bill are never mixed in.
+- A sitting can debate several bills, so finding *ours* in the record is the
+  whole difficulty. The dossier's ``odj_ref`` names our agenda item; the compte
+  rendu tags every paragraph with a ``valeur_ptsodj``, and its ``sommaire`` says
+  which subject each of those numbers covers. We match our agenda item to a
+  record point **by subject**, and read only that point.
+
+  It used to match by *position* — the rank of our item in the réunion's agenda,
+  assumed equal to ``valeur_ptsodj``. That assumption is simply false, and
+  silently so in both directions. The two numbering schemes disagree whenever the
+  agenda carries something the record does not number the same way, which is
+  most sittings: on 5 May 2026 the loi de programmation militaire was agenda item
+  7 and record point 5, and the record's only argued section, number 4, was
+  « Lutte contre les fraudes sociales et fiscales » — a different bill, which the
+  old rule was one coincidence away from quoting. Matching on the subject drops
+  that risk and finds the speeches the position missed.
+
+- Some texts are debated **jointly** — « discussion générale commune » — and the
+  record then covers several agenda items under one number and one title, so no
+  subject matches ours. Those speeches are kept rather than lost, and every one
+  of them is marked :attr:`Speech.joint_debate` so the draft can warn that the
+  passages may concern a neighbouring text too. That is a deliberate trade: the
+  alternative was a law with twenty sittings and no arguments at all.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -68,6 +87,10 @@ class Speech:
     spoken_on: date | None
     text: str
     url: str
+    #: True when the record debated this text jointly with another, so the
+    #: passage may be arguing about the neighbouring one. Never guessed: it is
+    #: set only where the record itself says « commune ».
+    joint_debate: bool = False
 
     @property
     def attribution(self) -> str:
@@ -112,13 +135,132 @@ def _get_json(get: Getter, uid: str) -> dict:
         raise DebatesFetchError(f"réponse illisible pour {uid} : {exc}") from exc
 
 
-def _agenda_position(reunion: dict, odj_ref: str) -> int | None:
-    """1-based index of our agenda item, which the compte rendu calls valeur_ptsodj."""
+def _agenda_subject(reunion: dict, odj_ref: str) -> str:
+    """What the réunion's agenda says our item is about, e.g. « Suite de la
+    discussion du projet de loi actualisant la programmation militaire… »."""
     points = as_list(((reunion.get("ODJ") or {}).get("pointsODJ") or {}).get("pointODJ"))
-    for index, point in enumerate(points, start=1):
+    for point in points:
         if isinstance(point, dict) and point.get("uid") == odj_ref:
-            return index
-    return None
+            return str(point.get("objet") or "")
+    return ""
+
+
+#: Words that appear in every agenda line and every record title — the procedural
+#: scaffolding of a sitting — and therefore tell two texts apart not at all.
+_BOILERPLATE = frozenset(
+    # articles and prepositions
+    {
+        "de",
+        "du",
+        "des",
+        "la",
+        "le",
+        "les",
+        "un",
+        "une",
+        "et",
+        "en",
+        "au",
+        "aux",
+        "pour",
+        "sur",
+        "dans",
+        "par",
+        "ou",
+    }
+    # the procedural scaffolding of an agenda line
+    | {
+        "projet",
+        "proposition",
+        "loi",
+        "lois",
+        "discussion",
+        "suite",
+        "lecture",
+        "deuxieme",
+        "premiere",
+        "vote",
+        "solennel",
+        "conclusions",
+        "commission",
+        "mixte",
+        "paritaire",
+        "rapport",
+        "texte",
+        "visant",
+        "relatif",
+        "relative",
+        "relatives",
+        "diverses",
+        "dispositions",
+        "portant",
+        "seance",
+    }
+)
+
+
+def _significant(label: str) -> set[str]:
+    """The words of a title that actually identify a subject.
+
+    Accents folded and boilerplate removed, so « Suite de la discussion du projet
+    de loi actualisant la programmation militaire » and « Actualisation de la
+    programmation militaire » meet on {programmation, militaire, …} — which is
+    the whole point, since the agenda and the record word the same subject
+    differently.
+    """
+    folded = unicodedata.normalize("NFKD", label or "").encode("ascii", "ignore").decode()
+    return {
+        w for w in re.findall(r"[a-z0-9]+", folded.lower()) if w not in _BOILERPLATE and len(w) > 2
+    }
+
+
+#: How much of the shorter of the two titles they must share, and how many words
+#: at the very least, before we call it the same subject. Measured against the
+#: corpus: real matches score 0.83 to 1.00 and everything else scores 0.
+_SUBJECT_OVERLAP = 0.6
+_SUBJECT_MIN_WORDS = 2
+
+
+def _record_points(compte_rendu: dict) -> dict[str, str]:
+    """``valeur_ptsodj`` → the subject the record's own summary gives it.
+
+    The only place the two documents can be joined on meaning rather than on
+    rank. The record carries no agenda identifier anywhere — checked, across the
+    whole corpus — so this summary is what there is.
+    """
+    points: dict[str, str] = {}
+    summary = ((compte_rendu.get("metadonnees") or {}).get("sommaire") or {}).get("sommaire1")
+    for entry in as_list(summary):
+        if not isinstance(entry, dict):
+            continue
+        tag = str((entry.get("@attributes") or {}).get("valeur_pts_odj") or "")
+        title = (entry.get("titreStruct") or {}).get("intitule")
+        if tag and isinstance(title, str) and title.strip():
+            points.setdefault(tag, title.strip())
+    return points
+
+
+def _our_point(compte_rendu: dict, subject: str) -> str | None:
+    """The record's own number for the agenda item ``subject``, or None."""
+    wanted = _significant(subject)
+    if not wanted:
+        return None
+    best, best_score = None, 0.0
+    for tag, title in _record_points(compte_rendu).items():
+        shared = wanted & _significant(title)
+        if len(shared) < _SUBJECT_MIN_WORDS:
+            continue
+        score = len(shared) / min(len(wanted), len(_significant(title)))
+        if score > best_score:
+            best, best_score = tag, score
+    return best if best_score >= _SUBJECT_OVERLAP else None
+
+
+#: How a compte rendu says several texts were taken together: « Discussion
+#: générale commune », « Présentation commune ». Across 62 records it appears on
+#: exactly the one joint debate and nowhere else, which is what makes it usable
+#: as a signal rather than a guess.
+_JOINT_SECTION = re.compile(r"commune?s?\b", re.IGNORECASE)
 
 
 def _seance_date(compte_rendu: dict) -> date | None:
@@ -208,15 +350,33 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def speeches_from_record(compte_rendu: dict, *, position: int | None, url: str) -> list[Speech]:
-    """Extract the argued positions for one agenda item of one sitting."""
+def speeches_from_record(compte_rendu: dict, *, subject: str, url: str) -> list[Speech]:
+    """Extract the argued positions this record holds about ``subject``.
+
+    ``subject`` is the réunion agenda's wording for our text. Everything hangs on
+    locating it among the record's own points: read the wrong one and the
+    presentation ends up quoting a debate about another bill, under this law's
+    name, on the one page whose promise is that the quotes are real.
+    """
     sections = _speech_sections(compte_rendu)
-    # With a single argued item, the position tag is not needed to disambiguate.
-    if position is None and len(sections) != 1:
+    wanted = _our_point(compte_rendu, subject)
+
+    if wanted is None:
+        # Our subject is nowhere in the record's summary. Either the sitting did
+        # not discuss this text at all, or it discussed it *jointly* with
+        # another, under a title naming neither or both. Only the second case is
+        # recoverable, and only when the record says so itself.
+        joint = [tag for tag, title in sections.items() if _JOINT_SECTION.search(title)]
+        if len(joint) != 1:
+            return []
+        wanted = joint[0]
+    elif wanted not in sections:
+        # Found, and argued nowhere: our text was on the agenda that day for a
+        # vote or a procedural step. Not a failure, and emphatically not a reason
+        # to reach for somebody else's discussion.
         return []
-    wanted = str(position) if position is not None else next(iter(sections))
-    if wanted not in sections:
-        return []
+
+    from_joint = bool(_JOINT_SECTION.search(sections[wanted]))
 
     spoken_on = _seance_date(compte_rendu)
     uid = compte_rendu.get("uid") or ""
@@ -251,6 +411,7 @@ def speeches_from_record(compte_rendu: dict, *, position: int | None, url: str) 
                 spoken_on=spoken_on,
                 text=text,
                 url=url,
+                joint_debate=from_joint,
             )
         )
     return out
@@ -274,11 +435,11 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
             cr_ref = reunion.get("compteRenduRef")
             if not cr_ref:
                 continue
-            position = _agenda_position(reunion, odj_ref) if odj_ref else None
+            subject = _agenda_subject(reunion, odj_ref) if odj_ref else ""
             record = _get_json(get, cr_ref)
         except DebatesFetchError:
             continue
         legislature = (record.get("metadonnees") or {}).get("legislature") or "17"
         url = SEANCE_URL.format(legislature=legislature, uid=cr_ref)
-        out.extend(speeches_from_record(record, position=position, url=url))
+        out.extend(speeches_from_record(record, subject=subject, url=url))
     return out

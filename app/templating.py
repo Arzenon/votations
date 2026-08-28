@@ -109,8 +109,44 @@ def paragraphs(value: str | None) -> list[str]:
     return [block.strip() for block in value.replace("\r\n", "\n").split("\n\n") if block.strip()]
 
 
+#: How many of « Ce que ça change en pratique » stand above the fold.
+#:
+#: The block is ordered most-concerned-first — the drafting prompt asks for that
+#: explicitly — so the first few paragraphs are the ones addressed to the largest
+#: number of readers, and taking them from the top is not an arbitrary cut.
+VISIBLE_AUDIENCES = 5
+
+#: Fold only when folding earns the control it adds. Hiding one or two paragraphs
+#: behind a click asks the reader to work for nothing; the fold exists for the
+#: laws where it genuinely changes the shape of the page.
+_WORTH_FOLDING = 3
+
+
+def practical_split(value: str | None) -> tuple[list[str], list[str]]:
+    """« Ce que ça change en pratique », as (what is shown, what is folded).
+
+    A law that amends sixty articles across one sector really does concern twenty
+    different publics, and the charter forbids picking which of them go
+    unmentioned — so the block cannot be shortened by dropping anyone. What it can
+    do is stop being a wall: the publics that concern the most people stay in
+    view, the rest sit one click away, and nothing is left out.
+
+    That is deliberately a change to the *page* rather than to the drafting
+    instructions. Three successive attempts to hold the block short by prompt
+    failed for the same reason each time — « ne supprime jamais la mesure » and
+    « deux ou trois phrases » cannot both hold for a sixty-article law, and the
+    model resolved it in favour of completeness every time. Which is the right
+    instinct for this platform, so the page accommodates it instead.
+    """
+    blocks = paragraphs(value)
+    if len(blocks) < VISIBLE_AUDIENCES + _WORTH_FOLDING:
+        return blocks, []
+    return blocks[:VISIBLE_AUDIENCES], blocks[VISIBLE_AUDIENCES:]
+
+
 templates.env.filters["readable_json"] = readable_json
 templates.env.filters["paragraphs"] = paragraphs
+templates.env.filters["practical_split"] = practical_split
 templates.env.filters["law_status"] = law_status
 templates.env.filters["import_status"] = import_status
 templates.env.filters["field_label"] = field_label

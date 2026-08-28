@@ -22,7 +22,20 @@
 
   <section class="block">
     <h2>Ce que ça change en pratique</h2>
-    {% for para in law.practical_changes | paragraphs %}<p>{{ para }}</p>{% else %}<p>—</p>{% endfor %}
+    {# Most-concerned-first, so the publics above the fold are the ones that speak
+       to the most readers. A loi de programmation militaire or une loi agricole
+       concerne vingt publics distincts, and the charter forbids choosing which of
+       them goes unmentioned — so the block is not shortened, it is folded. The
+       count is in the summary because a reader must be able to see that something
+       is there before deciding not to read it. See `app.templating.practical_split`. #}
+    {% set shown, folded = law.practical_changes | practical_split %}
+    {% for para in shown %}<p>{{ para }}</p>{% else %}<p>—</p>{% endfor %}
+    {% if folded %}
+    <details class="more-audiences">
+      <summary>{{ folded | length }} autres publics concernés</summary>
+      {% for para in folded %}<p>{{ para }}</p>{% endfor %}
+    </details>
+    {% endif %}
   </section>
 
   <div class="arguments">

@@ -348,6 +348,14 @@ table.revisions td { vertical-align: top; }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
+/* The rest of « Ce que ça change en pratique ». Deliberately quiet: it is the
+   same content as above the fold, not an aside, so it gets a divider and a
+   control rather than a box that would read as a footnote. */
+.more-audiences { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
+.more-audiences > summary { cursor: pointer; color: var(--blue); font-size: 0.95rem; }
+.more-audiences > summary:hover { text-decoration: underline; }
+.more-audiences > p:first-of-type { margin-top: 0.75rem; }
+
 /* Admin preview of an unpublished law. */
 .preview-bar { background: #1d3a8a; color: #fff; padding: 0.6rem 0; font-size: 0.9rem; }
 .preview-bar a { color: #fff; }

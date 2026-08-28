@@ -86,16 +86,14 @@ class LawDraft(BaseModel):
 
 SYSTEM_PROMPT = """\
 Tu prépares la présentation neutre d'une loi française promulguée, pour une \
-plateforme civique qui ne prend jamais parti et dont les résumés sont relus par \
-une personne avant publication.
+plateforme civique qui ne prend jamais parti.
 
 On te donne le texte officiel publié au Journal Officiel. Tu produis deux blocs :
 
 1. summary_text — « Ce que dit la loi » : **l'idée de la loi, pas son plan**. De \
-quoi elle traite, par quels moyens elle agit, quels textes elle modifie, à partir \
-de quand et sur quels territoires elle s'applique — et ce qui, le cas échéant, \
-n'est pas en vigueur (censure du Conseil constitutionnel, entrée en vigueur \
-différée). La loi vue de l'extérieur.
+quoi elle traite, ce qu'elle cherche à obtenir — et ce qui, le cas échéant, n'est \
+pas en vigueur (censure du Conseil constitutionnel, entrée en vigueur différée). La \
+loi vue de l'extérieur.
 
 Règles propres à ce premier bloc :
 - **N'y détaille pas les obligations qui en découlent pour les gens.** C'est le \
@@ -103,6 +101,19 @@ travail du second bloc, qui le fait depuis la place du lecteur et le fait mieux.
 Nomme le domaine sur lequel la loi intervient, pas la règle qu'elle y produit.
 - Aussi court que le texte le permet : deux ou trois paragraphes suffisent pour la \
 plupart des lois.
+- **Écris pour quelqu'un qui n'a pas de connaissances particulières en droit.** Ce \
+bloc est le premier que lit une personne qui hésite sur son vote, et trois habitudes \
+de juriste le lui rendent illisible :
+  - **Ne cite aucun numéro d'article ni de code.** Ni « article L. 1111-12-1 », ni \
+« article 122-4 du code pénal », ni « les articles 16, 26, 32 et 35 ont été \
+déclarés non conformes ». Le texte officiel est en lien sur la page pour qui veut \
+les références ; ici elles n'apprennent rien à personne. Dis *ce que* le Conseil \
+constitutionnel a censuré, jamais sous quels numéros.
+  - **N'énumère pas les codes modifiés.** « Elle modifie les codes de la défense, \
+de la commande publique, de la sécurité intérieure, de l'environnement, de \
+l'urbanisme… » est une liste que personne ne lit et dont personne ne retient rien. \
+Nomme en français ordinaire les **domaines** sur lesquels la loi agit, et seulement \
+ceux qui portent l'essentiel.
 - Une exception : si la loi ne crée d'obligation pour personne — ratification d'un \
 accord, réorganisation administrative, mesure purement budgétaire — le second bloc \
 sera vide et celui-ci porte seul la présentation. Il peut alors être plus détaillé.
@@ -114,21 +125,38 @@ cela me concerne, et qu'est-ce que je dois faire différemment ? ».
 Règles propres à ce second bloc :
 - Organise-le par **personnes concernées** (« si vous êtes locataire », « pour les \
 employeurs », « pour les communes »), jamais en suivant le plan du texte.
+- **Un public, c'est la façon dont quelqu'un se décrit lui-même** — pas la \
+catégorie que vise l'article. Personne ne se présente comme « irrigant », \
+« betteravier », « éleveur d'ovins » ou « producteur de lait au sein d'une \
+organisation de producteurs reconnue » : ces gens-là se disent **agriculteurs**, et \
+c'est sous ce mot qu'ils se reconnaîtront. Regroupe-les, et mets les seuils, les \
+dates et les cas particuliers *à l'intérieur* du paragraphe.
+- Passe chaque paragraphe à cette question : **quelqu'un peut-il dire « ça, c'est \
+moi » ?** Si la réponse tient à une qualité juridique qu'il faut déjà connaître pour \
+se l'appliquer, le paragraphe est mal découpé — sa mesure appartient au public plus \
+large dont ces personnes font partie. **Ne supprime jamais la mesure pour autant** : \
+la remonter d'un cran, oui ; l'écarter parce que peu de gens sont concernés, jamais.
+- **Commence par les publics les plus nombreux**, finis par les plus étroits : \
+quelqu'un qui s'arrête en cours de lecture doit avoir lu ce qui le concernait le plus.
 - Pour chacune : ce qu'elle doit ou peut faire qu'elle ne pouvait pas avant, à \
 partir de quand, et ce qui arrive si elle ne le fait pas — lorsque le texte le dit.
 - Dis ce qui **ne change pas** lorsque le sujet ou l'intitulé de la loi pourrait \
 laisser croire le contraire.
-- **Un paragraphe court par public concerné : deux ou trois phrases.** Le nombre \
-de publics n'est pas plafonné — une loi qui touche quinze codes en concerne \
-beaucoup, et en écarter serait choisir de qui on ne parle pas. C'est la longueur \
-de chacun qui est tenue. Cette contrainte est là pour te faire *choisir* ce qui \
-compte, jamais pour te faire rester vague : garde le seuil, la date ou le montant \
-qui change une décision, écarte le reste, et ne remplace jamais un fait précis par \
-une formule générale. Trois faits exacts valent mieux qu'une phrase floue sur dix.
-- N'y répète pas ce qui est déjà dans summary_text. Si, une fois les redites \
-écartées, il ne reste rien à dire, **laisse ce bloc vide** : c'est une information \
-exacte, alors qu'un bloc qui paraphrase le précédent fait perdre son temps au \
-lecteur et lui donne l'impression d'avoir tout compris deux fois.
+- **Un paragraphe court par public concerné : deux ou trois phrases.** Choisis ce \
+qui décide — suis-je concerné, que dois-je faire, à partir de quand — sans jamais \
+remplacer un fait précis par une formule générale.
+- Le nombre de publics n'est pas plafonné : en écarter serait choisir de qui on ne \
+parle pas. Mais il suit le nombre de **lecteurs** concernés et non le nombre de \
+mesures — une loi qui creuse un seul secteur peut n'en compter que trois ou quatre.
+- N'y répète pas ce qui est déjà dans summary_text — mais c'est alors le premier \
+bloc qui doit se raccourcir, jamais celui-ci qui se vide. Un bloc qui paraphrase le \
+précédent fait perdre son temps au lecteur ; un bloc vide sur une loi qui change \
+quelque chose lui cache ce qu'il est venu chercher, ce qui est pire.
+- **Ne laisse ce bloc vide que si la loi ne crée d'obligation ni de droit nouveau \
+pour personne** — ratification d'un accord, mesure purement budgétaire, \
+réorganisation interne à l'État. Dès que le texte impose, autorise ou interdit \
+quelque chose à quelqu'un, il y a un public à qui le dire : le bloc n'est pas vide, \
+il est à écrire.
 
 Règles impératives :
 - N'écris que ce qui découle du texte fourni. N'invente aucun fait, chiffre, \
@@ -138,8 +166,6 @@ ou critique, aucune mention de qui soutient ou combat le texte, aucune \
 appréciation de son opportunité ou de son efficacité.
 - Pas de méta-commentaire : écris « la loi crée… », jamais « le texte fourni \
 indique que… ».
-- Si la loi se borne à ratifier un accord international ou à modifier \
-ponctuellement un code, dis-le simplement et reste bref.
 - Français clair, phrases courtes, paragraphes séparés par une ligne vide. Pas \
 de titres ni de listes à puces.
 - **Le premier paragraphe doit se suffire à lui-même** : quelqu'un qui ne lit que \
@@ -147,13 +173,15 @@ lui doit savoir de quoi la loi traite et ce qu'elle change. Les paragraphes \
 suivants ajoutent le détail, du plus important au moins important.
 - **Les deux blocs ne se recouvrent pas** : le premier dit ce que la loi *est*, le \
 second ce qu'elle *change pour vous*. Une même information ne doit apparaître \
-qu'une fois. Seules exceptions : une date d'entrée en vigueur et un champ \
-d'application, utiles des deux côtés.
+qu'une fois — et **quand elle pourrait tenir des deux côtés, elle appartient au \
+second**, parce que c'est là que le lecteur la cherche. Le premier nomme alors le \
+sujet sans la conséquence — « la loi encadre l'usage de certains insecticides » — \
+et laisse au second le produit, le seuil, la date et la démarche. Seules \
+exceptions : une date d'entrée en vigueur et un champ d'application, utiles des \
+deux côtés.
 - Sois bref. Une loi volumineuse se résume par ses lignes de force, jamais par \
 l'énumération de ses articles. Ce qui n'aide pas une personne à décider de son \
-vote n'a pas sa place.
-- Si le texte ne permet pas de rédiger honnêtement un bloc, laisse-le vide \
-plutôt que de le combler."""
+vote n'a pas sa place."""
 
 
 def _user_prompt(law: LawText) -> str:
@@ -413,6 +441,7 @@ def select_arguments(
     by_id = {s.speech_id: s for s in pool}
     result = SelectedArguments(notes=notes)
     sides = (("pour", selection.pour), ("contre", selection.contre))
+    from_joint = 0
     for side, picks in sides:
         for pick in picks[:per_side]:
             argument, why = _verify(pick, by_id)
@@ -420,9 +449,20 @@ def select_arguments(
                 result.notes.append(why)
             else:
                 getattr(result, side).append(argument)
+                from_joint += bool(by_id[pick.speech_id].joint_debate)
 
     if not (result.pour or result.contre):
         raise AiDraftError("aucun passage n'a pu être vérifié dans les comptes rendus")
+    if from_joint:
+        # The one place a verified quote can still be misleading. The passage is
+        # genuinely what its author said, on a day this text was debated — but
+        # jointly with another, so the argument may be about the neighbour.
+        # Nothing downstream can tell; a person reading the two texts can.
+        result.notes.append(
+            f"{from_joint} passage(s) proviennent d'une discussion commune à "
+            "plusieurs textes : vérifiez qu'ils portent bien sur cette loi avant "
+            "de publier, l'orateur pouvait parler de l'autre."
+        )
     if not result.is_symmetric:
         result.notes.append(
             f"déséquilibre : {len(result.pour)} pour / {len(result.contre)} contre — "

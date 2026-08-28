@@ -265,3 +265,62 @@ def test_the_share_card_exists_and_is_the_right_size(client):
     width = int.from_bytes(header[16:20], "big")
     height = int.from_bytes(header[20:24], "big")
     assert (width, height) == (1200, 630)
+
+
+# --- « Ce que ça change en pratique » : replié plutôt que raccourci ------------
+
+
+def _practical(n: int) -> str:
+    """A block addressing `n` publics, in the order the drafting prompt asks for."""
+    return "\n\n".join(
+        f"Si vous êtes public numéro {i}, voici ce qui change." for i in range(1, n + 1)
+    )
+
+
+def test_a_short_practical_block_is_shown_whole(client, db_session):
+    """Folding two paragraphs behind a click asks the reader to work for nothing."""
+    law = make_law(db_session, slug="loi-courte", practical_changes=_practical(6))
+    page = client.get(f"/loi/{law.slug}").text
+    assert "public numéro 6" in page
+    assert "autres publics concernés" not in page
+    assert '<details class="more-audiences">' not in page
+
+
+def test_a_long_practical_block_keeps_the_broadest_publics_in_view(client, db_session):
+    """The wall this replaces: twenty publics, all of them above the fold.
+
+    A law amending sixty articles across one sector genuinely concerns that many
+    people, and the charter forbids choosing which of them goes unmentioned — so
+    the block cannot be made shorter by dropping anyone. It can stop being a wall.
+    The prompt orders the publics most-concerned-first, which is what makes taking
+    the first few from the top a principled cut rather than an arbitrary one.
+    """
+    law = make_law(db_session, slug="loi-longue", practical_changes=_practical(20))
+    page = client.get(f"/loi/{law.slug}").text
+
+    for i in (1, 2, 3, 4, 5):
+        assert f"public numéro {i}," in page, "the broadest publics stay in view"
+    assert "15 autres publics concernés" in page, "and the reader is told how many follow"
+
+
+def test_nothing_is_dropped_by_the_fold(client, db_session):
+    """The whole basis on which folding is allowed at all.
+
+    Shortening the block would mean deciding whose situation goes unmentioned,
+    which is the one editorial act this platform exists not to make. Folding is
+    only defensible because every paragraph is still on the page.
+    """
+    law = make_law(db_session, slug="loi-repliee", practical_changes=_practical(20))
+    page = client.get(f"/loi/{law.slug}").text
+    for i in range(1, 21):
+        assert f"public numéro {i}," in page, f"public {i} disparu de la page"
+
+
+def test_the_fold_needs_no_javascript(client, db_session):
+    """`<details>` and not a script: the public side works with JS switched off."""
+    law = make_law(db_session, slug="loi-sans-js", practical_changes=_practical(20))
+    page = client.get(f"/loi/{law.slug}").text
+    start = page.index('<details class="more-audiences">')
+    fold = page[start : page.index("</details>", start)]
+    assert "<summary>" in fold, "a real disclosure control, not a styled div"
+    assert "onclick" not in fold and "hx-" not in fold
