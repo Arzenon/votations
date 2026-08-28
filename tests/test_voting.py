@@ -73,7 +73,6 @@ def test_htmx_vote_returns_fragment(client, open_law):
     assert "enregistré" in r.text
 
 
-
 # --- A refused vote must say so, with JavaScript on as well as off ------------
 
 HX = {"HX-Request": "true"}
@@ -113,8 +112,8 @@ def test_htmx_vote_over_the_rate_limit_is_not_silent(client, open_law, monkeypat
     assert r.status_code == 200
     assert not _is_whole_page(r.text)
     # Escaped, because that is how the template emits it — the apostrophes in the
-# French copy become entities. Comparing against the constant rather than a
-# copy of its wording keeps this a test of the behaviour, not of the phrasing.
+    # French copy become entities. Comparing against the constant rather than a
+    # copy of its wording keeps this a test of the behaviour, not of the phrasing.
     assert escape(TOO_MANY_NOTICE) in r.text
 
 
@@ -159,8 +158,12 @@ def test_without_htmx_a_refused_vote_still_gets_the_ordinary_answer(client, clos
 def test_voting_twice_at_once_updates_instead_of_failing(db_session, open_law):
     """Read-then-insert raced against itself and hit the unique constraint."""
     token = "meme-navigateur"
-    first = votes_crud.cast_vote(db_session, open_law, token, VoteChoice.FOR)
-    second = votes_crud.cast_vote(db_session, open_law, token, VoteChoice.AGAINST)
+    first, first_previous = votes_crud.cast_vote(db_session, open_law, token, VoteChoice.FOR)
+    second, second_previous = votes_crud.cast_vote(db_session, open_law, token, VoteChoice.AGAINST)
     assert first.id == second.id
     assert second.choice == "against"
     assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 1
+    # And the second ballot reports what it replaced, which is what lets the
+    # demographic counters move without the row having to remember it.
+    assert first_previous is None
+    assert second_previous == "for"

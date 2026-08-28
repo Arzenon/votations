@@ -80,7 +80,6 @@ def test_connexion_shows_disabled_button(client):
     assert "bientôt disponible" in r.text
 
 
-
 # --- Error pages --------------------------------------------------------------
 
 

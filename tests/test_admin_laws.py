@@ -64,9 +64,7 @@ def test_archiving_hides_a_law_without_destroying_its_votes(client, db_session, 
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
 
     r = client.post(
-
         f"/admin/lois/{open_law.id}/archiver", headers=admin_headers(), follow_redirects=False
-
     )
     assert r.status_code == 303
 
@@ -102,6 +100,34 @@ def test_deleting_asks_on_a_page_the_server_renders(client, open_law):
     assert "irréversible" in page.text
 
 
+def test_the_data_can_still_be_downloaded_from_the_page_that_destroys_it(
+    client, db_session, open_law
+):
+    """« Téléchargez d'abord l'export » has to point at a file that exists.
+
+    Purging is reachable only from the archive, and an archived votation answers
+    404 on every public route — the export included, by design. So the link that
+    tells an administrator to keep the data before destroying it pointed at a
+    404, on the one screen where being wrong is irreversible.
+    """
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    client.post(
+        f"/admin/lois/{open_law.id}/archiver", headers=admin_headers(), follow_redirects=False
+    )
+
+    page = client.get(f"/admin/lois/{open_law.id}/supprimer", headers=admin_headers())
+    offered = f"/admin/lois/{open_law.id}/export.csv"
+    assert offered in page.text
+    # The public route still refuses it, which is what archiving means.
+    assert client.get(f"/loi/{open_law.slug}/export.csv").status_code == 404
+
+    export = client.get(offered, headers=admin_headers())
+    assert export.status_code == 200
+    lines = export.text.strip().splitlines()
+    assert lines[0] == "law_id,choice,created_at"
+    assert len(lines) == 2, "the vote cast above should be in the file"
+
+
 def test_a_law_cannot_be_purged_before_it_is_archived(client, db_session, open_law):
     r = client.post(
         f"/admin/lois/{open_law.id}/supprimer", headers=admin_headers(), follow_redirects=False
@@ -112,9 +138,7 @@ def test_a_law_cannot_be_purged_before_it_is_archived(client, db_session, open_l
 
 def test_purging_an_archived_law_removes_it_for_good(client, db_session, open_law):
     law_id = open_law.id
-    client.post(
-        f"/admin/lois/{law_id}/archiver", headers=admin_headers(), follow_redirects=False
-    )
+    client.post(f"/admin/lois/{law_id}/archiver", headers=admin_headers(), follow_redirects=False)
     r = client.post(
         f"/admin/lois/{law_id}/supprimer", headers=admin_headers(), follow_redirects=False
     )

@@ -223,9 +223,6 @@ def _seed_demographics(db, law: Law, data: dict) -> None:
     votes = db.scalars(select(Vote).where(Vote.law_id == law.id).limit(n)).all()
     for v in votes:
         v.demographics_recorded = True
-        # Which choice their profile was counted under, so that changing the vote
-        # moves the counters rather than leaving them stale.
-        v.demographics_choice = v.choice
 
 
 def _has_demographics(db, law_id: int) -> bool:

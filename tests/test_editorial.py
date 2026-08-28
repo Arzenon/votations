@@ -73,6 +73,7 @@ def test_inclusive_spelling_is_uniform(client, open_law, db_session):
     """One form throughout: ·e·s in the plural."""
 
     votes_crud.cast_vote(db_session, open_law, "jeton", VoteChoice.FOR)
+    db_session.commit()
     pages = [client.get("/").text, client.get(f"/loi/{open_law.slug}/resultats").text]
     for page in pages:
         assert "votant·es" not in page
@@ -231,8 +232,8 @@ def test_the_note_is_a_collapsed_disclosure_asking_the_question(client, open_law
     """
     page = _flat(client.get(f"/loi/{open_law.slug}").text)
 
-    assert "<details class=\"provenance\">" in page, "not a native disclosure"
-    assert "<details class=\"provenance\" open" not in page, "it should start closed"
+    assert '<details class="provenance">' in page, "not a native disclosure"
+    assert '<details class="provenance" open' not in page, "it should start closed"
 
     summary = page.split("<summary>")[1].split("</summary>")[0].strip()
     assert summary == escape("Qui a écrit cette présentation ?"), (

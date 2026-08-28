@@ -22,6 +22,7 @@ from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import results as results_crud
 from app.db import get_db
+from app.models import Law
 from app.routes.public.common import exports_busy, not_found, too_many_exports, visible
 
 router = APIRouter()
@@ -54,15 +55,15 @@ def _export_refused(request: Request) -> HTMLResponse | None:
     return None
 
 
-@router.get("/loi/{slug}/export.csv")
-def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
-    law = visible(db, slug)
-    if law is None:
-        return not_found(request)
-    refused = _export_refused(request)
-    if refused is not None:
-        return refused
+def csv_response(db: Session, law: Law) -> StreamingResponse:
+    """One law's votes, streamed as CSV.
 
+    Shared with the administration, which offers this same file for a law that
+    has been archived — the last chance to keep the data before a purge destroys
+    it, and a law the public route refuses by design. The reductions applied to
+    the rows are the same either way: an archived votation is withdrawn from the
+    site, not exempted from the anonymity rules.
+    """
     # Counted once and handed down, as the JSON route already did. Without it
     # `iter_export_rows` runs its own COUNT to decide whether the time column may
     # be published at all.
@@ -90,8 +91,19 @@ def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
     return StreamingResponse(
         rows(),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="votations-{slug}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="votations-{law.slug}.csv"'},
     )
+
+
+@router.get("/loi/{slug}/export.csv")
+def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
+    law = visible(db, slug)
+    if law is None:
+        return not_found(request)
+    refused = _export_refused(request)
+    if refused is not None:
+        return refused
+    return csv_response(db, law)
 
 
 @router.get("/loi/{slug}/export.json")

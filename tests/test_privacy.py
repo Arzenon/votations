@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from itsdangerous import URLSafeSerializer
+from sqlalchemy import delete
 
 from app import profile_cookie
 from app.auth.anonymous import COOKIE_NAME
 from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import votes as votes_crud
-from app.models import Vote, VoteChoice
-from tests.helpers import demographic_cells, make_law
+from app.models import Law, Vote, VoteChoice
+from tests.helpers import cast_ballot, demographic_cells, make_law
 
 # --- Nothing is issued to someone who only reads ------------------------------
 
@@ -116,7 +121,18 @@ def test_the_server_still_stores_no_profile_per_voter(client, open_law, db_sessi
     assert "femme" not in str(stored)
     assert "Corse" not in str(stored)
     assert stored["demographics_recorded"] is True
-    assert stored["demographics_choice"] == "for"
+    # And nothing else about the person: the columns are the law, the choice, the
+    # hashed token, the time, and that one flag. In particular no second choice —
+    # a row that carried the choice a voter had made *before* would be a record of
+    # a changed mind, which /vie-privee promises this table does not hold.
+    assert set(stored) == {
+        "id",
+        "law_id",
+        "choice",
+        "voter_token",
+        "created_at",
+        "demographics_recorded",
+    }
 
 
 def test_the_profile_cookie_holds_categories_and_never_the_vote(client, open_law):
@@ -169,20 +185,22 @@ def test_an_invalid_category_is_never_recorded(client, open_law, db_session):
 def test_without_a_cookie_nothing_moves_and_nothing_breaks(open_law, db_session):
     """Cleared cookies simply leave an old contribution where it was."""
 
-    vote = votes_crud.cast_vote(db_session, open_law, "jeton", VoteChoice.FOR)
-    demo_crud.record(db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="65+")
+    cast_ballot(db_session, open_law, "jeton", VoteChoice.FOR, age_bracket="65+")
     assert demographic_cells(db_session, open_law.id)[("age", "65+", "for")] == 1
 
-    vote = votes_crud.cast_vote(db_session, open_law, "jeton", VoteChoice.AGAINST)
-    demo_crud.record(db_session, vote=vote, choice=VoteChoice.AGAINST, previous={})
+    cast_ballot(db_session, open_law, "jeton", VoteChoice.AGAINST, previous_categories={})
 
     cells = demographic_cells(db_session, open_law.id)
     assert cells[("age", "65+", "for")] == 1
-    # And the tracker keeps pointing at the choice the counter actually sits
-    # under. Advancing it would make the column claim the contribution had moved
-    # when it had not, so a later change with a restored cookie would decrement
-    # the wrong cell.
-    assert vote.demographics_choice == "for"
+
+    # And it stays there, for every later change, however many. That is what makes
+    # it safe to keep no record of where a contribution sits: the ballot stops
+    # offering the profile fields once one exists, and the cookie is only ever
+    # written back from categories it already held — so a browser that has
+    # forgotten this law can never learn it again, and can never move the wrong
+    # cell later on.
+    cast_ballot(db_session, open_law, "jeton", VoteChoice.ABSTAIN, previous_categories={})
+    assert demographic_cells(db_session, open_law.id)[("age", "65+", "for")] == 1
 
 
 def test_a_profile_given_on_one_law_never_moves_another_laws_counters(client, db_session):
@@ -217,7 +235,6 @@ def test_the_cookie_remembers_several_laws_at_once(client, db_session):
     b = make_law(db_session, slug="loi-d", title="Loi D")
     client.post(f"/loi/{a.slug}/vote", data={"choice": "for", "age_bracket": "18-24"})
     client.post(f"/loi/{b.slug}/vote", data={"choice": "for", "age_bracket": "65+"})
-
 
     stored = client.cookies.get(profile_cookie.COOKIE_NAME)
     assert _stored_for(stored, a.id) == {"age": "18-24"}
@@ -289,3 +306,157 @@ def test_dropping_the_fallback_does_log_everyone_out(client, open_law, db_sessio
 
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
     assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 2
+
+
+# --- Two ballots in flight at once --------------------------------------------
+#
+# Both tests below run against real, separate connections on purpose: what they
+# check is how two transactions interleave, and the rest of the suite runs inside
+# a single shared one where they cannot.
+
+
+@contextmanager
+def _law_of_its_own(Session):
+    """A committed law, and its removal afterwards whatever happens."""
+    setup = Session()
+    law = Law(
+        slug="loi-bulletins-simultanes",
+        title="Loi votée deux fois d'un coup",
+        published=True,
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+        closes_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    setup.add(law)
+    setup.commit()
+    try:
+        yield law.id
+    finally:
+        # Cascades to the votes and the counters, so nothing of this test is left
+        # behind for the next one to trip over.
+        setup.execute(delete(Law).where(Law.id == law.id))
+        setup.commit()
+        setup.close()
+
+
+def _both_at_once(Session, ballot) -> None:
+    """Run ``ballot(db)`` twice, on two connections, released together.
+
+    The barrier is what makes this a test rather than a coincidence: both threads
+    are inside the vote path before either is allowed to finish it.
+    """
+    start = threading.Barrier(2, timeout=10)
+    failures: list[Exception] = []
+
+    def run() -> None:
+        db = Session()
+        try:
+            start.wait()
+            ballot(db)
+            db.commit()
+        except Exception as exc:  # surfaced below rather than lost in a thread
+            failures.append(exc)
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert not failures, failures
+    assert not any(thread.is_alive() for thread in threads), "a ballot never finished"
+
+
+def test_two_first_ballots_at_once_count_one_profile(sessionmaker_for):
+    """One voter, two simultaneous first ballots, one contribution.
+
+    The bug this pins: casting the vote and folding in the profile were two
+    transactions, and the second read ``demographics_recorded`` before the first
+    had set it. Both believed they were the first contribution, both added one,
+    and the demographic breakdown came out larger than the tally it is supposed
+    to decompose — on the one page whose promise is that you can check the number
+    yourself. It took nothing more exotic than a double click, a retried POST or
+    two tabs.
+    """
+    Session = sessionmaker_for
+    with _law_of_its_own(Session) as law_id:
+
+        def ballot(db):
+            vote, previous = votes_crud.cast_vote(
+                db, db.get(Law, law_id), "meme-navigateur", VoteChoice.FOR
+            )
+            # Deliberate, and the whole method of this test: it holds the ballot
+            # open across the moment the other one is reading. While the two
+            # halves share a transaction the second thread is still waiting on
+            # the first inside `cast_vote` and this costs nothing; split them
+            # again and this is the window in which both read
+            # `demographics_recorded` as false.
+            time.sleep(0.1)
+            demo_crud.record(
+                db,
+                vote=vote,
+                choice=VoteChoice.FOR,
+                previous_choice=previous,
+                age_bracket="25-34",
+            )
+
+        _both_at_once(Session, ballot)
+
+        check = Session()
+        try:
+            assert check.query(Vote).filter_by(law_id=law_id).count() == 1
+            assert demographic_cells(check, law_id) == {("age", "25-34", "for"): 1}
+        finally:
+            check.close()
+
+
+def test_two_vote_changes_at_once_move_the_profile_once(sessionmaker_for):
+    """The same voter changing their mind twice at once moves one contribution.
+
+    This is the half the row lock buys. A first ballot is already serialised by
+    the insert, which waits on a conflicting transaction; a *change* conflicts
+    with a row that is long committed, so nothing waits — and both ballots read
+    the same previous choice, both decremented the old cell and both incremented
+    the new one. The old cell clamps at zero, the new one holds two, and one
+    voter has been counted twice in a breakdown for the second time.
+    """
+    Session = sessionmaker_for
+    with _law_of_its_own(Session) as law_id:
+        first = Session()
+        try:
+            vote, previous = votes_crud.cast_vote(
+                first, first.get(Law, law_id), "meme-navigateur", VoteChoice.FOR
+            )
+            demo_crud.record(
+                first,
+                vote=vote,
+                choice=VoteChoice.FOR,
+                previous_choice=previous,
+                age_bracket="25-34",
+            )
+            first.commit()
+        finally:
+            first.close()
+
+        def ballot(db):
+            vote, previous = votes_crud.cast_vote(
+                db, db.get(Law, law_id), "meme-navigateur", VoteChoice.AGAINST
+            )
+            demo_crud.record(
+                db,
+                vote=vote,
+                choice=VoteChoice.AGAINST,
+                previous_choice=previous,
+                # What the browser sends back, both times.
+                previous_categories={"age": "25-34"},
+            )
+
+        _both_at_once(Session, ballot)
+
+        check = Session()
+        try:
+            cells = demographic_cells(check, law_id)
+            assert cells.get(("age", "25-34", "against")) == 1
+            assert cells.get(("age", "25-34", "for"), 0) == 0
+        finally:
+            check.close()

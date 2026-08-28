@@ -82,7 +82,11 @@ def _headers() -> dict[str, str]:
     return headers
 
 
-_default_getter = getter(timeout=30.0, error=InseeFetchError, headers=_headers)
+# Melodi answers a small JSON document per query — kilobytes, not megabytes.
+MAX_PAYLOAD_BYTES = 16 * 1024 * 1024
+_default_getter = getter(
+    timeout=30.0, max_bytes=MAX_PAYLOAD_BYTES, error=InseeFetchError, headers=_headers
+)
 
 
 def _payload(get: Getter, url: str) -> dict:

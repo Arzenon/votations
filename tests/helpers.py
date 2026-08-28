@@ -17,8 +17,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.crud import demographics as demo_crud
+from app.crud import votes as votes_crud
 from app.logging_config import LOGGER_NAME
-from app.models import DemographicTally, Law
+from app.models import DemographicTally, Law, Vote, VoteChoice
 
 
 def basic_auth(user: str, password: str) -> dict[str, str]:
@@ -54,6 +56,35 @@ def make_law(db: Session, **kwargs) -> Law:
     db.commit()
     db.refresh(law)
     return law
+
+
+def cast_ballot(
+    db: Session,
+    law: Law,
+    token: str,
+    choice: VoteChoice,
+    *,
+    previous_categories: dict[str, str] | None = None,
+    **profile: str,
+) -> Vote:
+    """One ballot, cast the way the vote route casts it.
+
+    The vote and the counters it moves are one transaction, committed once — so a
+    test that reads ``demographics_recorded`` back out of SQL sees what a request
+    would have left behind. ``previous_categories`` stands in for the profile
+    cookie the browser would send back.
+    """
+    vote, previous_choice = votes_crud.cast_vote(db, law, token, choice)
+    demo_crud.record(
+        db,
+        vote=vote,
+        choice=choice,
+        previous_choice=previous_choice,
+        previous_categories=previous_categories,
+        **profile,
+    )
+    db.commit()
+    return vote
 
 
 def demographic_cells(db: Session, law_id: int) -> dict[tuple[str, str, str], int]:

@@ -1,5 +1,31 @@
 # Terminates TLS and forwards to the app. Caddy obtains and renews the
 # certificate on its own; the domain must already resolve to this host.
+
+{
+	servers {
+		timeouts {
+			# `write` is the one that matters. An open-data export is the only
+			# response on the site whose length is unbounded: it holds a pooled
+			# database connection for as long as the client takes to read it, and
+			# `EXPORT_MAX_CONCURRENT` caps how many may stream at once but not for
+			# how long. Four clients reading one byte a minute could therefore
+			# hold four connections indefinitely, inside every rate limit, and
+			# nothing would ever take them back.
+			#
+			# Half an hour, not ten minutes: this is a hard deadline on the whole
+			# response, so it also applies to somebody honestly downloading a large
+			# votation over a poor connection — and the charter names slow
+			# connections explicitly. Cutting that download mid-file, silently,
+			# would be a worse failure than the one being prevented. Thirty minutes
+			# is far more than any real export needs and still bounds the hold.
+			read_body 1m
+			read_header 10s
+			write 30m
+			idle 2m
+		}
+	}
+}
+
 {$SITE_DOMAIN} {
 	encode zstd gzip
 

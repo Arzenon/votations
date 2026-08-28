@@ -289,9 +289,7 @@ def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=Non
     monkeypatch.setattr("app.drafting.generate_draft", generate)
     monkeypatch.setattr("app.drafting.fetch_speeches", lambda seances: list(speeches))
     if arguments is not None:
-        monkeypatch.setattr(
-            "app.drafting.select_arguments", lambda law, sp, client=None: arguments
-        )
+        monkeypatch.setattr("app.drafting.select_arguments", lambda law, sp, client=None: arguments)
 
 
 def _draft(client, item_id, **data):
@@ -487,6 +485,66 @@ def test_a_draft_without_a_nor_fails_cleanly(client, db_session, background_db, 
     assert "NOR" in stored.draft_error
 
 
+def test_the_job_holds_no_database_session_while_it_waits(db_session, background_db, monkeypatch):
+    """The long steps must not sit on a connection — nor on a snapshot.
+
+    A ``Session`` that has read anything keeps its transaction open until it
+    commits or closes, and this job then spends minutes on Journal Officiel
+    archives and two model calls. Two of them at once used to leave two backends
+    idle in transaction for as long as the deadline allows, which is enough to
+    stop autovacuum reclaiming dead rows across the whole database — including
+    ``votes``, the one table being written to continuously — and to make the
+    ``ALTER TABLE`` of a redeploy queue behind a model call.
+    """
+    from app import drafting
+
+    item = _stage(db_session)
+    open_sessions = 0
+    held_during: list[str] = []
+
+    inner = drafting.SessionLocal
+
+    def counting_session():
+        nonlocal open_sessions
+        db = inner()
+        open_sessions += 1
+        real_close = db.close
+
+        def close():
+            nonlocal open_sessions
+            open_sessions -= 1
+            real_close()
+
+        db.close = close
+        return db
+
+    monkeypatch.setattr("app.drafting.SessionLocal", counting_session)
+
+    def watch(step):
+        if open_sessions:
+            held_during.append(step)
+
+    _patch_job(monkeypatch)
+    for step, name in (
+        ("app.drafting.fetch_law_text", "texte officiel"),
+        ("app.drafting.generate_draft", "rédaction"),
+        ("app.drafting.fetch_speeches", "comptes rendus"),
+        ("app.drafting.select_arguments", "sélection des arguments"),
+    ):
+        previous = getattr(drafting, step.rsplit(".", 1)[1])
+        monkeypatch.setattr(
+            step,
+            lambda *a, _p=previous, _n=name, **k: (watch(_n), _p(*a, **k))[1],
+        )
+
+    drafting.build_draft(item.id)
+
+    assert not held_during, f"a session was open during: {held_during}"
+    assert open_sessions == 0, "the job left a session open"
+    db_session.expire_all()
+    assert db_session.get(ImportedLaw, item.id).draft_status == "pret"
+
+
 def test_the_job_gives_up_rather_than_hanging(db_session, background_db, monkeypatch):
     """A whole-job deadline keeps a slow source from pinning a worker forever."""
     from app import drafting
@@ -510,7 +568,6 @@ def test_draft_route_requires_auth(client, db_session):
 
 def test_draft_route_404_for_unknown_import(client, db_session):
     assert client.post("/admin/imports/999/brouillon", headers=_admin_auth()).status_code == 404
-
 
 
 # --- The AI corpus is measured, not just trimmed ------------------------------
@@ -580,9 +637,7 @@ def test_a_draft_interrupted_by_a_restart_is_released(client, db_session):
     assert item.draft_error == imports_crud.INTERRUPTED_MESSAGE
 
     # And now the administrator can act on it again: the banner is dismissible…
-    r = client.post(
-        f"/admin/imports/{item.id}/brouillon/masquer", headers=_admin_auth()
-    )
+    r = client.post(f"/admin/imports/{item.id}/brouillon/masquer", headers=_admin_auth())
     assert r.status_code in (200, 303)
     db_session.refresh(item)
     assert item.draft_status != DRAFT_PENDING
@@ -613,9 +668,7 @@ def test_the_draft_claim_is_won_once(db_session):
     assert item.draft_status == DRAFT_PENDING
 
 
-def test_a_second_click_does_not_queue_a_second_job(
-    client, db_session, background_db, monkeypatch
-):
+def test_a_second_click_does_not_queue_a_second_job(client, db_session, background_db, monkeypatch):
     """The route's gate is the claim, so the queue never grows a duplicate."""
     calls: list[int] = []
     _patch_job(monkeypatch, calls=calls)
@@ -755,9 +808,7 @@ def test_the_ready_banner_points_at_the_law_when_there_is_one(client, db_session
     copy.
     """
     item, law = _imported_law(db_session)
-    banner = client.get(
-        f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()
-    ).text
+    banner = client.get(f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()).text
 
     assert f"/admin/lois/{law.id}?brouillon=1" in banner
     assert "/admin/lois/nouvelle" not in banner, "the creation form is the wrong door here"
@@ -766,9 +817,7 @@ def test_the_ready_banner_points_at_the_law_when_there_is_one(client, db_session
 def test_the_ready_banner_still_points_at_creation_before_a_law_exists(client, db_session):
     item = _stage(db_session, uid="DLR5L17N911")
     imports_crud.save_draft(db_session, item, draft={"summary_text": "x"})
-    banner = client.get(
-        f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()
-    ).text
+    banner = client.get(f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()).text
     assert f"/admin/lois/nouvelle?import_id={item.id}" in banner
 
 

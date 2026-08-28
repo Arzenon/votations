@@ -137,6 +137,13 @@ class ExportDirectoryError(RuntimeError):
     """The snapshot directory cannot be written to."""
 
 
+#: Suffix of a snapshot still being written. Named rather than spelled out at the
+#: two places that need it: the retention sweep below globs for what it collects,
+#: and a glob that does not know this suffix collects everything *except* the
+#: files that are actually junk.
+_PARTIAL_SUFFIX = ".json.partial"
+
+
 def export(directory: Path, keep_days: int) -> Path:
     """Write today's snapshot and drop the ones past ``keep_days``."""
     try:
@@ -162,7 +169,7 @@ def export(directory: Path, keep_days: int) -> Path:
     target = directory / f"votations-contenu-{stamp}.json"
     # Written beside and renamed, so an interrupted run never leaves a truncated
     # file that looks like a snapshot.
-    partial = target.with_suffix(".json.partial")
+    partial = target.with_suffix(_PARTIAL_SUFFIX)
     partial.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
     partial.rename(target)
 
@@ -171,6 +178,15 @@ def export(directory: Path, keep_days: int) -> Path:
         for old in directory.glob("votations-contenu-*.json"):
             if old != target and old.stat().st_mtime < cutoff:
                 old.unlink()
+
+    # What a killed run leaves behind. The sweep above collects snapshots, and a
+    # `.json.partial` is not one — so an interrupted export used to sit in the
+    # bind mount for ever, full size, on the same disk as PostgreSQL. An hour
+    # old, so a run happening right now is never touched.
+    stale = utcnow().timestamp() - 3600
+    for junk in directory.glob(f"votations-contenu-*{_PARTIAL_SUFFIX}"):
+        if junk.stat().st_mtime < stale:
+            junk.unlink()
     return target
 
 
@@ -194,9 +210,7 @@ def _read(path: Path) -> dict:
         raise ContentFormatError("ce fichier n'est pas un export de contenu")
     version = document.get("format")
     if version != FORMAT_VERSION:
-        raise ContentFormatError(
-            f"format {version} — cette version lit le format {FORMAT_VERSION}"
-        )
+        raise ContentFormatError(f"format {version} — cette version lit le format {FORMAT_VERSION}")
     return document
 
 

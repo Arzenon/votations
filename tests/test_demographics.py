@@ -1,8 +1,8 @@
 """Aggregate demographics: one-time recording, no PII, and cell suppression."""
 
 from app.crud import demographics as demo_crud
-from app.crud import votes as votes_crud
 from app.models import DemographicTally, Vote, VoteChoice
+from tests.helpers import cast_ballot
 
 
 def _dimension(db, law_id, dimension, **kwargs):
@@ -25,9 +25,8 @@ def _cell(db, law_id, dimension, category, choice):
 
 
 def test_record_increments_marginal_counters(open_law, db_session):
-    vote = votes_crud.cast_vote(db_session, open_law, "tok-1", VoteChoice.FOR)
-    demo_crud.record(
-        db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="35-49", sexe="femme"
+    vote = cast_ballot(
+        db_session, open_law, "tok-1", VoteChoice.FOR, age_bracket="35-49", sexe="femme"
     )
 
     assert _cell(db_session, open_law.id, "age", "35-49", "for").count == 1
@@ -36,10 +35,7 @@ def test_record_increments_marginal_counters(open_law, db_session):
 
 
 def test_no_per_voter_demographics_stored(open_law, db_session):
-    vote = votes_crud.cast_vote(db_session, open_law, "tok-2", VoteChoice.FOR)
-    demo_crud.record(
-        db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="25-34", sexe="homme"
-    )
+    cast_ballot(db_session, open_law, "tok-2", VoteChoice.FOR, age_bracket="25-34", sexe="homme")
 
     # Counters carry no token; vote row carries no demographic values.
     cols = {c.name for c in DemographicTally.__table__.columns}
@@ -49,14 +45,10 @@ def test_no_per_voter_demographics_stored(open_law, db_session):
 
 
 def test_demographics_recorded_once_despite_vote_change(open_law, db_session):
-    vote = votes_crud.cast_vote(db_session, open_law, "tok-3", VoteChoice.FOR)
-    demo_crud.record(
-        db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="25-34", sexe="homme"
-    )
+    cast_ballot(db_session, open_law, "tok-3", VoteChoice.FOR, age_bracket="25-34", sexe="homme")
     # Voter changes their mind and resubmits demographics — must NOT double-count.
-    vote = votes_crud.cast_vote(db_session, open_law, "tok-3", VoteChoice.AGAINST)
-    demo_crud.record(
-        db_session, vote=vote, choice=VoteChoice.AGAINST, age_bracket="25-34", sexe="homme"
+    cast_ballot(
+        db_session, open_law, "tok-3", VoteChoice.AGAINST, age_bracket="25-34", sexe="homme"
     )
 
     assert _cell(db_session, open_law.id, "age", "25-34", "for").count == 1
@@ -64,8 +56,7 @@ def test_demographics_recorded_once_despite_vote_change(open_law, db_session):
 
 
 def test_invalid_values_ignored(open_law, db_session):
-    vote = votes_crud.cast_vote(db_session, open_law, "tok-4", VoteChoice.FOR)
-    demo_crud.record(db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="999", sexe="")
+    vote = cast_ballot(db_session, open_law, "tok-4", VoteChoice.FOR, age_bracket="999", sexe="")
     assert db_session.query(DemographicTally).count() == 0
     assert vote.demographics_recorded is False
 
@@ -122,9 +113,8 @@ def test_breakdown_shown_above_threshold(open_law, db_session):
 
 
 def test_region_recorded_as_marginal(open_law, db_session):
-    vote = votes_crud.cast_vote(db_session, open_law, "tok-r", VoteChoice.FOR)
-    demo_crud.record(
-        db_session, vote=vote, choice=VoteChoice.FOR, age_bracket="35-49", region="Bretagne"
+    cast_ballot(
+        db_session, open_law, "tok-r", VoteChoice.FOR, age_bracket="35-49", region="Bretagne"
     )
     assert _cell(db_session, open_law.id, "region", "Bretagne", "for").count == 1
     # No joint age×region cell is ever created — only independent marginals.
@@ -134,12 +124,10 @@ def test_region_recorded_as_marginal(open_law, db_session):
 
 def test_provision_rate(open_law, db_session):
     for i in range(4):
-        votes_crud.cast_vote(db_session, open_law, f"p{i}", VoteChoice.FOR)
+        cast_ballot(db_session, open_law, f"p{i}", VoteChoice.FOR)
     # Two of the four share a profile.
-    v = votes_crud.cast_vote(db_session, open_law, "p0", VoteChoice.FOR)
-    demo_crud.record(db_session, vote=v, choice=VoteChoice.FOR, sexe="femme")
-    v = votes_crud.cast_vote(db_session, open_law, "p1", VoteChoice.FOR)
-    demo_crud.record(db_session, vote=v, choice=VoteChoice.FOR, sexe="homme")
+    cast_ballot(db_session, open_law, "p0", VoteChoice.FOR, sexe="femme")
+    cast_ballot(db_session, open_law, "p1", VoteChoice.FOR, sexe="homme")
 
     rate = demo_crud.provision_rate(db_session, open_law.id)
     assert rate.total_votes == 4

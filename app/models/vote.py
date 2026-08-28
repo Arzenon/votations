@@ -67,11 +67,14 @@ class Vote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # True once this voter's optional demographics have been folded into the
-    # aggregate counters. Stores no demographic values, only the fact that the
-    # one-time contribution happened.
+    # aggregate counters. Stores no demographic values and no second choice, only
+    # the fact that the one-time contribution happened.
+    #
+    # A `demographics_choice` column used to sit beside it, holding the choice the
+    # contribution had been filed under so that changing a vote could move the
+    # counters. It was redundant with `choice` except in one case — a browser that
+    # had forgotten its profile cookie — and in exactly that case it turned the
+    # row into a record of somebody having changed their mind, and of what they
+    # had chosen before. `cast_vote` now reads the previous choice under a lock
+    # and hands it straight to the counters, so nothing has to be kept.
     demographics_recorded: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    # Which choice this voter's demographics were counted under, so that changing
-    # a vote can move the aggregate counters instead of leaving them stale. Holds
-    # a choice, never a category: the profile itself is still stored nowhere.
-    demographics_choice: Mapped[str | None] = mapped_column(String(16), default=None)

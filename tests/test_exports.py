@@ -160,7 +160,6 @@ def test_a_large_export_is_streamed_not_buffered(client, open_law, db_session):
     assert len("".join(chunks).strip().splitlines()) == 251  # header + rows
 
 
-
 # --- A8: the exports stream and are throttled --------------------------------
 
 

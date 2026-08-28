@@ -1,21 +1,36 @@
 """AI-assisted first draft of a law's neutral presentation.
 
-Given the official text published at the Journal Officiel, produce a draft of the
-two **factual** blocks of the charter's presentation structure:
+Two halves, and they work in opposite ways on purpose.
+
+**The factual blocks are written.** Given the official text published at the
+Journal Officiel, :func:`generate_draft` produces a draft of the first two blocks
+of the charter's presentation structure:
 
 1. « Ce que dit la loi » — a factual summary of the official text.
 2. « Ce que ça change en pratique » — the concrete consequences, in plain French.
 
-The two argument blocks are deliberately **not** generated. Arguments have to be
-sourced and attributed, and the Journal Officiel carries no argumentative
-material at all — no exposé des motifs, no debates, no attributed positions.
-Asking a model for them would be asking it to invent, which is exactly what the
-charter forbids. A human researches and attributes those.
+**The argument blocks are not written — they are quoted.** Arguments have to be
+sourced and attributed, and asking a model to compose them would be asking it to
+invent, which is what the charter forbids. So :func:`select_arguments` makes
+invention mechanically impossible instead: it is given the speeches actually
+delivered in public sitting (see :mod:`app.debates`), the model returns the id of
+a speech and a span it claims to have copied from it, and the span is checked
+against that speech before it is kept. Attribution never comes from the model —
+speaker, date and link are copied from the record we fetched.
+
+This division is why the Journal Officiel alone is not enough: it carries no
+argumentative material at all, no exposé des motifs and no debates. The comptes
+rendus do.
 
 Design notes:
-- The client is injectable so the prompt and parsing are testable offline.
-- Drafts are never generated automatically, never stored, and never published:
-  the output pre-fills a form that a person edits and validates.
+- The client is injectable so the prompts and parsing are testable offline.
+- A draft is **stored** on the staged row that produced it
+  (:attr:`~app.models.imported_law.ImportedLaw.draft`), because generating one is
+  billable and reopening a form must not pay for it twice. Storing it publishes
+  nothing: it pre-fills a form that a person edits and validates, and only
+  « Enregistrer » writes a law.
+- Nothing here runs on its own. A draft happens when an administrator asks for
+  one, never on the daily import.
 - The input is measured before sending, so an outsized text is refused rather
   than silently billed.
 """

@@ -1,6 +1,5 @@
 """V1: advanced search filtering and anti-manipulation evolution gating."""
 
-
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import event
@@ -50,10 +49,7 @@ def test_evolution_shown_above_min_volume(db_session, open_law, monkeypatch):
     assert sum(b.counts["for"] for b in buckets) == 4
 
 
-
 # --- Search ------------------------------------------------------------------
-
-
 
 
 def test_search_pages_in_sql_not_in_python(db_session):

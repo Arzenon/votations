@@ -15,6 +15,7 @@ from app.models import STATUS_IMPORTED, Law
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form, preview_form
 from app.routes.admin.guard import require_admin
+from app.routes.public.exports import csv_response
 from app.routes.public.laws import law_page_context
 from app.templating import templates
 
@@ -300,6 +301,25 @@ def confirm_archive(
             "danger": False,
         },
     )
+
+
+@router.get("/lois/{law_id}/export.csv")
+def export_law_csv(law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+    """The open-data CSV for any law, archived ones included.
+
+    The public route refuses an archived law — that is what archiving means — and
+    the page that offers to destroy a votation for good is reached only from the
+    archive. So the one link whose job is to say « keep the data first » pointed
+    at a 404, on the only screen where that mattered.
+
+    The rows are the same the public export serves, reductions and all: archiving
+    withdraws a votation from the site, it does not exempt it from the anonymity
+    rules. What this route adds is reach, not detail.
+    """
+    law = laws_crud.get_by_id(db, law_id)
+    if law is None:
+        raise HTTPException(404)
+    return csv_response(db, law)
 
 
 @router.post("/lois/{law_id}/archiver")

@@ -14,7 +14,14 @@ dependencies = [
     "itsdangerous>=2.2",
     "python-multipart>=0.0.12",
     "httpx>=0.27",
-    "anthropic>=0.69",
+    # Pinned below 1.0 on purpose, and it is the pin that matters rather than the
+    # floor: `requirements.lock` installs 0.124 and a bare `>=0.69` would hand a
+    # `pip install -e .` outside Docker the 1.x series instead — a different major
+    # of the SDK than the image runs, which is the sort of divergence you discover
+    # from a stack trace. The 1.x upgrade is a deliberate piece of work (httpx2
+    # among other things, which Starlette's test client is heading for too) and
+    # belongs in its own change, not in a lockfile refresh.
+    "anthropic>=0.69,<1",
     # Entity-expansion-safe XML parsing for the Journal Officiel archives.
     "defusedxml>=0.7",
 ]

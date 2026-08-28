@@ -78,8 +78,12 @@ class LawText:
         return f"{self.title}\n\n{body}".strip()
 
 
-# Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page.
-_default_getter = getter(timeout=180.0, error=LegifranceFetchError)
+# Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page. The
+# ceiling is generous against that — a JO day is not going to grow tenfold — and
+# is there so a truncated read is a message and a retry rather than the host's
+# memory. The per-member cap above still applies once the archive is open.
+MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
+_default_getter = getter(timeout=180.0, max_bytes=MAX_ARCHIVE_BYTES, error=LegifranceFetchError)
 
 
 def _base_url() -> str:

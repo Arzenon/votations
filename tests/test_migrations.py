@@ -70,7 +70,6 @@ def test_the_chain_downgrades_and_upgrades_again(engine):
         assert compare_metadata(context, Base.metadata) == []
 
 
-
 # --- Migration drift ---------------------------------------------------------
 
 

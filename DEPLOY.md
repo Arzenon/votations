@@ -39,6 +39,13 @@ POSTGRES_PASSWORD=<généré comme ci-dessus>
 TRUSTED_PROXY_CIDR=172.16.0.0/12   # facultatif, défaut correct pour Docker
 ```
 
+> **`POSTGRES_PASSWORD` finit à l'intérieur d'une URL** (`DATABASE_URL`, composée
+> dans le fichier compose). `token_urlsafe` ne produit que des lettres, des
+> chiffres, `-` et `_`, qui s'y insèrent sans rien casser. Un mot de passe choisi
+> à la main contenant `@`, `:`, `/`, `?`, `#` ou `%` couperait l'URL au mauvais
+> endroit : la connexion échouerait avec un message qui ne parle pas du mot de
+> passe. Gardez la commande ci-dessus, ou encodez les caractères spéciaux.
+
 Sans elles, `docker compose up` s'arrête immédiatement en nommant celle qui
 manque, plutôt que de démarrer sur une valeur vide.
 

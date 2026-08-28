@@ -22,6 +22,25 @@ INTERVAL="${BACKUP_INTERVAL:-86400}"
 MIN_FREE_MB="${BACKUP_MIN_FREE_MB:-500}"
 HEARTBEAT="${BACKUP_HEARTBEAT:-/tmp/backup-alive}"
 
+# What to do about a signal when there is nothing in flight to clean up: leave,
+# promptly and successfully. `dump` installs its own disposition for the duration
+# of a dump and calls this again afterwards — restoring it rather than clearing
+# it, which would have left the loop below deaf to SIGTERM from its second cycle
+# onwards.
+_idle_traps() {
+  trap 'exit 0' HUP INT TERM
+}
+
+# Sleep, but wake up for SIGTERM. As PID 1 of its container, `sh` blocked inside
+# `sleep` never sees the signal `docker compose down` sends, so this container
+# spent the full stop-timeout being killed on every redeploy. Same fix, and the
+# same reason, as `docker/periodic.sh` — which this script cannot source, because
+# it runs in the Postgres image and is the only file mounted into it.
+_nap() {
+  sleep "$1" &
+  wait $!
+}
+
 free_mb() {
   df -Pm "$1" 2>/dev/null | awk 'NR==2 {print $4}'
 }
@@ -104,7 +123,7 @@ dump() {
   # On success these are already gone (moved, or never written); `rm -f` says so
   # without caring which.
   rm -f "$raw" "$raw.err" "$target.partial"
-  trap - HUP INT TERM
+  _idle_traps
   return "$status"
 }
 
@@ -114,9 +133,10 @@ case "${1:-dump}" in
     ;;
   loop)
     echo "→ sauvegarde toutes les ${INTERVAL}s, conservation ${KEEP_DAYS} jours"
+    _idle_traps
     while true; do
       dump || echo "→ nouvel essai au prochain cycle"
-      sleep "$INTERVAL"
+      _nap "$INTERVAL"
     done
     ;;
   list)

@@ -26,8 +26,12 @@
 <p class="disclaimer" role="alert">
   <strong>{{ tally.total }} votes seront définitivement effacés.</strong>
   Téléchargez d'abord
-  <a href="/loi/{{ law.slug }}/export.csv">l'export CSV</a> si ces données doivent
-  être conservées : elles ne pourront pas être reconstituées.
+  {# The administration's own export, not the public one: this page is reached
+     only from the archive, and an archived votation answers 404 on every public
+     route — which made the one link that says « keep the data first » a dead
+     link, on the only screen where that matters. #}
+  <a href="/admin/lois/{{ law.id }}/export.csv">l'export CSV</a> si ces données
+  doivent être conservées : elles ne pourront pas être reconstituées.
 </p>
 {% endif %}
 

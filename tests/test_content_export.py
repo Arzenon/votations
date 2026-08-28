@@ -234,6 +234,33 @@ def test_export_writes_a_readable_file_and_prunes_old_ones(db_session, tmp_path,
     assert [law["slug"] for law in document["laws"]] == ["loi-fichier"]
 
 
+def test_the_wreckage_of_a_killed_export_is_collected(db_session, tmp_path, monkeypatch):
+    """A `.json.partial` is not a snapshot, so the retention sweep never saw one.
+
+    An export killed mid-write therefore left a full-size file in the bind mount
+    for ever, on the same disk as PostgreSQL — the failure `backup.sh` already
+    guards against with `clean_partials`.
+    """
+    import os
+
+    monkeypatch.setattr("scripts.content.SessionLocal", lambda: _NoClose(db_session))
+    make_law(db_session, slug="loi-fichier", title="Loi fichier")
+
+    wreck = tmp_path / "votations-contenu-20200101-000000.json.partial"
+    wreck.write_text("{tronqu", encoding="utf-8")
+    old = (datetime.now(UTC) - timedelta(days=2)).timestamp()
+    os.utime(wreck, (old, old))
+
+    # A run that started a moment ago is somebody else's work in progress.
+    fresh = tmp_path / "votations-contenu-20990101-000000.json.partial"
+    fresh.write_text("{en cours", encoding="utf-8")
+
+    export(tmp_path, keep_days=5)
+
+    assert not wreck.exists()
+    assert fresh.exists(), "a partial being written right now must not be swept"
+
+
 def test_a_file_from_another_format_is_refused(tmp_path):
     path = tmp_path / "vieux.json"
     path.write_text(json.dumps({"format": 99, "laws": []}), encoding="utf-8")

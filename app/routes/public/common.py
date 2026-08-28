@@ -135,4 +135,3 @@ def exports_busy(request: Request) -> HTMLResponse:
 
 def not_found(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "not_found.html", {}, status_code=404)
-

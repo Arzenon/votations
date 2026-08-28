@@ -56,7 +56,7 @@
       {# The count is the best proxy on this page for "was this contested" — and
          so for whether a citizen would want a say. Sortable from here because
          that is the whole point of showing it. #}
-      <th><a href="/admin/imports?statut={{ statut }}&procedure={{ procedure | urlencode }}&tri=seances"
+      <th><a href="/admin/imports?statut={{ statut | urlencode }}&procedure={{ procedure | urlencode }}&tri=seances"
              title="Trier par nombre de séances publiques">Séances{% if tri == 'seances' %} ↓{% endif %}</a></th>
       <th>Procédure</th><th>Statut</th><th>Actions</th>
     </tr>
@@ -109,7 +109,9 @@
 </div>
 
 {% if pages > 1 %}
-{% set filters = 'statut=' ~ statut ~ '&procedure=' ~ (procedure | urlencode) ~ '&tri=' ~ tri %}
+{# Every value here comes back from the query string, so every one of them is
+   encoded — not just the one that happened to contain a space. #}
+{% set filters = 'statut=' ~ (statut | urlencode) ~ '&procedure=' ~ (procedure | urlencode) ~ '&tri=' ~ (tri | urlencode) %}
 <nav class="pagination" aria-label="Pages">
   {% if page > 1 %}<a href="/admin/imports?{{ filters }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
   <span>Page {{ page }} / {{ pages }} ({{ total }} lois)</span>

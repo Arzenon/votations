@@ -26,7 +26,7 @@ L'application refuse de démarrer en production tant que `SECRET_KEY` ou
 ## Démarrage (Docker — recommandé)
 
 Tout tourne dans Docker : PostgreSQL + l'application. Au démarrage, le conteneur
-applique les migrations et insère des lois d'exemple (`SEED_ON_START=1`).
+applique les migrations.
 
 ```bash
 docker compose -f docker-compose.dev.yml up --build
@@ -35,6 +35,17 @@ docker compose -f docker-compose.dev.yml up --build
 - Accueil : http://127.0.0.1:8000/
 - Administration : http://127.0.0.1:8000/admin (HTTP Basic — `admin` / `change-me`,
   voir `docker-compose.dev.yml`)
+
+Le site démarre **vide**. Pour quelques lois d'exemple — de quoi parcourir les
+pages de vote, de résultats et d'export sans rien saisir :
+
+```bash
+docker compose -f docker-compose.dev.yml run --rm app python -m scripts.seed
+```
+
+`scripts.seed` est idempotent, donc relançable sans risque. Il peut aussi tourner
+à chaque démarrage en passant `SEED_ON_START=1` au service `app` : réglé à `0`
+par défaut, pour que peupler une base soit un geste et non un effet de bord.
 
 Tests et qualité (dans le conteneur) :
 
@@ -118,7 +129,15 @@ Tout le code de vote ne dépend que de l'interface `AuthProvider`
   appelé au moment du vote, jamais à la lecture.
 - `peek_voter_token(request)` → le jeton que le navigateur porte déjà, ou `None`,
   sans rien créer. C'est ce que lit la page d'une loi.
-- `login_url()` / `logout_url()` / `is_authenticated()` / `login_label`.
+- `login_url()` → où pointe le bouton de connexion.
+- `login_label` / `login_enabled` → le libellé du bouton, et s'il existe un vrai
+  parcours de connexion derrière. À `False`, la page `/connexion` affiche le
+  bouton désactivé avec « bientôt disponible » — la charte demande que le
+  mécanisme en vigueur et ses limites soient énoncés, pas déguisés.
+
+Il n'y a délibérément **ni `logout_url()` ni `is_authenticated()`** : la V1 ne
+connecte personne, et un jeton anonyme ne se déconnecte pas. Ces deux méthodes
+viendront avec FranceConnect, en même temps que ce qu'elles décrivent.
 
 La V1 utilise `AnonymousProvider` (jeton signé en cookie, hashé en base — aucune
 PII). La V2 fournira un `FranceConnectProvider` (OIDC) implémentant **la même
@@ -164,17 +183,33 @@ votant·e**. À la première participation, il est immédiatement ajouté à des
   créée côté serveur ;
 - chaque votant·e n'alimente que des compteurs *marginaux* (âge **ou** sexe),
   jamais une case croisée âge×sexe, ce qui garde les valeurs stockées élevées ;
-- un drapeau booléen `demographics_recorded` sur le vote évite le double comptage
-  lors d'un changement de vote (le profil n'est compté qu'une fois) ;
+- un drapeau booléen `demographics_recorded` sur le vote dit qu'une contribution
+  existe ; le profil n'est donc compté qu'une fois, quel que soit le nombre de
+  bulletins ensuite. Ce drapeau ne suffit pas à lui seul : deux bulletins partis
+  du même navigateur au même instant — un double-clic, un POST rejoué, deux
+  onglets — le lisaient tous les deux à « non ». Le bulletin est désormais **une
+  seule transaction**, ouverte par `cast_vote` qui verrouille la ligne du vote et
+  la garde le temps que les compteurs bougent ;
 - si la personne **change son vote**, sa contribution est *déplacée* vers le
   nouveau choix au lieu de rester comptée sous l'ancien, de sorte qu'une
   répartition décrit toujours les votes tels qu'ils sont. Déplacer une
-  contribution suppose de savoir *quelles catégories* elle concernait — ce que le
-  serveur refuse justement de stocker : ces catégories reviennent donc du
-  navigateur de la personne, dans un cookie signé (`vf_profil`), lu le temps
-  d'une requête et jamais enregistré. Le cookie ne contient que les catégories,
-  jamais le vote ; l'effacer laisse simplement l'ancienne contribution où elle
-  était.
+  contribution suppose de savoir deux choses, et **aucune des deux n'est stockée
+  à côté du vote** :
+  - *quelles catégories* — elles reviennent du navigateur de la personne, dans un
+    cookie signé (`vf_profil`), lu le temps d'une requête et jamais enregistré.
+    Le cookie ne contient que les catégories, jamais le vote ;
+  - *sous quel choix elles avaient été rangées* — c'est le choix que le vote
+    portait juste avant, lu sous le verrou au moment de l'écrire. Une colonne le
+    conservait ; elle valait le choix courant sauf dans un cas, et dans ce cas
+    elle faisait de la ligne le registre d'un changement d'avis. Elle a été
+    supprimée (migration `7c31e0a4bd52`).
+
+  Effacer son cookie laisse simplement l'ancienne contribution où elle était — et
+  elle y reste : le bulletin cesse de proposer les champs de profil dès qu'une
+  contribution existe, et le cookie ne se réécrit qu'à partir de catégories qu'il
+  détenait déjà. Un navigateur qui a oublié une loi ne peut donc plus la
+  réapprendre, ce qui est exactement ce qui permet de ne rien conserver côté
+  serveur ;
 
 **Suppression de cellules (k-anonymat).** Une répartition n'est affichée ou
 exportée que si **chacune** de ses cases atteint `MIN_CELL_COUNT` (10 par défaut).
@@ -398,8 +433,11 @@ concerné, voici la carte :
   `TRUSTED_PROXY_HOPS` entrées de la **fin** de `X-Forwarded-For` : les proxys
   ajoutent à la suite, donc tout ce qui est à gauche a été écrit par l'appelant.
   Lire à gauche revenait à laisser l'attaquant choisir sa propre clé de comptage.
-  Le Caddyfile réécrit l'en-tête plutôt que de l'allonger, et la table de suivi est
-  bornée : passé le plafond, on refuse au lieu de grandir.
+  Le Caddyfile réécrit l'en-tête plutôt que de l'allonger, et la table de suivi
+  est bornée : au plafond, elle **expulse les entrées les moins récentes** et
+  laisse passer l'appelant. Refuser à la place — ce qu'elle faisait — transformait
+  une inondation d'adresses forgées en refus généralisé de tous ceux qu'elle
+  n'avait pas déjà vus, c'est-à-dire exactement la panne recherchée.
 - **Connexions administrateur.** Comparaison à temps constant *et* refus des
   tentatives : un couple d'identifiants statique sans verrouillage se devine à la
   vitesse du réseau. Au-delà de `ADMIN_RATE_LIMIT` échecs, *toute* tentative
@@ -424,7 +462,12 @@ concerné, voici la carte :
 - **Suppression.** Une votation s'**archive** — elle quitte le site, ses votes sont
   conservés, l'opération est réversible. La suppression définitive n'est proposée
   que depuis les archives, sur une page de confirmation rendue par le serveur (et
-  non par un attribut JavaScript, qui ne s'exécutait pas sans JS).
+  non par un attribut JavaScript, qui ne s'exécutait pas sans JS). Cette page
+  propose d'abord l'export CSV, par une route d'administration
+  (`/admin/lois/{id}/export.csv`) et non par la route publique : une votation
+  archivée répond 404 partout côté public, l'export compris, ce qui faisait
+  précisément de ce lien-là un lien mort. Le fichier est le même, réductions
+  d'anonymat comprises — archiver retire du site, cela n'exempte de rien.
 - **En-têtes.** L'application pose elle-même CSP stricte (`script-src 'self'`,
   aucun `unsafe-inline`), `nosniff`, `frame-ancestors 'none'` et
   `Permissions-Policy` fermée ; le Caddyfile pose les mêmes, plus HSTS, et
@@ -457,6 +500,14 @@ concerné, voici la carte :
   qu'on y cherche un numéro et non des mots. L'index d'expression est déclaré sur
   le modèle *et* créé par la migration ; les deux doivent rester équivalents ou
   Postgres cesse silencieusement de s'en servir.
+
+  Les deux mécanismes sont réunis par un `OR`, et le second n'est indexé que si
+  l'extension `pg_trgm` est disponible — ce que certains Postgres gérés refusent,
+  d'où une migration qui ne crée cet index que là où elle le peut. Sans lui, le
+  `OR` fait retomber toute la recherche sur un parcours séquentiel de `laws` :
+  sans conséquence sur quelques centaines de lois, à surveiller au-delà.
+  `SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'` dit lequel des deux cas
+  vous êtes.
 - **Image.** Utilisateur non privilégié, aucune dépendance de développement,
   versions figées **et empreintées** (`requirements.lock`, installé avec
   `--require-hashes`), limites mémoire sur les services qui décompressent des

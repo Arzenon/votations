@@ -248,8 +248,13 @@ def cast_vote(
     carrier = Response()  # collects the cookies the helpers below set
     voter_token = auth.get_voter_token(request, carrier)
 
+    # One transaction for the whole ballot, from here to the commit below. The
+    # vote row is locked by `cast_vote` and stays locked while the counters move,
+    # so two ballots arriving from one browser at once cannot both count a
+    # profile; and a failure anywhere in between takes the vote down with it
+    # rather than leaving a vote whose counters were never moved.
     try:
-        vote = votes_crud.cast_vote(db, law, voter_token, vote_choice)
+        vote, previous_choice = votes_crud.cast_vote(db, law, voter_token, vote_choice)
     except votes_crud.VotingClosed:
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE)
@@ -264,11 +269,16 @@ def cast_vote(
         db,
         vote=vote,
         choice=vote_choice,
+        previous_choice=previous_choice,
         age_bracket=age_bracket,
         sexe=sexe,
         region=region,
-        previous=profile.for_law(law.id),
+        previous_categories=profile.for_law(law.id),
     )
+    db.commit()
+    # Only once the ballot is safely stored: a cookie promising a contribution
+    # that a rolled-back transaction never made would move the wrong cell on the
+    # next change.
     profile.remember(carrier, law.id, on_file)
 
     # HTMX request → return just the ballot fragment; else full-page redirect.

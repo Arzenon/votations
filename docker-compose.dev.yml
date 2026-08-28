@@ -1,7 +1,7 @@
 # Development stack. Named `.dev` on purpose: `docker compose` picks up a bare
-# `docker-compose.yml` with no `-f`, and this one builds the `dev` image (tests,
-# pytest, ruff) and seeds sample laws. Neither belongs on a live civic platform,
-# so production must be an explicit `-f docker-compose.prod.yml`.
+# `docker-compose.yml` with no `-f`, and this one builds the `dev` image — tests,
+# pytest, ruff — and will seed sample laws if asked to. Neither belongs on a live
+# civic platform, so production must be an explicit `-f docker-compose.prod.yml`.
 #
 #   docker compose -f docker-compose.dev.yml up --build
 services:
@@ -22,6 +22,11 @@ services:
       retries: 5
 
   app:
+    # Built once, under a name, and reused by the two job services below — the
+    # same arrangement as production, for the same reason: `build: .` on each of
+    # them produced three identical images under three names and left room for
+    # them to drift apart on a partial rebuild.
+    image: votations-app:dev
     build:
       context: .
       # The test suite and its tooling live in the `dev` stage only, so the
@@ -61,7 +66,10 @@ services:
   # image but bypasses the app entrypoint (no migrations/seed) — it only loops the
   # refresh job. Writes into the shared DB; the app reads the cached values.
   insee-refresh:
-    build: .
+    image: votations-app:dev
+    # Built by `app`, never fetched: without this, a registry lookup for a tag
+    # that only exists on this host is the first thing `up` would try.
+    pull_policy: never
     depends_on:
       db:
         condition: service_healthy
@@ -79,7 +87,8 @@ services:
   # migrations/seed) — it only loops the import job. Rows land in a staging table
   # and are never published without an admin action.
   assemblee-refresh:
-    build: .
+    image: votations-app:dev
+    pull_policy: never
     depends_on:
       db:
         condition: service_healthy

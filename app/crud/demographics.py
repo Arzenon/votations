@@ -4,9 +4,16 @@ back with cell suppression (k-anonymity).
 Two responsibilities:
 
 1. ``record`` — fold a voter's optional age/sexe/région into the counters,
-   **once**, with no per-voter row and no token. Concurrency-safe via an upsert.
+   **once**, with no per-voter row and no token. Concurrency-safe: each cell moves
+   by an upsert, and the vote row is locked by :func:`app.crud.votes.cast_vote`
+   for the whole ballot, so two simultaneous ballots from one browser cannot both
+   believe they are the first.
 2. ``breakdown`` — build a demographic × choice table for display/export, applying
    whole-table suppression so small cells can never be read or differenced out.
+
+Nothing here commits. The ballot is one transaction, opened by ``cast_vote`` and
+closed by the route: a vote and the counters it moves are written together or
+neither is.
 """
 
 from __future__ import annotations
@@ -67,15 +74,25 @@ def _requested(age_bracket: str | None, sexe: str | None, region: str | None) ->
     return [(dim, cat) for dim, cat in candidates.items() if cat and cat in VALID_CATEGORIES[dim]]
 
 
+def _known(categories: dict[str, str] | None) -> dict[str, str]:
+    """Keep only the (dimension, category) pairs this application recognises."""
+    return {
+        dimension: category
+        for dimension, category in (categories or {}).items()
+        if dimension in VALID_CATEGORIES and category in VALID_CATEGORIES[dimension]
+    }
+
+
 def record(
     db: Session,
     *,
     vote: Vote,
     choice: VoteChoice,
+    previous_choice: str | None = None,
     age_bracket: str | None = None,
     sexe: str | None = None,
     region: str | None = None,
-    previous: dict[str, str] | None = None,
+    previous_categories: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Fold this voter's optional demographics into the counters, exactly once.
 
@@ -84,16 +101,27 @@ def record(
     the new choice rather than left counted under the old one, so a breakdown
     always describes the votes as they currently stand.
 
-    Moving it needs the categories, which the server does not store — they come
-    back from the voter's own browser as ``previous`` (see
-    :mod:`app.profile_cookie`). With no cookie, nothing moves and the behaviour is
-    the same as before: the contribution stays under the older choice.
+    Moving it needs two things the vote row deliberately does not hold:
+
+    * **which categories** — they come back from the voter's own browser as
+      ``previous_categories`` (see :mod:`app.profile_cookie`);
+    * **under which choice they were filed** — that is ``previous_choice``, the
+      value the vote held a moment ago, read under the lock ``cast_vote`` takes.
+      It used to be a column on the vote, which meant a row could sit there
+      stating both the choice somebody had made *and* the one they made before —
+      a record of a changed mind that nothing on this platform needs.
 
     Returns the categories now on file for this voter, for the caller to persist
     on the device. An empty mapping means there is nothing to remember.
     """
     if vote.demographics_recorded:
-        return _move(db, vote=vote, choice=choice, previous=previous or {})
+        return _move(
+            db,
+            vote=vote,
+            choice=choice,
+            previous_choice=previous_choice,
+            categories=_known(previous_categories),
+        )
 
     provided = _requested(age_bracket, sexe, region)
     if not provided:
@@ -102,42 +130,37 @@ def record(
     for dimension, category in provided:
         _add(db, vote.law_id, dimension, category, choice.value, +1)
     vote.demographics_recorded = True
-    vote.demographics_choice = choice.value
-    db.commit()
     return dict(provided)
 
 
 def _move(
-    db: Session, *, vote: Vote, choice: VoteChoice, previous: dict[str, str]
+    db: Session,
+    *,
+    vote: Vote,
+    choice: VoteChoice,
+    previous_choice: str | None,
+    categories: dict[str, str],
 ) -> dict[str, str]:
     """Re-file an existing contribution under a changed vote."""
-    was = vote.demographics_choice
-    if was == choice.value:
-        return previous
-    if was is None:
-        # Written before the choice was tracked: nothing can be moved safely.
-        vote.demographics_choice = choice.value
-        db.commit()
-        return previous
-    if not previous:
-        # No categories came back from the device, so nothing can be moved. Leave
-        # `demographics_choice` pointing at the choice the counters actually sit
-        # under: advancing it would make the column claim a contribution had moved
-        # when it had not, and a later change with a restored cookie would then
-        # decrement the wrong cell.
+    if previous_choice is None or previous_choice == choice.value:
+        # The ballot did not change the choice, so the contribution is already
+        # filed where it belongs.
+        return categories
+
+    if not categories:
+        # The device no longer remembers what it gave, so nothing can be moved:
+        # the contribution stays under the earlier choice. It stays there for
+        # good, and that is what makes it safe to keep no record of where it
+        # sits. The ballot stops offering the profile fields once a contribution
+        # exists, and the cookie is only ever written back from categories it
+        # already held — so a browser that has forgotten a law can never learn it
+        # again, and no later change can decrement a cell chosen by guesswork.
         return {}
 
-    previous = {
-        dim: cat
-        for dim, cat in previous.items()
-        if dim in VALID_CATEGORIES and cat in VALID_CATEGORIES[dim]
-    }
-    for dimension, category in previous.items():
-        _add(db, vote.law_id, dimension, category, was, -1)
+    for dimension, category in categories.items():
+        _add(db, vote.law_id, dimension, category, previous_choice, -1)
         _add(db, vote.law_id, dimension, category, choice.value, +1)
-    vote.demographics_choice = choice.value
-    db.commit()
-    return previous
+    return categories
 
 
 @dataclass

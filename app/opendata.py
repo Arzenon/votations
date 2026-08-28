@@ -20,11 +20,15 @@ import httpx
 #: return type identical across sources is what makes this a single seam.
 Getter = Callable[[str], bytes]
 
+#: Read in chunks this size while measuring against the cap below.
+_CHUNK = 64 * 1024
+
 
 def fetch(
     url: str,
     *,
     timeout: float,
+    max_bytes: int,
     error: type[Exception],
     headers: Mapping[str, str] | None = None,
 ) -> bytes:
@@ -33,11 +37,35 @@ def fetch(
     ``error`` is the calling module's own exception class, so a failure still
     reads as "the Journal Officiel is unreachable" rather than as a generic
     transport error, and callers keep catching what they already caught.
+
+    ``max_bytes`` is not optional and has no default, because the thing it
+    prevents is the thing that used to happen: the body was read whole into
+    memory with nothing bounding it. Both archive readers cap the *members* they
+    unpack with care — see `app.legifrance.MAX_MEMBER_BYTES` and
+    `app.assemblee.MAX_DOSSIER_BYTES` — and then handed the download itself no
+    limit at all, so the only thing standing between a bad day upstream and the
+    host was a container memory limit. A truncated read here is a caught error
+    and a retry an hour later; an OOM is the site.
+
+    The cap is checked as the body arrives rather than against
+    ``Content-Length``, which is absent on a chunked response and is in any case
+    a claim by the sender rather than a fact.
     """
     try:
-        response = httpx.get(url, timeout=timeout, follow_redirects=True, headers=headers)
-        response.raise_for_status()
-        return response.content
+        with httpx.stream(
+            "GET", url, timeout=timeout, follow_redirects=True, headers=headers
+        ) as response:
+            response.raise_for_status()
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in response.iter_bytes(_CHUNK):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise error(
+                        f"réponse trop volumineuse (plus de {max_bytes // 1024 // 1024} Mo) : {url}"
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks)
     except httpx.HTTPError as exc:
         raise error(str(exc)) from exc
 
@@ -45,6 +73,7 @@ def fetch(
 def getter(
     *,
     timeout: float,
+    max_bytes: int,
     error: type[Exception],
     headers: Callable[[], Mapping[str, str]] | None = None,
 ) -> Getter:
@@ -56,7 +85,13 @@ def getter(
     """
 
     def get(url: str) -> bytes:
-        return fetch(url, timeout=timeout, error=error, headers=headers() if headers else None)
+        return fetch(
+            url,
+            timeout=timeout,
+            max_bytes=max_bytes,
+            error=error,
+            headers=headers() if headers else None,
+        )
 
     return get
 

@@ -77,7 +77,10 @@ class Speech:
         return f"{who}{when} · {self.chamber}"
 
 
-_default_getter = getter(timeout=60.0, error=DebatesFetchError)
+# A compte rendu runs to ~600 kB and a réunion to a couple of kilobytes; the
+# ceiling is well clear of both and bounds what a single sitting can cost us.
+MAX_RECORD_BYTES = 32 * 1024 * 1024
+_default_getter = getter(timeout=60.0, max_bytes=MAX_RECORD_BYTES, error=DebatesFetchError)
 
 
 def _as_text(node: object) -> str:

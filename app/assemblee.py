@@ -74,8 +74,12 @@ class PromulgatedLaw:
     seances: list[dict] = field(default_factory=list)
 
 
-# A generous timeout: the archive is ~10 MB and served from a public portal.
-_default_getter = getter(timeout=120.0, error=AssembleeFetchError)
+# A generous timeout: the archive is ~10 MB and served from a public portal. The
+# size ceiling is generous too, and exists for the same reason as the per-dossier
+# one above — the container has a 1 GB memory limit and the download used to be
+# the one step with nothing bounding it.
+MAX_EXPORT_BYTES = 256 * 1024 * 1024
+_default_getter = getter(timeout=120.0, max_bytes=MAX_EXPORT_BYTES, error=AssembleeFetchError)
 
 
 def _iter_actes(node: object) -> Iterator[dict]:

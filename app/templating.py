@@ -45,6 +45,12 @@ def _auth_context(request: Request) -> dict:
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR), context_processors=[_auth_context])
 
+# Starlette builds the environment without saying, so Jinja's own default applies
+# and every render stats every template it touches to see whether it has changed.
+# In production they cannot: the image is what runs. In development they change
+# constantly, which is the whole point of `--reload`.
+templates.env.auto_reload = not get_settings().is_production
+
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
 templates.env.globals["TAGLINE"] = TAGLINE
 
