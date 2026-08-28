@@ -23,19 +23,30 @@ router = APIRouter()
 def imports_list(
     request: Request,
     statut: str = "nouveau",
+    # Triage: narrow to one kind of text, and rank by how much it was argued over.
+    procedure: str = "",
+    tri: str = imports_crud.ORDER_BY_DATE,
     page: int = 1,
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Laws found by the daily Assemblée nationale import, awaiting a decision."""
     wanted = None if statut == "tous" else statut
-    items, total, pages = imports_crud.list_by_status(db, status=wanted, page=page)
+    items, total, pages = imports_crud.list_by_status(
+        db, status=wanted, procedure=procedure or None, order=tri, page=page
+    )
     return templates.TemplateResponse(
         request,
         "admin/imports.html",
         {
             "items": items,
             "statut": statut,
+            "procedure": procedure,
+            "tri": tri,
+            # Every procedure present under the current status filter, with counts,
+            # so the dropdown says how many rows each choice will show.
+            "procedures": imports_crud.procedures(db, status=wanted),
+            "seances": imports_crud.seance_counts(db, [item.id for item in items]),
             "total": total,
             "page": min(max(1, page), pages),
             "pages": pages,

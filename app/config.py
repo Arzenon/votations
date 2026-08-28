@@ -135,14 +135,22 @@ class Settings(BaseSettings):
     export_time_resolution: Literal["day", "hour", "exact"] = "day"
 
     # Mentions légales (LCEN art. 6-III). Every French public-facing site must
-    # name its publisher and its host. Kept in the environment rather than in the
-    # template so deploying does not mean editing HTML — and so that a fork or a
-    # second instance fills in its own identity instead of inheriting someone
-    # else's. Left empty the page says so plainly, which is the right failure:
-    # visibly incomplete beats confidently wrong about who is responsible.
-    legal_editor: str = ""
-    legal_editor_address: str = ""
-    legal_publication_director: str = ""
+    # name its host. Kept in the environment rather than in the template so
+    # deploying does not mean editing HTML — and so that a fork or a second
+    # instance fills in its own details instead of inheriting someone else's.
+    #
+    # The publisher's own name, address and publication director are *not* here,
+    # deliberately. Article 6-III-2 lets someone publishing non-professionally
+    # withhold them from the public page, provided they have given them to the
+    # host — anonymity toward the public, not toward the law. So the site names
+    # the host, says on what basis the publisher is not named, and offers an
+    # address to write to. Storing identity fields nobody is obliged to publish
+    # would only invite filling them in.
+    #
+    # `legal_host` left empty still shows as missing on the page: it is the one
+    # item the article makes mandatory, and visibly incomplete beats silently so.
+    # `legal_contact_email` is optional — LCEN does not ask for it — and simply
+    # disappears when unset.
     legal_contact_email: str = ""
     legal_host: str = ""
 

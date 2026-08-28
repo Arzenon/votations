@@ -348,13 +348,20 @@ def select_arguments(
 
     # Roughly 3.6 characters per token in French; leave room for the instructions.
     budget = int(settings.ai_max_input_tokens * 3.6 * 0.8)
-    pool = _fit_budget(speeches[: settings.ai_max_speeches * 4], budget)
+    # The **last** ones, not the first. Sittings arrive oldest-first — the import
+    # sorts them by date ascending — so slicing from the front kept the earliest
+    # readings and discarded the latest, which is backwards: the closer a debate
+    # is to the vote, the closer the text being argued about is to the one that
+    # was actually adopted. Every other cut below is by length, on purpose; this
+    # one is by position, and position here means date.
+    pool = _fit_budget(speeches[-settings.ai_max_speeches * 4 :], budget)
     if len(pool) > settings.ai_max_speeches:
         order = {s.speech_id: i for i, s in enumerate(pool)}
         longest = sorted(pool, key=lambda s: len(s.text), reverse=True)
         pool = sorted(longest[: settings.ai_max_speeches], key=lambda s: order[s.speech_id])
     # Counted once, against everything we were given: the pool is trimmed twice
-    # (a head slice, then the budget) and each step alone under-reports.
+    # (a window on the most recent, then the budget) and each step alone
+    # under-reports.
     dropped = len(speeches) - len(pool)
     notes = []
     if dropped:

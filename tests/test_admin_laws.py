@@ -427,3 +427,100 @@ def test_a_published_law_still_links_to_its_public_page(client, db_session):
     dashboard = client.get("/admin", headers=admin_headers())
     assert f'href="/loi/{law.slug}"' in dashboard.text
     assert f"/loi/{law.slug}/export.csv" in dashboard.text
+
+
+# --- Triaging the import queue ------------------------------------------------
+
+
+def _staged(db_session, uid, *, procedure, seances=0, promulgated=None):
+    from datetime import date
+
+    from app.models import ImportedLaw
+
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid=uid,
+        title=f"Loi {uid}",
+        law_code=uid[-4:],
+        procedure=procedure,
+        promulgated_on=promulgated or date(2026, 1, 1),
+        seances=[{"reunion_ref": f"r{i}", "odj_ref": "o", "date": ""} for i in range(seances)],
+    )
+    db_session.add(item)
+    db_session.commit()
+    return item
+
+
+def test_the_queue_can_be_narrowed_to_one_procedure(client, db_session):
+    """Seventy staged laws is a corpus to choose from, not a to-do list.
+
+    Seventeen of them are treaty ratifications nobody would put to a vote, and
+    clearing those needs them on one screen rather than scattered through two
+    pages of everything else.
+    """
+    _staged(db_session, "DLR17N001", procedure="Projet de ratification des traités")
+    _staged(db_session, "DLR17N002", procedure="Projet de ratification des traités")
+    _staged(db_session, "DLR17N003", procedure="Proposition de loi ordinaire")
+
+    page = client.get(
+        "/admin/imports?procedure=Projet+de+ratification+des+trait%C3%A9s",
+        headers=admin_headers(),
+    ).text
+
+    assert "Loi DLR17N001" in page
+    assert "Loi DLR17N002" in page
+    assert "Loi DLR17N003" not in page, "the filter let another procedure through"
+
+
+def test_the_procedure_choices_carry_their_counts(client, db_session):
+    """The number beside a choice must be what choosing it will show."""
+    for i in range(3):
+        _staged(db_session, f"DLR17N10{i}", procedure="Projet de ratification des traités")
+    _staged(db_session, "DLR17N200", procedure="Proposition de loi ordinaire")
+
+    page = client.get("/admin/imports", headers=admin_headers()).text
+    assert "Projet de ratification des traités (3)" in page
+    assert "Proposition de loi ordinaire (1)" in page
+
+
+def test_the_queue_can_be_ranked_by_how_much_a_text_was_argued_over(client, db_session):
+    """Sitting count is the best proxy here for "would a citizen want a say".
+
+    It is also what tells you the arguments block will have something to draw on:
+    a law adopted with no public sitting has no attributed positions to source.
+    """
+    _staged(db_session, "DLR17N301", procedure="Proposition de loi ordinaire", seances=1)
+    _staged(db_session, "DLR17N302", procedure="Proposition de loi ordinaire", seances=12)
+    _staged(db_session, "DLR17N303", procedure="Proposition de loi ordinaire", seances=4)
+
+    page = client.get("/admin/imports?tri=seances", headers=admin_headers()).text
+    order = [page.index(f"Loi DLR17N30{n}") for n in (2, 3, 1)]
+    assert order == sorted(order), "the most debated text must come first"
+
+
+def test_the_sitting_count_is_shown_per_row(client, db_session):
+    _staged(db_session, "DLR17N400", procedure="Proposition de loi ordinaire", seances=7)
+    page = client.get("/admin/imports", headers=admin_headers()).text
+    assert '<td class="seance-count">7</td>' in page
+
+
+def test_an_unknown_sort_falls_back_rather_than_failing(client, db_session):
+    _staged(db_session, "DLR17N500", procedure="Proposition de loi ordinaire", seances=2)
+    r = client.get("/admin/imports?tri=n_importe_quoi", headers=admin_headers())
+    assert r.status_code == 200
+
+
+def test_the_filters_survive_turning_the_page(client, db_session):
+    """Pagination that drops the filter silently undoes the triage."""
+    for i in range(3):
+        _staged(db_session, f"DLR17N6{i:02}", procedure="Proposition de loi ordinaire", seances=i)
+
+    page = client.get(
+        "/admin/imports?procedure=Proposition+de+loi+ordinaire&tri=seances",
+        headers=admin_headers(),
+    ).text
+    if "pagination" in page:
+        assert "procedure=Proposition" in page.split("pagination")[1]
+    # The controls themselves must come back showing the current choice.
+    assert 'value="Proposition de loi ordinaire" selected' in page
+    assert 'value="seances" selected' in page

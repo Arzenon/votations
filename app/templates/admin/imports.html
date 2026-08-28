@@ -12,19 +12,54 @@
   personne avant toute mise au vote.
 </p>
 
-<p>
-  {% if statut == 'tous' %}
-    <a class="button" href="/admin/imports">Voir seulement les nouvelles</a>
-  {% else %}
-    <a class="button" href="/admin/imports?statut=tous">Voir tout l'historique</a>
+{# Triage, not a to-do list. Most of what the daily job stages is not votation
+   material — treaty ratifications above all — and the texts that are worth one
+   are the texts that were argued over. These two controls are what turn a long
+   queue into a short shortlist. #}
+<form class="import-filters" action="/admin/imports" method="get">
+  <label>Statut
+    <select name="statut">
+      <option value="nouveau" {% if statut == 'nouveau' %}selected{% endif %}>Nouvelles</option>
+      <option value="importe" {% if statut == 'importe' %}selected{% endif %}>Importées</option>
+      <option value="ignore" {% if statut == 'ignore' %}selected{% endif %}>Ignorées</option>
+      <option value="tous" {% if statut == 'tous' %}selected{% endif %}>Tout l'historique</option>
+    </select>
+  </label>
+  <label>Procédure
+    <select name="procedure">
+      <option value="">Toutes</option>
+      {% for name, count in procedures %}
+      <option value="{{ name }}" {% if procedure == name %}selected{% endif %}>
+        {{ name or 'Non précisée' }} ({{ count }})
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Trier par
+    <select name="tri">
+      <option value="date" {% if tri != 'seances' %}selected{% endif %}>Date de promulgation</option>
+      <option value="seances" {% if tri == 'seances' %}selected{% endif %}>Séances publiques</option>
+    </select>
+  </label>
+  <button type="submit">Filtrer</button>
+  {% if procedure or tri == 'seances' or statut != 'nouveau' %}
+  <a href="/admin/imports">Réinitialiser</a>
   {% endif %}
-</p>
+</form>
 
 {% if items %}
 <div class="table-scroll">
 <table class="admin-table">
   <thead>
-    <tr><th>Promulguée le</th><th>Référence</th><th>Titre</th><th>Procédure</th><th>Statut</th><th>Actions</th></tr>
+    <tr>
+      <th>Promulguée le</th><th>Référence</th><th>Titre</th>
+      {# The count is the best proxy on this page for "was this contested" — and
+         so for whether a citizen would want a say. Sortable from here because
+         that is the whole point of showing it. #}
+      <th><a href="/admin/imports?statut={{ statut }}&procedure={{ procedure | urlencode }}&tri=seances"
+             title="Trier par nombre de séances publiques">Séances{% if tri == 'seances' %} ↓{% endif %}</a></th>
+      <th>Procédure</th><th>Statut</th><th>Actions</th>
+    </tr>
   </thead>
   <tbody>
     {% for item in items %}
@@ -45,6 +80,10 @@
           {% endif %}
         </small>
       </td>
+      {# A law adopted without any public sitting has no argued positions to
+         source, so its two argument blocks would have to be written from
+         nothing. Worth seeing before choosing it. #}
+      <td class="seance-count">{{ seances.get(item.id, 0) }}</td>
       <td>{{ item.procedure }}</td>
       <td><span class="status status-{{ item.status }}">{{ item.status | import_status }}</span></td>
       <td class="actions">
@@ -70,10 +109,11 @@
 </div>
 
 {% if pages > 1 %}
+{% set filters = 'statut=' ~ statut ~ '&procedure=' ~ (procedure | urlencode) ~ '&tri=' ~ tri %}
 <nav class="pagination" aria-label="Pages">
-  {% if page > 1 %}<a href="/admin/imports?statut={{ statut }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
+  {% if page > 1 %}<a href="/admin/imports?{{ filters }}&page={{ page - 1 }}">← Précédent</a>{% endif %}
   <span>Page {{ page }} / {{ pages }} ({{ total }} lois)</span>
-  {% if page < pages %}<a href="/admin/imports?statut={{ statut }}&page={{ page + 1 }}">Suivant →</a>{% endif %}
+  {% if page < pages %}<a href="/admin/imports?{{ filters }}&page={{ page + 1 }}">Suivant →</a>{% endif %}
 </nav>
 {% endif %}
 {% else %}

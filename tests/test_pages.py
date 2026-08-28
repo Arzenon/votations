@@ -163,48 +163,65 @@ def test_the_legal_pages_are_linked_from_every_page(client, open_law):
         assert 'href="/mentions-legales"' in page
 
 
-def test_missing_legal_identity_is_shown_as_missing(client, monkeypatch):
-    """A plausible placeholder would be worse than an empty field on this page."""
+def test_a_missing_host_is_shown_as_missing(client, monkeypatch):
+    """The host is the one item article 6-III still makes mandatory here.
+
+    The publisher's own name and address are not published — article 6-III-2
+    allows that for a non-professional publisher whose host holds them — so the
+    only thing left that can be *missing* is the host.
+    """
     settings = get_settings()
-    for field in ("legal_editor", "legal_editor_address", "legal_host"):
-        monkeypatch.setattr(settings, field, "", raising=False)
+    monkeypatch.setattr(settings, "legal_host", "", raising=False)
     page = client.get("/mentions-legales").text
     assert "Cette page est incomplète" in page
-    assert "non renseigné" in page
+    assert "Hébergeur non renseigné" in page
 
 
-def test_a_filled_legal_identity_is_shown_without_the_warning(client, monkeypatch):
+def test_a_named_host_removes_the_warning(client, monkeypatch):
     settings = get_settings()
-    monkeypatch.setattr(settings, "legal_editor", "Association Votations", raising=False)
-    monkeypatch.setattr(settings, "legal_editor_address", "1 rue de la Paix, Paris", raising=False)
-    monkeypatch.setattr(settings, "legal_publication_director", "A. Dupont", raising=False)
-    monkeypatch.setattr(settings, "legal_contact_email", "contact@example.org", raising=False)
     monkeypatch.setattr(settings, "legal_host", "OVH SAS, Roubaix", raising=False)
-
     page = client.get("/mentions-legales").text
     assert "Cette page est incomplète" not in page
-    assert "Association Votations" in page
     assert "OVH SAS, Roubaix" in page
     assert "non renseigné" not in page
 
 
-def test_the_legal_pages_never_invent_an_identity(client, monkeypatch):
+def test_the_page_explains_why_the_publisher_is_not_named(client, monkeypatch):
+    """An unexplained blank reads as evasion on a transparency-first site.
+
+    The publisher's identity is withheld under article 6-III-2, which is a
+    permitted choice and not an omission — so the page says so, and says that the
+    host can identify the publisher if a court asks.
+    """
+    settings = get_settings()
+    monkeypatch.setattr(settings, "legal_host", "OVH SAS, Roubaix", raising=False)
+    page = client.get("/mentions-legales").text
+    assert "non professionnel" in page
+    assert "6-III-2" in page
+    assert "autorité judiciaire" in page
+
+
+def test_the_legal_page_never_invents_an_identity(client, monkeypatch):
     """Nothing plausible may appear where a real name is missing."""
     settings = get_settings()
-    for field in (
-        "legal_editor",
-        "legal_editor_address",
-        "legal_publication_director",
-        "legal_contact_email",
-        "legal_host",
-    ):
+    for field in ("legal_contact_email", "legal_host"):
         monkeypatch.setattr(settings, field, "", raising=False)
     page = client.get("/mentions-legales").text
-    for invented in ("example.org", "SAS", "@", "rue "):
+    for invented in ("example.org", "SAS", "@"):
         assert invented not in page.split("<footer")[0]
 
 
-# --- Sitemap ------------------------------------------------------------------
+def test_the_open_data_attribution_survives(client):
+    """Licence Ouverte requires the source to be credited.
+
+    This is not LCEN and does not go away with the identity fields: it is the
+    licence under which the Assemblée nationale, DILA and INSEE data may be used
+    at all, and this page is where it is credited.
+    """
+    page = client.get("/mentions-legales").text
+    for source in ("Assemblée nationale", "information légale et administrative", "INSEE"):
+        assert source in page
+    assert "Licence Ouverte" in page
 
 
 def test_the_sitemap_lists_published_laws_only(client, db_session, open_law):

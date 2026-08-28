@@ -267,6 +267,15 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
   overflow-wrap: anywhere; }
 table.revisions td { vertical-align: top; }
 
+/* Triage controls on the imports listing: status, procedure, sort. Inline on a
+   wide screen, stacked on a phone. */
+.import-filters { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end;
+  margin: 1rem 0 1.5rem; }
+.import-filters label { display: flex; flex-direction: column; font-size: 0.85rem;
+  color: var(--muted); gap: 0.2rem; }
+.import-filters select { min-width: 11rem; }
+.seance-count { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* The argument editor. Replaces two JSON textareas that asked an administrator
    to be a programmer: one missing bracket and the whole block was unreadable. */
 .arguments-editor { border: 1px solid var(--line); border-radius: var(--radius);

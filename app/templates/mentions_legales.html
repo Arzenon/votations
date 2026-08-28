@@ -1,48 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Mentions légales — Votations Françaises{% endblock %}
-{% block description %}Éditeur, directeur de la publication, hébergeur et sources des données de Votations Françaises.{% endblock %}
+{% block description %}Hébergeur, édition non professionnelle et sources des données de Votations Françaises.{% endblock %}
 {% block content %}
-{# Identité de l'éditeur : lue dans la configuration, jamais écrite en dur ici.
-   Un champ vide s'affiche comme manquant plutôt que d'être inventé — sur une
-   page dont l'objet est précisément de dire qui est responsable, une valeur de
-   remplissage plausible serait pire qu'une case vide. #}
+{# L'identité de l'éditeur n'est pas publiée ici, et ce n'est pas un oubli :
+   l'article 6-III-2 de la LCEN le permet à qui édite à titre non professionnel,
+   dès lors que l'hébergeur en dispose. La page le dit plutôt que de laisser un
+   blanc — sur un site dont le principe est la transparence, une absence
+   inexpliquée se lit comme une dérobade. Seul l'hébergeur est obligatoire. #}
 <article class="law legal">
   <h1>Mentions légales</h1>
 
   {% if not complete %}
   <p class="disclaimer" role="status">
-    <strong>Cette page est incomplète.</strong> Les informations manquantes sont
-    signalées ci-dessous. Elles sont obligatoires pour un site ouvert au public
-    (loi pour la confiance dans l'économie numérique, article 6-III) et se
-    renseignent dans la configuration du site.
+    <strong>Cette page est incomplète.</strong> Le nom et l'adresse de
+    l'hébergeur sont obligatoires pour un site ouvert au public (loi pour la
+    confiance dans l'économie numérique, article 6-III) et se renseignent dans la
+    configuration du site.
   </p>
   {% endif %}
 
   <section class="block">
     <h2>Éditeur du site</h2>
-    {% if editor %}
-    <p>{{ editor }}</p>
-    {% else %}
-    <p class="unfilled">Éditeur non renseigné.</p>
-    {% endif %}
-    {% if editor_address %}
-    <p>{{ editor_address }}</p>
-    {% else %}
-    <p class="unfilled">Adresse non renseignée.</p>
-    {% endif %}
+    <p>
+      Ce site est édité à titre <strong>non professionnel</strong>, sans but
+      lucratif et sans publicité. L'article 6-III-2 de la loi pour la confiance
+      dans l'économie numérique permet dans ce cas de ne pas publier le nom et
+      l'adresse de l'éditeur, à condition de les avoir communiqués à
+      l'hébergeur — ce qui est le cas. L'hébergeur, nommé plus bas, peut donc
+      identifier l'éditeur à la demande de l'autorité judiciaire.
+    </p>
     {% if contact_email %}
-    <p>Contact : <a href="mailto:{{ contact_email }}">{{ contact_email }}</a></p>
-    {% else %}
-    <p class="unfilled">Adresse de contact non renseignée.</p>
-    {% endif %}
-  </section>
-
-  <section class="block">
-    <h2>Directeur de la publication</h2>
-    {% if publication_director %}
-    <p>{{ publication_director }}</p>
-    {% else %}
-    <p class="unfilled">Directeur de la publication non renseigné.</p>
+    <p>Pour écrire à l'éditeur : <a href="mailto:{{ contact_email }}">{{ contact_email }}</a></p>
     {% endif %}
   </section>
 

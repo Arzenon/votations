@@ -9,8 +9,9 @@ many times the daily job sees it again.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import String, func, select, update
+from sqlalchemy import ColumnElement, String, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, defer
 
@@ -140,8 +141,29 @@ def sync(
     return created, len(accepted) - created
 
 
+#: How many public sittings a staged law was debated in, computed in SQL.
+#:
+#: `seances` is a deferred JSON column and must stay that way — see
+#: :func:`list_by_status` — so the count is asked of the database rather than
+#: taken by loading the list into Python. `json_array_length`, not the `jsonb`
+#: form: the column is `json`, and casting every row to `jsonb` to count its
+#: entries would parse the very payload the deferral exists to avoid.
+_SEANCE_COUNT = func.coalesce(func.json_array_length(ImportedLaw.seances), 0)
+
+#: Sorts the administration offers. Keyed by the value in the URL so an unknown
+#: one falls back rather than 500s.
+ORDER_BY_DATE = "date"
+ORDER_BY_SEANCES = "seances"
+
+
 def list_by_status(
-    db: Session, *, status: str | None = None, page: int = 1, page_size: int = 50
+    db: Session,
+    *,
+    status: str | None = None,
+    procedure: str | None = None,
+    order: str = ORDER_BY_DATE,
+    page: int = 1,
+    page_size: int = 50,
 ) -> tuple[list[ImportedLaw], int, int]:
     """Staged laws, most recently promulgated first. Returns (rows, total, pages).
 
@@ -149,22 +171,68 @@ def list_by_status(
     presentation — two prose blocks and up to a dozen quotes — and the list shows
     neither. Fetching them for every row made the "tous" view megabytes of JSON to
     render a table of titles and dates.
+
+    ``procedure`` and ``order`` exist for triage. Seventy staged laws is not a
+    to-do list, it is a corpus to choose from: seventeen of them are treaty
+    ratifications nobody would put to a vote, and the ones worth a votation are
+    the ones that were argued over. Filtering by procedure collapses the first
+    group into one screen to clear; ordering by sitting count surfaces the second.
     """
     stmt = select(ImportedLaw)
     if status:
         stmt = stmt.where(ImportedLaw.status == status)
+    if procedure:
+        stmt = stmt.where(ImportedLaw.procedure == procedure)
 
     total = count_matching(db, stmt)
     page, pages, offset = paginate(page, total, page_size)
+
+    ordering: tuple[ColumnElement[Any], ...]
+    if order == ORDER_BY_SEANCES:
+        # Most debated first, then most recent — a stable order for equal counts.
+        ordering = (_SEANCE_COUNT.desc(), ImportedLaw.promulgated_on.desc())
+    else:
+        ordering = (ImportedLaw.promulgated_on.desc(), ImportedLaw.law_code.desc())
+
     rows = list(
         db.scalars(
             stmt.options(defer(ImportedLaw.draft), defer(ImportedLaw.seances))
-            .order_by(ImportedLaw.promulgated_on.desc(), ImportedLaw.law_code.desc())
+            .order_by(*ordering)
             .offset(offset)
             .limit(page_size)
         )
     )
     return rows, total, pages
+
+
+def procedures(db: Session, *, status: str | None = None) -> list[tuple[str, int]]:
+    """Every procedure present, with how many rows carry it, commonest first.
+
+    Read from the data rather than hard-coded: the labels come from the Assemblée
+    nationale's export and are theirs to change. Counted under the same status
+    filter as the listing, so the number beside each option is what choosing it
+    will actually show.
+    """
+    stmt = select(ImportedLaw.procedure, func.count()).group_by(ImportedLaw.procedure)
+    if status:
+        stmt = stmt.where(ImportedLaw.status == status)
+    rows = db.execute(stmt.order_by(func.count().desc(), ImportedLaw.procedure)).all()
+    return [(procedure or "", count) for procedure, count in rows]
+
+
+def seance_counts(db: Session, item_ids: list[int]) -> dict[int, int]:
+    """How many public sittings each of these laws was debated in, in one query.
+
+    Separate from :func:`list_by_status` so the listing keeps returning plain
+    ``ImportedLaw`` rows and every caller of it stays unchanged — the same shape
+    as ``results.tallies_for``.
+    """
+    if not item_ids:
+        return {}
+    rows = db.execute(
+        select(ImportedLaw.id, _SEANCE_COUNT).where(ImportedLaw.id.in_(item_ids))
+    ).all()
+    return {item_id: count or 0 for item_id, count in rows}
 
 
 def count_new(db: Session) -> int:

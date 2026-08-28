@@ -153,10 +153,9 @@ ESSENTIAL = {
     "min_bucket_volume",
     "min_cell_count",
     "export_time_resolution",
-    # Legally required of any French site open to the public.
-    "legal_editor",
-    "legal_editor_address",
-    "legal_publication_director",
+    # The host is legally required of any French site open to the public; the
+    # publisher's own identity is not, for a non-professional publisher, and is
+    # deliberately not a setting at all. The contact address is optional.
     "legal_contact_email",
     "legal_host",
     # The switch for an optional feature; absent, the feature is simply gone.

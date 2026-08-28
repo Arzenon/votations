@@ -80,19 +80,23 @@ def privacy(request: Request):
 
 @router.get("/mentions-legales", response_class=HTMLResponse)
 def legal_notice(request: Request):
-    """Publisher, publication director and host — mandatory under LCEN art. 6-III."""
+    """The host, and why the publisher is not named — LCEN art. 6-III.
+
+    Only the host is mandatory here. Article 6-III-2 lets a non-professional
+    publisher keep their own name and address off the page provided the host
+    holds them, so those fields do not exist in the configuration at all: a field
+    nobody is obliged to fill is a field that gets filled by accident.
+    """
     settings = get_settings()
-    fields = {
-        "editor": settings.legal_editor,
-        "editor_address": settings.legal_editor_address,
-        "publication_director": settings.legal_publication_director,
-        "contact_email": settings.legal_contact_email,
-        "host": settings.legal_host,
-    }
     return templates.TemplateResponse(
         request,
         "mentions_legales.html",
-        {**fields, "complete": all(fields.values())},
+        {
+            "contact_email": settings.legal_contact_email,
+            "host": settings.legal_host,
+            # The host alone decides whether the page is complete.
+            "complete": bool(settings.legal_host),
+        },
         headers=PUBLIC_PAGE_CACHE,
     )
 

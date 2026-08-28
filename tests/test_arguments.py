@@ -265,3 +265,69 @@ def test_api_failure_becomes_a_readable_error():
         raise AssertionError("expected AiDraftError")
     except AiDraftError as exc:
         assert "overloaded_error" in str(exc)
+
+
+def test_the_window_keeps_the_most_recent_sittings_not_the_first():
+    """Above the window, the cut is by position — and position is date.
+
+    Sittings arrive oldest-first, so slicing from the front kept the earliest
+    readings and threw away the latest. That is backwards: the closer a debate is
+    to the vote, the closer the text being argued about is to the one adopted.
+
+    Built so the *oldest* speeches are also the longest, which is what the length
+    cuts would otherwise prefer — if the window is taken from the wrong end, they
+    dominate the pool and the failure is invisible.
+    """
+    settings = get_settings()
+    window = settings.ai_max_speeches * 4
+    speeches = []
+    for i in range(window + 40):
+        oldest_are_longest = "mot " * (900 if i < 40 else 200)
+        speeches.append(
+            Speech(
+                speech_id=f"s{i}",
+                speaker=f"Orateur {i}",
+                quality="",
+                chamber="Assemblée nationale",
+                section="Discussion générale",
+                spoken_on=None,
+                text=oldest_are_longest,
+                url="https://an.fr/cr",
+            )
+        )
+
+    client = _FakeClient(_sel())
+    # Nothing verifiable comes back from an empty selection; the prompt is what
+    # this asserts on, and it is built before the model is ever called.
+    with contextlib.suppress(AiDraftError):
+        select_arguments(LAW, speeches, client=client)
+    prompt = client.seen["messages"][0]["content"]
+
+    sent = {s.speech_id for s in speeches if f"[{s.speech_id}]" in prompt}
+    oldest = {f"s{i}" for i in range(40)}
+    assert not (sent & oldest), "the oldest sittings were kept over the most recent"
+    assert sent, "something must still be sent"
+    assert sent <= {f"s{i}" for i in range(40, len(speeches))}
+
+
+def test_a_debate_that_fits_is_never_trimmed_by_the_window():
+    """Below the window the position cut must not fire at all."""
+    settings = get_settings()
+    speeches = [
+        Speech(
+            speech_id=f"s{i}",
+            speaker=f"Orateur {i}",
+            quality="",
+            chamber="Assemblée nationale",
+            section="Discussion générale",
+            spoken_on=None,
+            text="mot " * 300,
+            url="https://an.fr/cr",
+        )
+        for i in range(settings.ai_max_speeches)
+    ]
+    client = _FakeClient(_sel())
+    with contextlib.suppress(AiDraftError):
+        select_arguments(LAW, speeches, client=client)
+    prompt = client.seen["messages"][0]["content"]
+    assert all(f"[{s.speech_id}]" in prompt for s in speeches), "a fitting debate was cut"
