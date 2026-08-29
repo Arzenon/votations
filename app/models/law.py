@@ -6,9 +6,9 @@ arguments against. Arguments are stored as lists of {text, source, author} so
 that every claim is sourced and attributed, and symmetry can be enforced.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, query_expression
 
 from app.db import Base, as_utc, utcnow
@@ -44,6 +44,23 @@ class Law(Base):
     # Official source (Journal Officiel / Légifrance).
     official_ref: Mapped[str | None] = mapped_column(String(255), default=None)
     legifrance_url: Mapped[str | None] = mapped_column(String(1000), default=None)
+
+    #: The day Parliament's text became law, and the order the home page reads in.
+    #:
+    #: It was already on the page before it was a column — inside `official_ref`,
+    #: as prose: « LOI n° 2026-532 du 24 juin 2026 ». A date that exists only
+    #: inside a display string can be shown and never sorted on, which is how the
+    #: home page came to be ordered by `created_at`: not a fact about the law, nor
+    #: about the vote, but the moment an administrator happened to press save.
+    #:
+    #: Nullable because it has to be. A law written by hand has no staged row to
+    #: take it from, and the charter allows one. Every query that orders on this
+    #: therefore says NULLS LAST — Postgres would otherwise put the undated ones
+    #: first, and a hand-written law would open the site.
+    #:
+    #: Not indexed: this table holds hundreds of rows, the home page reads fifty
+    #: of them, and an index that the planner would skip is a cost on every write.
+    promulgated_on: Mapped[date | None] = mapped_column(Date, default=None)
 
     # 4-block neutral content.
     summary_text: Mapped[str] = mapped_column(Text, default="")

@@ -260,11 +260,30 @@ def test_the_first_block_is_written_for_someone_who_never_opened_a_code():
     system = ai.SYSTEM_PROMPT
     assert "Ne cite aucun numéro d'article ni de code" in system
     assert "N'énumère pas les codes modifiés" in system
-    assert "Ne consacre pas de paragraphe à la mécanique administrative" in system
     # But the censure itself is news a voter needs — only its numbering is not.
     assert "Dis *ce que* le Conseil" in system
-    # And a territory still matters where the law does not reach.
-    assert "ne s'y applique pas" in system
+
+
+def test_the_first_block_may_still_describe_how_power_is_allocated():
+    """The third lever was withdrawn, and this records why so it stays withdrawn.
+
+    « Ne consacre pas de paragraphe à la mécanique administrative » was meant to
+    cut decree timetables and outre-mer ordonnances. It also cut the machinery
+    that says who decides: on the loi de programmation militaire the draft went
+    from « la prorogation au-delà de deux mois doit être autorisée par la loi » —
+    a mechanism a reader can weigh — to « sous contrôle du Parlement », which is
+    the conclusion of the very dispute the arguments below the block are about,
+    asserted by the platform in its own voice.
+
+    Parliament is *informed without delay* and may *request* information; it
+    authorises nothing for the first two months. Calling that "under parliamentary
+    control" adopts one side's characterisation, and breaks this prompt's own
+    « aucune appréciation » rule.
+    """
+    system = ai.SYSTEM_PROMPT
+    assert "mécanique administrative" not in system
+    # The rule that made the substitution wrong is still there to catch it.
+    assert "Aucune prise de position" in system
 
 
 def test_measures_before_sending_and_refuses_outsized_text():
@@ -476,6 +495,19 @@ def test_the_draft_lands_in_the_editable_form(client, db_session, background_db,
     # The durable ELI link is preferred over the legacy one.
     assert LAW.eli_url in r.text
     assert "legifrance.gouv.fr/legacy" not in r.text
+
+
+def test_the_creation_form_prefills_the_promulgation_date(client, db_session):
+    """The date the home page is ordered by, taken from the row that already holds it.
+
+    The daily import fetches it from the Assemblée nationale; asking an
+    administrator to read it back off the reference and retype it is how a
+    listing acquires a wrong date.
+    """
+    item = _stage(db_session)
+    form = _form(client, item.id).text
+    assert 'name="promulgated_on"' in form
+    assert 'value="2026-07-27"' in form
 
 
 def test_opening_the_form_shows_a_draft_already_paid_for(

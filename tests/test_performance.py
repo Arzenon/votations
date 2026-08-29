@@ -267,3 +267,19 @@ def test_a_very_long_title_leaves_room_for_its_suffix(db_session):
     assert second != first
     width = Law.__table__.c["slug"].type.length
     assert len(second) <= width, "the second slug does not fit the column"
+
+
+def test_the_home_page_counts_every_law_s_votes_in_one_query(client, db_session, count_queries):
+    """Participation on the cards must not cost one query per card.
+
+    The administration's dashboard already learned this — `tallies_for` groups the
+    whole page's counts into a single scan — and the home page now shows the same
+    figure, so it uses the same call rather than a tally per law.
+    """
+    from tests.helpers import publish_laws
+
+    publish_laws(db_session, 12)
+    with count_queries() as seen:
+        client.get("/")
+    counted = [q for q in seen if "count" in q.lower() and " votes" in q.lower()]
+    assert len(counted) <= 1, f"{len(counted)} requêtes de comptage : {counted}"

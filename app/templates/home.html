@@ -11,28 +11,46 @@
   <button type="submit">Rechercher</button>
 </form>
 
-<h2>Dernières votations</h2>
-{% if laws %}
-<ul class="law-list">
-  {% for law in laws %}
-  {% set state = law.status() %}
-  <li class="law-card">
-    <a href="/loi/{{ law.slug }}">
-      <span class="status status-{{ state }}">{{ state | law_status }}</span>
-      <h3>{{ law.title }}</h3>
-      {# `excerpt`, not `summary_text`: the database cuts it to 201 characters so
-         this page never reads a whole presentation to show two lines of one.
-         The 201st character is how we know there was more to say. #}
-      {% if law.excerpt %}<p>{{ law.excerpt[:200] }}{% if law.excerpt|length > 200 %}…{% endif %}</p>{% endif %}
-      {# `french_date`, not `strftime`: the column is a UTC instant, so formatting it
-         raw published the previous day for anything closing between midnight and
-         2 h Paris. The filter renders it in the zone the vote was scheduled in. #}
-      {% if law.closes_at %}<p class="meta">Clôture : {{ law.closes_at | french_date }}</p>{% endif %}
-    </a>
-  </li>
-  {% endfor %}
-</ul>
+{% if bands %}
+{# Grouped by what a visitor can do with each law — vote, wait, read the result —
+   and inside each group by the day Parliament acted. While every votation is open
+   (which is what a year-long voting window makes of the first months) there is a
+   single band and no heading is drawn, so the page is a plain chronological list.
+   It starts grouping itself the day the windows diverge. #}
+{% for state, laws in bands %}
+  {% if bands | length > 1 %}<h2>{{ state | home_band }}</h2>{% else %}<h2>Dernières votations</h2>{% endif %}
+  <ul class="law-list">
+    {% for law in laws %}
+    <li class="law-card">
+      <a href="/loi/{{ law.slug }}">
+        <span class="status status-{{ state }}">{{ state | law_status }}</span>
+        <h3>{{ law.title }}</h3>
+        {# `excerpt`, not `summary_text`: the database cuts it to 201 characters so
+           this page never reads a whole presentation to show two lines of one.
+           The 201st character is how we know there was more to say. #}
+        {% if law.excerpt %}<p>{{ law.excerpt[:200] }}{% if law.excerpt|length > 200 %}…{% endif %}</p>{% endif %}
+        <p class="meta card-facts">
+          {# The date the list is ordered by, so the order is legible rather than
+             mysterious. Absent on a law written by hand, which has no staged row
+             to take it from — the card simply says nothing then. #}
+          {% if law.promulgated_on %}<span>Promulguée le {{ law.promulgated_on | french_date }}</span>{% endif %}
+          {# `french_date`, not `strftime`: the column is a UTC instant, so formatting
+             it raw published the previous day for anything closing between midnight
+             and 2 h Paris. The filter renders it in the zone the vote was scheduled in. #}
+          {% if law.closes_at %}<span>Clôture le {{ law.closes_at | french_date }}</span>{% endif %}
+          {# Participation, never a ranking. The page is not ordered by this and
+             must not be: visibility following votes and votes following visibility
+             is the loop the charter refuses. #}
+          {% set votes = tallies[law.id].total %}
+          <span>{% if votes %}{{ votes }} vote{{ "s" if votes > 1 }}{% else %}Aucun vote{% endif %}</span>
+        </p>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+{% endfor %}
 {% else %}
+<h2>Dernières votations</h2>
 <p>Aucune loi pour le moment.</p>
 {% endif %}
 {% endblock %}

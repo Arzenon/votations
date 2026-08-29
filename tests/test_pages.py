@@ -324,3 +324,119 @@ def test_the_fold_needs_no_javascript(client, db_session):
     fold = page[start : page.index("</details>", start)]
     assert "<summary>" in fold, "a real disclosure control, not a styled div"
     assert "onclick" not in fold and "hx-" not in fold
+
+
+# --- L'ordre de la page d'accueil ---------------------------------------------
+
+
+def _dated(db_session, slug, day, **kw):
+    from datetime import date
+
+    return make_law(
+        db_session,
+        slug=slug,
+        title=f"Loi {slug}",
+        promulgated_on=date.fromisoformat(day) if day else None,
+        **kw,
+    )
+
+
+def test_the_home_page_is_ordered_by_promulgation_not_by_data_entry(client, db_session):
+    """It used to be ordered by `created_at` — when the administrator pressed save.
+
+    Three laws entered in one evening therefore appeared in the order they were
+    typed, which is a fact about somebody's working schedule and not about the
+    legislation. The promulgation date was on the page all along, but only inside
+    `official_ref` as prose, where it could be printed and never sorted on.
+    """
+    _dated(db_session, "ancienne", "2026-01-15")
+    _dated(db_session, "recente", "2026-08-20")
+    _dated(db_session, "moyenne", "2026-04-02")
+
+    page = client.get("/").text
+    order = [page.index(f"/loi/{s}") for s in ("recente", "moyenne", "ancienne")]
+    assert order == sorted(order), "la plus récemment promulguée doit venir en premier"
+
+
+def test_a_law_with_no_promulgation_date_does_not_open_the_site(client, db_session):
+    """Postgres sorts nulls *first* descending, so this needs saying explicitly.
+
+    A law written by hand has no staged row and therefore no date. Without NULLS
+    LAST it would outrank every dated law and head the home page.
+    """
+    _dated(db_session, "datee", "2026-03-01")
+    _dated(db_session, "sans-date", None)
+
+    page = client.get("/").text
+    assert page.index("/loi/datee") < page.index("/loi/sans-date")
+
+
+def test_the_cards_carry_the_date_the_page_is_ordered_by(client, db_session):
+    """An order the reader cannot see reads as no order at all."""
+    _dated(db_session, "loi-datee", "2026-06-24")
+    page = client.get("/").text
+    assert "Promulguée le 24 juin 2026" in page
+
+
+def test_the_cards_show_participation(client, db_session, open_law):
+    """Shown, and deliberately not sorted on — see the ordering test above."""
+    assert "Aucun vote" in client.get("/").text
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    page = client.get("/").text
+    assert "1 vote" in page and "1 votes" not in page
+
+
+# --- Les bandes ----------------------------------------------------------------
+
+
+def test_one_band_renders_as_a_plain_list(client, db_session):
+    """What launch looks like: a year-long window puts every votation in one band.
+
+    The grouping must not announce itself before it has anything to group — a
+    heading over the only section on the page is a line that says nothing.
+    """
+    _dated(db_session, "ouverte-a", "2026-08-01")
+    _dated(db_session, "ouverte-b", "2026-07-01")
+    page = client.get("/").text
+    assert "Dernières votations" in page
+    assert "Votations ouvertes" not in page
+    assert "Votations closes" not in page
+
+
+def test_several_bands_are_titled_and_ordered_by_what_you_can_do(client, db_session):
+    """Vote first, then what is coming, then what is decided."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    _dated(
+        db_session,
+        "close",
+        "2026-08-01",
+        opens_at=now - timedelta(days=30),
+        closes_at=now - timedelta(days=1),
+    )
+    _dated(
+        db_session,
+        "ouverte",
+        "2026-07-01",
+        opens_at=now - timedelta(hours=1),
+        closes_at=now + timedelta(days=30),
+    )
+    _dated(
+        db_session,
+        "bientot",
+        "2026-06-01",
+        opens_at=now + timedelta(days=5),
+        closes_at=now + timedelta(days=40),
+    )
+
+    page = client.get("/").text
+    for heading in ("Votations ouvertes", "Bientôt ouvertes", "Votations closes"):
+        assert heading in page
+    assert (
+        page.index("Votations ouvertes")
+        < page.index("Bientôt ouvertes")
+        < page.index("Votations closes")
+    )
+    # And a law sits under its own band, not merely somewhere on the page.
+    assert page.index("Votations ouvertes") < page.index("/loi/ouverte") < page.index("Bientôt")

@@ -81,3 +81,59 @@ def test_the_results_page_draws_the_curve(client, open_law, db_session, monkeypa
     assert "Évolution des votes, jour par jour" in page
     # The figures stay available underneath, not replaced by the picture.
     assert "Voir les chiffres jour par jour" in page
+
+
+# --- Un scrutin d'un an --------------------------------------------------------
+
+
+def _days(n):
+    from datetime import date, timedelta
+
+    from app.crud.results import EvolutionBucket
+
+    return [
+        EvolutionBucket(
+            label=(date(2026, 1, 1) + timedelta(days=i)).isoformat(),
+            counts={"for": i % 7, "against": i % 5, "abstain": i % 3},
+        )
+        for i in range(n)
+    ]
+
+
+def test_a_long_votation_drops_the_per_day_dots():
+    """At launch every votation runs a year, and 365 dots stop being dots.
+
+    Spaced 1.8 px apart with `r="3"` they overlap fourfold: they mark nothing and
+    merge into a thick band, while adding about 60 kB of SVG to a page this site
+    promises to serve over slow connections. The line and the area still draw the
+    shape, and the exact figures are in the table underneath.
+    """
+    from app.charts import MAX_DOTS, build_evolution_chart
+
+    short = build_evolution_chart(_days(MAX_DOTS))
+    assert all(len(s.dots) == MAX_DOTS for s in short.series), "a short vote keeps its dots"
+
+    long = build_evolution_chart(_days(365))
+    assert all(s.dots == [] for s in long.series)
+    assert all(s.line and s.area for s in long.series), "the curve itself must remain"
+    # And the description a screen reader gets is unaffected by the thinning.
+    assert "Votes par jour" in long.description
+
+
+def test_the_axis_never_draws_more_labels_than_it_promises():
+    """`MAX_X_LABELS` said seven and a year-long votation drew eight.
+
+    The stride divided the number of days rather than the gaps between labels, so
+    a full set could still have the final day appended on top of it.
+    """
+    from app.charts import MAX_X_LABELS, _short_date, build_evolution_chart
+
+    for n in (1, 2, 3, 7, 8, 30, 60, 61, 90, 180, 365, 400, 733):
+        days = _days(n)
+        chart = build_evolution_chart(days)
+        assert len(chart.x_ticks) <= MAX_X_LABELS, f"{n} jours -> {len(chart.x_ticks)} étiquettes"
+        # The last day is always named: it is where the curve stops, and a reader
+        # cannot date the end of the votation from anything else on the figure.
+        assert chart.x_ticks[-1][1] == _short_date(days[-1].label)
+        # And the first, or the axis starts nowhere.
+        assert chart.x_ticks[0][1] == _short_date(days[0].label)

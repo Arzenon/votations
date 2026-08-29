@@ -9,7 +9,7 @@ from __future__ import annotations
 from app.ai import LawDraft, SelectedArguments
 from app.config import get_settings
 from app.labels import french_date
-from app.routes.admin.forms import dt_local
+from app.routes.admin.forms import day_value, dt_local
 
 
 def official_ref(item) -> str:
@@ -41,6 +41,7 @@ def form_values(
             "practical_changes": law.practical_changes,
             "arguments_for": law.arguments_for,
             "arguments_against": law.arguments_against,
+            "promulgated_on": day_value(law.promulgated_on),
             "opens_at": dt_local(law.opens_at),
             "closes_at": dt_local(law.closes_at),
             "published": law.published,
@@ -66,6 +67,9 @@ def form_values(
             "practical_changes": draft.practical_changes if draft else "",
             "arguments_for": arguments.pour if arguments else [],
             "arguments_against": arguments.contre if arguments else [],
+            # The staged row already knows it; nobody should retype what the
+            # daily import fetched from the Assemblée nationale.
+            "promulgated_on": day_value(prefill.promulgated_on) if prefill else "",
             "opens_at": "",
             "closes_at": "",
             "published": False,

@@ -69,6 +69,10 @@ button:disabled, .button:disabled { background: #b6bdc9; cursor: not-allowed; }
 .law-card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); }
 .law-card a { display: block; padding: 1rem 1.2rem; text-decoration: none; color: inherit; }
 .law-card h3 { margin: 0.3rem 0; }
+/* The facts under a card's excerpt: promulgation, closing, participation. Laid
+   out inline so three short items read as one line rather than three stacked
+   paragraphs, and wrap rather than overflow on a phone. */
+.card-facts { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
 
 /* Status pill */
 .status { display: inline-block; font-size: 0.72rem; text-transform: uppercase;

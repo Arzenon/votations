@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.crud import laws as laws_crud
+from app.crud import results as results_crud
 from app.db import get_db
 from app.routes.public.common import PUBLIC_PAGE_CACHE
 from app.templating import templates
@@ -28,10 +29,17 @@ MAX_QUERY_CHARS = 120
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
+    bands = laws_crud.published_by_state(db)
+    # One query for every card's count, the same way the administration's own
+    # listing does it — not one per law. Participation is shown but never sorted
+    # on: ordering the page by it would make visibility follow votes and votes
+    # follow visibility, which is the loop the charter's anti-manipulation rule
+    # exists to refuse.
+    tallies = results_crud.tallies_for(db, [law.id for _, laws in bands for law in laws])
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"laws": laws_crud.list_published(db)},
+        {"bands": bands, "tallies": tallies},
         headers=PUBLIC_PAGE_CACHE,
     )
 

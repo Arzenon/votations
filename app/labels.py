@@ -17,6 +17,16 @@ from app.models.imported_law import (
 )
 from app.models.law import STATUS_CLOSED, STATUS_DRAFT, STATUS_OPEN, STATUS_SCHEDULED
 
+#: Headings for the home page's bands. Distinct from LAW_STATUS_LABELS on
+#: purpose: that one labels a single votation's badge (« ouverte »), this one
+#: names a section of the page (« Votations ouvertes »), and the two want
+#: different words.
+HOME_BAND_LABELS = {
+    STATUS_OPEN: "Votations ouvertes",
+    STATUS_SCHEDULED: "Bientôt ouvertes",
+    STATUS_CLOSED: "Votations closes",
+}
+
 LAW_STATUS_LABELS = {
     STATUS_DRAFT: "brouillon",
     STATUS_SCHEDULED: "programmée",
@@ -36,6 +46,7 @@ FIELD_LABELS = {
     "title": "Titre",
     "official_ref": "Référence officielle",
     "legifrance_url": "Lien Légifrance",
+    "promulgated_on": "Date de promulgation",
     "summary_text": "Ce que dit la loi",
     "practical_changes": "Ce que ça change en pratique",
     "arguments_for": "Arguments des partisans",
@@ -63,6 +74,10 @@ MOIS = (
 
 def law_status(value: str) -> str:
     return LAW_STATUS_LABELS.get(value, value)
+
+
+def home_band(value: str) -> str:
+    return HOME_BAND_LABELS.get(value, value)
 
 
 def import_status(value: str) -> str:

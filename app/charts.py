@@ -31,6 +31,14 @@ PAD_BOTTOM = 36.0
 # At most this many labels on the time axis, whatever the number of days.
 MAX_X_LABELS = 7
 
+# Past this many days the per-day dots are dropped and the curve is drawn as a
+# line and an area alone. A year-long votation plots 365 points 1.8 px apart, so
+# `r="3"` circles overlap fourfold: they stop marking anything and merge into a
+# thick band, while costing about 100 kB of extra SVG on a page this site
+# promises to serve over slow connections. The exact figures stay available
+# underneath, in the table the chart is a picture of.
+MAX_DOTS = 60
+
 SERIES_LABELS = {"for": "Pour", "against": "Contre", "abstain": "Abstention"}
 
 
@@ -166,7 +174,8 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
                 label=SERIES_LABELS[key],
                 line=line,
                 area=area,
-                dots=points,
+                # Dropped on a long votation — see MAX_DOTS.
+                dots=points if len(buckets) <= MAX_DOTS else [],
                 total=sum(counts),
                 peak=max(counts, default=0),
             )
@@ -178,7 +187,13 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     # The last day is always worth showing, but only if the stride did not
     # already leave a label right next to it — two dates a few pixels apart are
     # less readable than one.
-    stride = max(1, -(-len(buckets) // MAX_X_LABELS))
+    #
+    # The stride divides the *intervals* between labels, not the days: with
+    # `MAX_X_LABELS` labels there are one fewer gaps between them. Dividing by the
+    # label count instead left room for the final day to be appended on top of a
+    # full set, and a year-long votation drew eight labels under a constant that
+    # says at most seven.
+    stride = max(1, -(-(len(buckets) - 1) // max(1, MAX_X_LABELS - 1)))
     indices = [i for i in range(len(buckets)) if i % stride == 0]
     last = len(buckets) - 1
     if last not in indices:

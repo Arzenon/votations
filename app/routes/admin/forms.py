@@ -15,7 +15,7 @@ All of them raise :class:`InvalidFormValue` here instead.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import Depends, Form
 from sqlalchemy import String
@@ -92,6 +92,26 @@ def parse_dt(value: str | None) -> datetime | None:
     except ValueError as exc:
         raise InvalidFormValue(f"date ou heure illisible : « {value} »") from exc
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=display_zone())
+
+
+def parse_day(value: str | None) -> date | None:
+    """Read a `date` field — a calendar day, with no time and no zone.
+
+    Deliberately not :func:`parse_dt`. A promulgation happened on a day, not at
+    an instant: attaching a time to it would invent a precision the Journal
+    Officiel does not publish, and then shift the day across a zone boundary.
+    """
+    if not value or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise InvalidFormValue(f"date illisible : « {value} »") from exc
+
+
+def day_value(value: date | None) -> str:
+    """Render a stored day back into the form's `date` field."""
+    return value.isoformat() if value else ""
 
 
 def dt_local(value: datetime | None) -> str:
@@ -190,6 +210,7 @@ class LawForm:
     practical_changes: str
     arguments_for: list[dict]
     arguments_against: list[dict]
+    promulgated_on: date | None
     opens_at: datetime | None
     closes_at: datetime | None
     published: bool
@@ -208,6 +229,7 @@ class LawForm:
             "practical_changes": self.practical_changes,
             "arguments_for": self.arguments_for,
             "arguments_against": self.arguments_against,
+            "promulgated_on": self.promulgated_on,
             "opens_at": self.opens_at,
             "closes_at": self.closes_at,
             "published": self.published,
@@ -221,6 +243,7 @@ class LawForm:
             "practical_changes": self.practical_changes,
             "arguments_for": self.arguments_for,
             "arguments_against": self.arguments_against,
+            "promulgated_on": day_value(self.promulgated_on),
             "opens_at": self.opens_at_raw,
             "closes_at": self.closes_at_raw,
             "published": self.published,
@@ -251,6 +274,7 @@ class RawLawForm:
     practical_changes: str
     arguments_for: ArgumentRows
     arguments_against: ArgumentRows
+    promulgated_on: str
     opens_at: str
     closes_at: str
     published: str
@@ -271,6 +295,7 @@ def raw_law_form(
     arguments_against_text: list[str] = Form([]),
     arguments_against_author: list[str] = Form([]),
     arguments_against_source: list[str] = Form([]),
+    promulgated_on: str = Form(""),
     opens_at: str = Form(""),
     closes_at: str = Form(""),
     published: str = Form(""),
@@ -292,6 +317,7 @@ def raw_law_form(
             author=arguments_against_author,
             source=arguments_against_source,
         ),
+        promulgated_on=promulgated_on,
         opens_at=opens_at,
         closes_at=closes_at,
         published=published,
@@ -315,6 +341,7 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
             f"« URL Légifrance » : « {legifrance_url} » n'est pas une adresse http(s)"
         )
 
+    promulgated_on = parse_day(raw.promulgated_on)
     opens = parse_dt(raw.opens_at)
     closes = parse_dt(raw.closes_at)
     if opens and closes and closes <= opens:
@@ -335,6 +362,7 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
         ),
         arguments_for=parse_arguments(raw.arguments_for, field="Arguments des partisans"),
         arguments_against=parse_arguments(raw.arguments_against, field="Arguments des opposants"),
+        promulgated_on=promulgated_on,
         opens_at=opens,
         closes_at=closes,
         published=_checkbox(raw.published),
@@ -359,6 +387,13 @@ def _lenient_dt(value: str) -> datetime | None:
         return None
 
 
+def _lenient_day(value: str) -> date | None:
+    try:
+        return parse_day(value)
+    except InvalidFormValue:
+        return None
+
+
 def _echoed(raw: RawLawForm, *, opens=None, closes=None) -> LawForm:
     """The form read the forgiving way, for the routes that only ever show it back.
 
@@ -376,6 +411,7 @@ def _echoed(raw: RawLawForm, *, opens=None, closes=None) -> LawForm:
         practical_changes=raw.practical_changes[: MAX_LENGTHS["practical_changes"]],
         arguments_for=_lenient_arguments(raw.arguments_for, "Arguments des partisans"),
         arguments_against=_lenient_arguments(raw.arguments_against, "Arguments des opposants"),
+        promulgated_on=_lenient_day(raw.promulgated_on),
         opens_at=opens,
         closes_at=closes,
         published=_checkbox(raw.published),

@@ -10,7 +10,14 @@ from starlette.requests import Request
 
 from app.auth.base import get_auth_provider
 from app.config import get_settings
-from app.labels import field_label, french_date, french_datetime, import_status, law_status
+from app.labels import (
+    field_label,
+    french_date,
+    french_datetime,
+    home_band,
+    import_status,
+    law_status,
+)
 from app.security import safe_url
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -148,6 +155,7 @@ templates.env.filters["readable_json"] = readable_json
 templates.env.filters["paragraphs"] = paragraphs
 templates.env.filters["practical_split"] = practical_split
 templates.env.filters["law_status"] = law_status
+templates.env.filters["home_band"] = home_band
 templates.env.filters["import_status"] = import_status
 templates.env.filters["field_label"] = field_label
 templates.env.filters["french_date"] = french_date

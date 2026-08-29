@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     ColumnClause,
@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, defer, with_expression
 
 from app.crud import count_matching, paginate
 from app.db import utcnow
-from app.labels import french_datetime
+from app.labels import french_date, french_datetime
 from app.models import (
     SEARCH_VECTOR_QUERY_SQL,
     STATUS_CLOSED,
@@ -44,6 +44,7 @@ TRACKED_FIELDS = (
     "practical_changes",
     "arguments_for",
     "arguments_against",
+    "promulgated_on",
     "opens_at",
     "closes_at",
     "published",
@@ -128,18 +129,58 @@ def _published(stmt: Select) -> Select:
     return stmt.where(Law.published.is_(True), Law.archived_at.is_(None))
 
 
+#: How the public listings are ordered, and the only place that decision is made.
+#:
+#: By the day Parliament acted, most recent first. Not by `created_at`, which is
+#: when an administrator pressed save — three laws entered in one evening ranked
+#: in the order they were typed. Not by the closing date either: at launch every
+#: votation runs for a year, so closing dates are all within days of each other
+#: and sorting on them collapses straight back into data-entry order.
+#:
+#: NULLS LAST is load-bearing. Postgres puts nulls *first* in a descending sort,
+#: so a law written by hand — which has no staged row and therefore no date —
+#: would otherwise open the site. `created_at` breaks the tie beneath, so the
+#: undated ones keep a stable order among themselves instead of shuffling.
+_NEWEST_LAW_FIRST = (Law.promulgated_on.desc().nullslast(), Law.created_at.desc())
+
+
 def list_published(db: Session, *, limit: int = 50) -> list[Law]:
-    """Published, non-archived laws, newest first (home page).
+    """Published, non-archived laws, most recently promulgated first (home page).
 
     Carries :attr:`~app.models.law.Law.excerpt`, not the whole summary.
     """
     stmt = (
         _published(select(Law))
         .options(*_TITLES_ONLY_DEFERRED, _EXCERPT)
-        .order_by(Law.created_at.desc())
+        .order_by(*_NEWEST_LAW_FIRST)
         .limit(limit)
     )
     return list(db.scalars(stmt))
+
+
+#: The bands the home page shows, in the order a visitor needs them: what you can
+#: vote on, what is coming, what is decided.
+HOME_BANDS = (STATUS_OPEN, STATUS_SCHEDULED, STATUS_CLOSED)
+
+
+def published_by_state(db: Session, *, limit: int = 50) -> list[tuple[str, list[Law]]]:
+    """The home page's listing, grouped by what a visitor can do with each law.
+
+    Empty bands are dropped, and that is what makes this safe to ship before it
+    is needed: while every votation is open — which is what the first months look
+    like, with a year-long voting window — exactly one band survives and the page
+    renders as a plain chronological list. It starts grouping itself on the day
+    the windows diverge, with no change here and none to the ordering.
+
+    Grouped in Python rather than by three queries: the page reads fifty rows it
+    has already fetched, and `status()` is derived from the live clock rather than
+    stored, so the database cannot answer this any more cheaply than we can.
+    """
+    laws = list_published(db, limit=limit)
+    grouped: dict[str, list[Law]] = {state: [] for state in HOME_BANDS}
+    for law in laws:
+        grouped[law.status()].append(law)
+    return [(state, grouped[state]) for state in HOME_BANDS if grouped[state]]
 
 
 def public_urls(db: Session, *, limit: int = 5000) -> list[tuple[str, datetime]]:
@@ -320,6 +361,10 @@ def _as_text(value) -> str:
     if isinstance(value, datetime):
         # Readable, not machine-readable: this ends up on a public page.
         return french_datetime(value)
+    if isinstance(value, date):
+        # Checked after `datetime`, which subclasses `date`: a promulgation is a
+        # day, and giving it a time would be inventing one.
+        return french_date(value)
     if isinstance(value, (list, dict)):
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     return str(value)

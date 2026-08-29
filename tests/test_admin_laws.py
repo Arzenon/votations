@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.config import get_settings
 from app.crud import laws as laws_crud
@@ -548,3 +548,58 @@ def test_the_filters_survive_turning_the_page(client, db_session):
     # The controls themselves must come back showing the current choice.
     assert 'value="Proposition de loi ordinaire" selected' in page
     assert 'value="seances" selected' in page
+
+
+# --- La date de promulgation, saisie et tracée --------------------------------
+
+
+def test_the_promulgation_date_is_saved_and_shown(client, db_session):
+    """The column the home page orders by has to be reachable from the form.
+
+    Otherwise a law written by hand can never be placed in the timeline, and the
+    only laws that sort correctly are the ones the import happened to stage.
+    """
+    law = make_law(db_session, slug="loi-promulguee", promulgated_on=None)
+    client.post(
+        f"/admin/lois/{law.id}",
+        headers=admin_headers(),
+        data={"title": law.title, "promulgated_on": "2026-06-24", "published": "1"},
+        follow_redirects=False,
+    )
+    db_session.refresh(law)
+    assert law.promulgated_on == date(2026, 6, 24)
+
+    form = client.get(f"/admin/lois/{law.id}", headers=admin_headers()).text
+    assert 'name="promulgated_on"' in form and 'value="2026-06-24"' in form
+
+
+def test_changing_the_promulgation_date_is_recorded_publicly(client, db_session):
+    """It orders the front page, so moving it moves what readers see first.
+
+    Every other field an administrator can edit is in the public record; this one
+    changes the shape of the site, which is a stronger reason than most.
+    """
+    law = make_law(db_session, slug="loi-redatee", promulgated_on=date(2026, 1, 5))
+    client.post(
+        f"/admin/lois/{law.id}",
+        headers=admin_headers(),
+        data={"title": law.title, "promulgated_on": "2026-03-09", "published": "1"},
+        follow_redirects=False,
+    )
+    entry = db_session.query(LawRevision).filter_by(law_id=law.id, field="promulgated_on").one()
+    # Rendered as a French day, not an ISO string: this lands on a public page.
+    assert entry.old_value == "5 janvier 2026"
+    assert entry.new_value == "9 mars 2026"
+    assert "Date de promulgation" in client.get(f"/loi/{law.slug}/resultats").text
+
+
+def test_an_unreadable_promulgation_date_is_refused_with_a_message(client, db_session):
+    law = make_law(db_session, slug="loi-date-illisible")
+    r = client.post(
+        f"/admin/lois/{law.id}",
+        headers=admin_headers(),
+        data={"title": law.title, "promulgated_on": "le 24 juin", "published": "1"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 400
+    assert "illisible" in r.text
