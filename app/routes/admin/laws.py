@@ -14,8 +14,7 @@ from app.db import as_utc, get_db, utcnow
 from app.models import STATUS_IMPORTED, Law
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form, preview_form
-from app.routes.admin.guard import require_admin
-from app.routes.public.exports import csv_response
+from app.routes.public.exports import at_capacity, csv_response
 from app.routes.public.laws import law_page_context
 from app.templating import templates
 
@@ -26,10 +25,9 @@ router = APIRouter()
 def dashboard(
     request: Request,
     page: int = 1,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    items, total, pages = laws_crud.list_all(db, page=page)
+    listing = laws_crud.list_all(db, page=page)
     settings = get_settings()
     last_import = imports_crud.last_import_at(db)
     stale_after = settings.an_import_stale_after_hours
@@ -44,11 +42,11 @@ def dashboard(
         request,
         "admin/dashboard.html",
         {
-            "laws": items,
-            "total": total,
-            "page": min(max(1, page), pages),
-            "pages": pages,
-            "tallies": results_crud.tallies_for(db, [law.id for law in items]),
+            "laws": listing.rows,
+            "total": listing.total,
+            "page": listing.number,
+            "pages": listing.count,
+            "tallies": results_crud.tallies_for(db, [law.id for law in listing.rows]),
             "pending_imports": imports_crud.count_new(db),
             "archived_count": laws_crud.count_archived(db),
             "last_import": last_import,
@@ -62,20 +60,19 @@ def dashboard(
 def archived_laws(
     request: Request,
     page: int = 1,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Laws withdrawn from the site. Restorable, or purgeable on purpose."""
-    items, total, pages = laws_crud.list_all(db, page=page, archived=True)
+    listing = laws_crud.list_all(db, page=page, archived=True)
     return templates.TemplateResponse(
         request,
         "admin/archives.html",
         {
-            "laws": items,
-            "total": total,
-            "page": min(max(1, page), pages),
-            "pages": pages,
-            "tallies": results_crud.tallies_for(db, [law.id for law in items]),
+            "laws": listing.rows,
+            "total": listing.total,
+            "page": listing.number,
+            "pages": listing.count,
+            "tallies": results_crud.tallies_for(db, [law.id for law in listing.rows]),
         },
     )
 
@@ -84,7 +81,6 @@ def archived_laws(
 def new_law_form(
     request: Request,
     import_id: int | None = None,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     # A staged law pre-fills the factual fields only (title, official reference,
@@ -119,7 +115,6 @@ def edit_law_form(
     # stored. Nothing is written by asking: the draft is loaded into the form and
     # saved only if « Enregistrer » is pressed afterwards.
     brouillon: int = 0,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     law = laws_crud.get_by_id(db, law_id)
@@ -135,8 +130,7 @@ def edit_law_form(
 
     # The most recent page only. The full history, paginated, is the public one on
     # the results page — which is where a reader checks it, and where it belongs.
-    # Not `_` for the page count: that name is already the admin guard's parameter.
-    recent, total, _pages = laws_crud.revisions(db, law.id)
+    history = laws_crud.revisions(db, law.id)
     return templates.TemplateResponse(
         request,
         "admin/law_form.html",
@@ -146,8 +140,8 @@ def edit_law_form(
             draft=draft,
             arguments=arguments,
             notes=notes,
-            revisions=recent,
-            revision_total=total,
+            revisions=history.rows,
+            revision_total=history.total,
         ),
     )
 
@@ -170,9 +164,7 @@ def _preview(request: Request, db: Session, law: Law) -> HTMLResponse:
 
 
 @router.get("/lois/{law_id}/apercu", response_class=HTMLResponse)
-def preview_law(
-    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
-):
+def preview_law(request: Request, law_id: int, db: Session = Depends(get_db)):
     """The stored law, as the public page will show it once published.
 
     A plain link, so it can be bookmarked and so the administration's own listing
@@ -188,7 +180,6 @@ def preview_law(
 @router.post("/lois/apercu", response_class=HTMLResponse)
 def preview_edits(
     request: Request,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
     form: LawForm = Depends(preview_form),
     law_id: int | None = Form(None),
@@ -224,7 +215,6 @@ def preview_edits(
 
 @router.post("/lois")
 def create_law(
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
     form: LawForm = Depends(law_form),
     import_id: int | None = Form(None),
@@ -260,7 +250,6 @@ def create_law(
 @router.post("/lois/{law_id}")
 def update_law(
     law_id: int,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
     form: LawForm = Depends(law_form),
 ):
@@ -272,9 +261,7 @@ def update_law(
 
 
 @router.get("/lois/{law_id}/archiver", response_class=HTMLResponse)
-def confirm_archive(
-    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
-):
+def confirm_archive(request: Request, law_id: int, db: Session = Depends(get_db)):
     """Ask before withdrawing a law, on a page rather than in a JS dialog.
 
     The confirmation used to be a ``data-confirm`` attribute handled by
@@ -304,7 +291,7 @@ def confirm_archive(
 
 
 @router.get("/lois/{law_id}/export.csv")
-def export_law_csv(law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+def export_law_csv(request: Request, law_id: int, db: Session = Depends(get_db)):
     """The open-data CSV for any law, archived ones included.
 
     The public route refuses an archived law — that is what archiving means — and
@@ -315,7 +302,20 @@ def export_law_csv(law_id: int, _: str = Depends(require_admin), db: Session = D
     The rows are the same the public export serves, reductions and all: archiving
     withdraws a votation from the site, it does not exempt it from the anonymity
     rules. What this route adds is reach, not detail.
+
+    Held to the same concurrency cap as the public exports, and to no other
+    limit. The cap protects the connection pool, and a connection held by an
+    administrator starves the public pages exactly as anyone else's would — this
+    route used to take one of those slots without ever checking for one, which is
+    the one way the cap could be exceeded. The per-address *rate* limit is
+    deliberately not applied: it exists to slow a caller looping over downloads,
+    and refusing an administrator for downloading several archived votations in a
+    sitting would only obstruct the « keep the data before you purge it » step
+    this route exists for.
     """
+    refused = at_capacity(request)
+    if refused is not None:
+        return refused
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
@@ -323,7 +323,7 @@ def export_law_csv(law_id: int, _: str = Depends(require_admin), db: Session = D
 
 
 @router.post("/lois/{law_id}/archiver")
-def archive_law(law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+def archive_law(law_id: int, db: Session = Depends(get_db)):
     law = laws_crud.get_by_id(db, law_id)
     if law is not None:
         laws_crud.archive(db, law)
@@ -331,7 +331,7 @@ def archive_law(law_id: int, _: str = Depends(require_admin), db: Session = Depe
 
 
 @router.post("/lois/{law_id}/restaurer")
-def restore_law(law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+def restore_law(law_id: int, db: Session = Depends(get_db)):
     law = laws_crud.get_by_id(db, law_id)
     if law is not None:
         laws_crud.restore(db, law)
@@ -339,9 +339,7 @@ def restore_law(law_id: int, _: str = Depends(require_admin), db: Session = Depe
 
 
 @router.get("/lois/{law_id}/supprimer", response_class=HTMLResponse)
-def confirm_purge(
-    request: Request, law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
-):
+def confirm_purge(request: Request, law_id: int, db: Session = Depends(get_db)):
     """The second of the two decisions that deleting a votation now takes."""
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
@@ -374,7 +372,7 @@ def confirm_purge(
 
 
 @router.post("/lois/{law_id}/supprimer")
-def purge_law(law_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+def purge_law(law_id: int, db: Session = Depends(get_db)):
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         return RedirectResponse("/admin/archives", status_code=303)

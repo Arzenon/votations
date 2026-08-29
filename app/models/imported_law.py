@@ -96,3 +96,14 @@ class ImportedLaw(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
     )
+
+    @property
+    def is_imported(self) -> bool:
+        """Whether this dossier has already been turned into a votation.
+
+        Here rather than as ``status == 'importe'`` in the template that branches
+        on it, for the same reason :attr:`~app.models.law.Law.is_public` exists:
+        the spelling of the stored value belongs to this module, and a page that
+        repeats it is a copy that no rename would follow.
+        """
+        return self.status == STATUS_IMPORTED

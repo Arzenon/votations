@@ -7,6 +7,8 @@ place the clamp or the count could be got subtly wrong.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy import Select, func
 from sqlalchemy.orm import Session
 
@@ -26,6 +28,27 @@ def count_matching(db: Session, stmt: Select) -> int:
     """
     counted = stmt.with_only_columns(func.count(), maintain_column_froms=True)
     return db.scalar(counted.order_by(None)) or 0
+
+
+@dataclass(frozen=True)
+class Page[T]:
+    """One page of a listing: its rows, and where they sit in the whole.
+
+    ``number`` is the page actually served, already clamped — which is the whole
+    reason this is a type rather than a tuple. :func:`paginate` computes the
+    clamp, every listing threw it away, and each of the five pages that display
+    « page n / N » re-derived it with its own copy of
+    ``min(max(1, page), pages)``. Five copies of a value one function already
+    had is five chances to clamp against the wrong bound.
+    """
+
+    rows: list[T]
+    #: Rows matching the query, across every page.
+    total: int
+    #: The page served, clamped into ``1..count``.
+    number: int
+    #: How many pages there are. At least 1, even when there is nothing to show.
+    count: int
 
 
 def paginate(page: int, total: int, page_size: int) -> tuple[int, int, int]:

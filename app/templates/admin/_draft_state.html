@@ -1,16 +1,22 @@
 {# Polled while a draft runs in the background. Stops polling on its own once the
-   job reaches a terminal state — HTMX only re-triggers what it swaps back in. #}
+   job reaches a terminal state — HTMX only re-triggers what it swaps back in.
+
+   Every branch reads a boolean the server computed, never a status string: the
+   values are `DRAFT_PENDING` and its siblings, and a template that spells them
+   out is a copy of a constant nothing would keep in step. See
+   `app.routes.admin.context.draft_state_context`, which builds this for both the
+   pages that include it. #}
 <div id="draft-state"
-     {% if pending %}hx-get="/admin/imports/{{ item.id }}/brouillon/etat"
+     {% if draft_pending %}hx-get="/admin/imports/{{ draft_item.id }}/brouillon/etat"
      hx-trigger="every 3s" hx-target="#draft-state" hx-swap="outerHTML"{% endif %}>
-  {% if pending %}
+  {% if draft_pending %}
   <p class="disclaimer" role="status">
     <strong>Brouillon en cours de génération…</strong>
     Le texte officiel est téléchargé depuis le Journal Officiel, puis les comptes
     rendus de séance sont lus. Comptez une à quelques minutes. Vous pouvez
     continuer à saisir le formulaire pendant ce temps.
   </p>
-  {% elif failed %}
+  {% elif draft_failed %}
   <div class="disclaimer" role="alert">
     <p>
       <strong>Brouillon impossible.</strong> {{ draft_error }}
@@ -19,13 +25,13 @@
     {# Dismissed by an explicit POST, never by the act of opening the page: this
        banner is the only record of why the draft did not happen, and a GET that
        cleared it lost the message to a browser prefetch. #}
-    <form action="/admin/imports/{{ item.id }}/brouillon/masquer" method="post"
-          hx-post="/admin/imports/{{ item.id }}/brouillon/masquer"
+    <form action="/admin/imports/{{ draft_item.id }}/brouillon/masquer" method="post"
+          hx-post="/admin/imports/{{ draft_item.id }}/brouillon/masquer"
           hx-target="#draft-state" hx-swap="outerHTML">
       <button type="submit" class="secondary">J'ai lu — masquer</button>
     </form>
   </div>
-  {% elif draft_status == 'pret' %}
+  {% elif draft_ready %}
   <p class="disclaimer" role="status">
     <strong>Le brouillon est prêt.</strong>
     {# Where "open it" leads depends on whether this dossier has already produced
@@ -34,10 +40,10 @@
        too, and kept pointing there. Following it after « Régénérer » gave you a
        *blank* creation form holding the new draft, and saving it created a second
        copy of the law you were editing. #}
-    {% if item.law_id %}
-    <a href="/admin/lois/{{ item.law_id }}?brouillon=1">Charger le brouillon dans le formulaire</a>
+    {% if draft_item.law_id %}
+    <a href="/admin/lois/{{ draft_item.law_id }}?brouillon=1">Charger le brouillon dans le formulaire</a>
     {% else %}
-    <a href="/admin/lois/nouvelle?import_id={{ item.id }}">Ouvrir le formulaire pré-rempli</a>
+    <a href="/admin/lois/nouvelle?import_id={{ draft_item.id }}">Ouvrir le formulaire pré-rempli</a>
     {% endif %}
     — ce qui remplacera ce que vous avez saisi ici.
   </p>

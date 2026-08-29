@@ -53,17 +53,17 @@ def search(
     db: Session = Depends(get_db),
 ):
     q = (q or "")[:MAX_QUERY_CHARS]
-    rows, total, pages = laws_crud.search(db, query=q or None, status=status, page=page)
+    found = laws_crud.search(db, query=q or None, status=status, page=page)
     return templates.TemplateResponse(
         request,
         "search.html",
         {
-            "laws": rows,
+            "laws": found.rows,
             "q": q,
             "status": status or "",
-            "page": min(max(1, page), pages),
-            "pages": pages,
-            "total": total,
+            "page": found.number,
+            "pages": found.count,
+            "total": found.total,
         },
         headers=PUBLIC_PAGE_CACHE,
     )

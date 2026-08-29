@@ -55,6 +55,21 @@ class AiDraftError(RuntimeError):
     """Raised when no draft can be produced; the admin writes the blocks by hand."""
 
 
+#: Requests the SDK may make per call — the original, plus its retries.
+#:
+#: The SDK's own default is three, and it retries a timeout as readily as a 429.
+#: That matters here because the caller hands each call a *timeout* taken from
+#: what is left of the draft's budget: three attempts at that timeout is three
+#: times the budget, which is precisely the promise
+#: ``AI_DRAFT_DEADLINE_SECONDS`` makes and could not keep.
+#:
+#: Two, rather than one, because these calls cost minutes and money and a 429 or
+#: a 502 is worth a second go. The caller divides the remaining budget by this,
+#: so the retry fits inside the budget instead of doubling it — see
+#: ``app.drafting._within``.
+AI_ATTEMPTS = 2
+
+
 def build_client() -> Any:
     """An Anthropic client, or the refusal that says the feature is switched off.
 
@@ -74,7 +89,7 @@ def build_client() -> Any:
         )
     import anthropic
 
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    return anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=AI_ATTEMPTS - 1)
 
 
 class LawDraft(BaseModel):

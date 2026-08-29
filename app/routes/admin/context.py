@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.ai import LawDraft, SelectedArguments
 from app.config import get_settings
 from app.labels import french_date
+from app.models import DRAFT_FAILED, DRAFT_IDLE, DRAFT_PENDING, DRAFT_READY
 from app.routes.admin.forms import day_value, dt_local
 
 
@@ -78,6 +79,35 @@ def form_values(
     return base
 
 
+def draft_state_context(item) -> dict:
+    """What ``admin/_draft_state.html`` needs — for both pages that show it.
+
+    The three booleans are decided here rather than by comparing ``draft_status``
+    against string literals in the template. The values are ``DRAFT_PENDING`` and
+    its siblings; a template that spells « en_cours » out is a copy of a constant
+    that no test reads and no rename would follow, and what breaks when they
+    drift is the polling banner — the one piece of the page whose entire job is
+    to say what happened.
+
+    ``draft_item`` rather than ``item`` because the law form has a ``prefill``
+    and no ``item``: naming the partial's own variable lets both callers spread
+    this into their context and include the partial with no ``{% with %}``
+    re-deriving anything.
+
+    ``None`` is a real argument here — the creation form renders before any
+    dossier is chosen — and reads as "nothing is being drafted".
+    """
+    status = item.draft_status if item is not None else DRAFT_IDLE
+    return {
+        "draft_item": item,
+        "draft_status": status,
+        "draft_error": item.draft_error if item is not None else "",
+        "draft_pending": status == DRAFT_PENDING,
+        "draft_failed": status == DRAFT_FAILED,
+        "draft_ready": status == DRAFT_READY,
+    }
+
+
 def cached_draft(item):
     """Rehydrate a stored draft. Returns (draft, arguments, notes, eli_url)."""
     cached = getattr(item, "draft", None) if item else None
@@ -127,8 +157,9 @@ def law_form_context(
         # True when the fields below are showing the draft rather than what is
         # stored, so the page can say so — nothing is written until « Enregistrer ».
         "draft_loaded": law is not None and draft is not None,
-        "draft_status": prefill.draft_status if prefill else "",
-        "draft_error": prefill.draft_error if prefill else "",
+        # Everything the status banner needs, built the same way as on the pages
+        # that poll for it. See :func:`draft_state_context`.
+        **draft_state_context(prefill),
         "ai_enabled": bool(prefill) and bool(get_settings().anthropic_api_key),
         "revisions": list(revisions or []),
         # How many exist in all, against how many are shown: the form displays

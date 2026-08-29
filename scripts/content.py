@@ -39,20 +39,27 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.crud.laws import slugify
 from app.db import SessionLocal, utcnow
 from app.models import ImportedLaw, Law, LawRevision
 
 #: Bumped when the shape below changes in a way an older importer cannot read.
+#:
+#: *Adding* a field is not that, and must not bump it. The reader below refuses
+#: any version but its own, so a bump makes every snapshot already on disk
+#: unreadable — and the reason five days of them are kept is to be able to go
+#: back to one. A field the old writer never wrote simply arrives missing and
+#: restores as empty, which is what it was.
 FORMAT_VERSION = 1
 
-#: Everything an administrator wrote or scheduled. `id` is absent on purpose.
+#: Everything an administrator wrote or scheduled.
 LAW_FIELDS = (
     "slug",
     "title",
@@ -62,11 +69,30 @@ LAW_FIELDS = (
     "practical_changes",
     "arguments_for",
     "arguments_against",
+    "promulgated_on",
     "published",
     "opens_at",
     "closes_at",
     "archived_at",
     "created_at",
+)
+
+#: Columns of ``laws`` that deliberately do not travel, each for a stated reason.
+#: Together with :data:`LAW_FIELDS` this must account for every column, which
+#: ``test_every_column_of_a_law_is_carried_or_deliberately_left_out`` checks —
+#: because the way this file goes wrong is by silence. ``promulgated_on`` was
+#: added as a column, as an admin form field and as the home page's sort key, and
+#: was simply not added here: a snapshot restored on another host put every law's
+#: promulgation date back as empty, and nothing anywhere said so.
+_NOT_CARRIED = frozenset(
+    {
+        # Means nothing in another database — see the module docstring.
+        "id",
+        # Set by the write that restores the row. Carrying the old value would
+        # state that a law had not been touched since a date that precedes its
+        # own insertion, which is the one thing the column is read for.
+        "updated_at",
+    }
 )
 
 REVISION_FIELDS = ("changed_at", "field", "old_value", "new_value")
@@ -77,17 +103,33 @@ REVISION_FIELDS = ("changed_at", "field", "old_value", "new_value")
 #: error, and would have turned an unlucky title into a date.
 _INSTANT_FIELDS = frozenset({"opens_at", "closes_at", "archived_at", "created_at", "changed_at"})
 
+#: And the ones that hold a calendar day. Kept apart from the instants because
+#: they read back differently: `datetime.fromisoformat` on « 2026-06-24 » answers
+#: midnight on that day, which is an instant nobody recorded and which a timezone
+#: can then move to the day before.
+_DAY_FIELDS = frozenset({"promulgated_on"})
+
 
 def _plain(name: str, value: Any) -> Any:
-    """JSON-safe, keeping instants unambiguous."""
+    """JSON-safe, keeping instants and days unambiguous.
+
+    `datetime` is checked before `date` because it subclasses it — the same
+    ordering `app.crud.laws._as_text` needs, for the same reason.
+    """
     if name in _INSTANT_FIELDS and isinstance(value, datetime):
+        return value.isoformat()
+    if name in _DAY_FIELDS and isinstance(value, date):
         return value.isoformat()
     return value
 
 
 def _restore(name: str, value: Any) -> Any:
-    if name in _INSTANT_FIELDS and isinstance(value, str):
+    if not isinstance(value, str):
+        return value
+    if name in _INSTANT_FIELDS:
         return datetime.fromisoformat(value)
+    if name in _DAY_FIELDS:
+        return date.fromisoformat(value)
     return value
 
 
@@ -216,9 +258,15 @@ def _read(path: Path) -> dict:
 
 def _import_law(db: Session, entry: dict, *, replace: bool) -> str:
     """Insert one law and its revisions. Returns what was done."""
-    slug = entry.get("slug")
-    if not slug:
+    raw_slug = entry.get("slug")
+    if not raw_slug:
         raise ContentFormatError("une loi sans slug ne peut pas être identifiée")
+    # Re-derived rather than trusted. A slug is a URL segment and reaches a
+    # `Content-Disposition` header on the export routes, and this file is the one
+    # input to the application that arrives as a whole document from wherever the
+    # operator got it. `slugify` is idempotent on anything it produced, so a
+    # snapshot of a healthy instance round-trips unchanged.
+    slug = slugify(raw_slug)
 
     existing = db.scalar(select(Law).where(Law.slug == slug))
     if existing is not None and not replace:
@@ -237,6 +285,7 @@ def _import_law(db: Session, entry: dict, *, replace: bool) -> str:
         )
 
     columns = {name: _restore(name, entry.get(name)) for name in LAW_FIELDS}
+    columns["slug"] = slug
     if existing is None:
         law = Law(**columns)
         db.add(law)
@@ -282,7 +331,9 @@ def _apply_decisions(db: Session, decisions: list[dict]) -> tuple[int, int]:
         item.status = decision.get("status", item.status)
         slug = decision.get("law_slug")
         if slug:
-            law = db.scalar(select(Law).where(Law.slug == slug))
+            # Through `slugify` for the same reason the laws are, and so that a
+            # decision still finds the law it points at after that pass.
+            law = db.scalar(select(Law).where(Law.slug == slugify(slug)))
             item.law_id = law.id if law is not None else None
         applied += 1
     return applied, pending

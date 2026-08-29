@@ -9,12 +9,15 @@ slug and the dossier uid instead.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from app.crud.laws import TRACKED_FIELDS
 from app.models import ImportedLaw, Law, LawRevision, Vote
 from scripts.content import (
+    _NOT_CARRIED,
+    LAW_FIELDS,
     ContentFormatError,
     ExportDirectoryError,
     PublishedLawError,
@@ -87,6 +90,65 @@ def test_the_voting_window_keeps_its_instants(db_session):
     restored = db_session.query(Law).filter_by(slug="loi-fenetre").one()
     assert restored.opens_at == opens
     assert restored.closes_at == closes
+
+
+def test_the_promulgation_date_travels(db_session):
+    """It is what the home page is ordered by, so losing it reorders the site.
+
+    The column was added, the form learned to write it and the listings learned
+    to sort on it — and the snapshot was not told, so a move to another host put
+    every law's date back as empty and the new home page fell back to the order
+    the rows happened to be inserted in.
+    """
+    make_law(db_session, slug="loi-datee", promulgated_on=date(2026, 6, 24))
+    document = build_document(db_session)
+    _wipe(db_session)
+    import_content_from(db_session, document)
+
+    restored = db_session.query(Law).filter_by(slug="loi-datee").one()
+    assert restored.promulgated_on == date(2026, 6, 24), "a day, not an instant"
+
+
+def test_every_column_of_a_law_is_carried_or_deliberately_left_out(db_session):
+    """The guard the missing promulgation date needed and did not have.
+
+    An omission here is invisible: the export runs, the import runs, and the
+    column simply comes back empty. So every column has to be *named* — either as
+    something that travels or as something explicitly left behind — and adding
+    one to the model without deciding which fails this test rather than a
+    restore, six months later, on another host.
+    """
+    columns = {column.name for column in Law.__table__.c}
+    undecided = columns - set(LAW_FIELDS) - _NOT_CARRIED
+    assert not undecided, (
+        f"{sorted(undecided)} : ajoutez ces colonnes à LAW_FIELDS, ou à _NOT_CARRIED "
+        "avec la raison de ne pas les emporter"
+    )
+    # And nothing names a column that no longer exists.
+    assert set(LAW_FIELDS) <= columns
+    # Everything whose change is published must survive the move: the results page
+    # states what moved since publication, and it cannot do that about a value the
+    # snapshot dropped.
+    assert set(TRACKED_FIELDS) <= set(LAW_FIELDS)
+
+
+def test_a_slug_from_the_file_is_re_derived_not_trusted(db_session):
+    """This file is the one input that arrives as a whole document from outside.
+
+    A slug is a URL segment and reaches a `Content-Disposition` header on the
+    export routes, so it goes through `slugify` on the way in like every slug the
+    application makes itself — rather than being taken on faith from a JSON file.
+    """
+    make_law(db_session, slug="loi-propre")
+    document = build_document(db_session)
+    _wipe(db_session)
+    document["laws"][0]["slug"] = "Loi Sale\r\nX-Injected: 1"
+
+    import_content_from(db_session, document)
+
+    restored = db_session.query(Law).one()
+    assert restored.slug == "loi-sale-x-injected-1"
+    assert "\r" not in restored.slug and "\n" not in restored.slug
 
 
 def test_drafts_and_archived_laws_travel_too(db_session):

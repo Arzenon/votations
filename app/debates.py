@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -103,7 +104,30 @@ class Speech:
 # A compte rendu runs to ~600 kB and a réunion to a couple of kilobytes; the
 # ceiling is well clear of both and bounds what a single sitting can cost us.
 MAX_RECORD_BYTES = 32 * 1024 * 1024
-_default_getter = getter(timeout=60.0, max_bytes=MAX_RECORD_BYTES, error=DebatesFetchError)
+
+#: Per-operation socket timeout, not a bound on a whole download — see
+#: :func:`bounded_getter` for the caller that needs one.
+TIMEOUT = 60.0
+
+_default_getter = getter(timeout=TIMEOUT, max_bytes=MAX_RECORD_BYTES, error=DebatesFetchError)
+
+
+def bounded_getter(remaining: Callable[[], float]) -> Getter:
+    """The default getter, with every request held to the caller's own budget.
+
+    A text debated twenty times costs forty requests here, and the drafting job
+    reaches this step having already spent part of a budget it promises to keep.
+    A spent budget raises :class:`~app.opendata.DeadlineExceeded`, which
+    :func:`fetch_speeches` deliberately does *not* catch — unlike
+    ``DebatesFetchError``, which it treats as "skip this sitting" — so the loop
+    stops instead of walking the remaining sittings to fail on each of them.
+    """
+    return getter(
+        timeout=TIMEOUT,
+        max_bytes=MAX_RECORD_BYTES,
+        error=DebatesFetchError,
+        remaining=remaining,
+    )
 
 
 def _as_text(node: object) -> str:
@@ -247,10 +271,11 @@ def _our_point(compte_rendu: dict, subject: str) -> str | None:
         return None
     best, best_score = None, 0.0
     for tag, title in _record_points(compte_rendu).items():
-        shared = wanted & _significant(title)
+        theirs = _significant(title)
+        shared = wanted & theirs
         if len(shared) < _SUBJECT_MIN_WORDS:
             continue
-        score = len(shared) / min(len(wanted), len(_significant(title)))
+        score = len(shared) / min(len(wanted), len(theirs))
         if score > best_score:
             best, best_score = tag, score
     return best if best_score >= _SUBJECT_OVERLAP else None
@@ -421,9 +446,27 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
     """Fetch every argued speech about this text, across its sittings.
 
     A sitting that cannot be read is skipped rather than fatal — a partial set of
-    arguments is useful, and the admin sees how many sittings were covered.
+    arguments is useful, and the admin sees how many sittings were covered. A
+    :class:`~app.opendata.DeadlineExceeded` is *not* skipped: see
+    :func:`bounded_getter`.
     """
     get = get or _default_getter
+    # A dossier's sittings are agenda *items*, and one sitting can carry two of
+    # them — so the same réunion, and the same ~600 kB compte rendu, were fetched
+    # once per item. Cached for the length of this call only: nothing here is
+    # stored, and a second draft an hour later should see whatever the Assemblée
+    # nationale publishes then.
+    #
+    # Successes only. A failure stays uncached so it is retried for the next
+    # item, which is what the loop below already assumed; a spent budget makes
+    # that retry instantaneous rather than another timeout.
+    documents: dict[str, dict] = {}
+
+    def document(uid: str) -> dict:
+        if uid not in documents:
+            documents[uid] = _get_json(get, uid)
+        return documents[uid]
+
     out: list[Speech] = []
     for seance in seances:
         reunion_ref = (seance or {}).get("reunion_ref")
@@ -431,12 +474,12 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
         if not reunion_ref:
             continue
         try:
-            reunion = _get_json(get, reunion_ref)
+            reunion = document(reunion_ref)
             cr_ref = reunion.get("compteRenduRef")
             if not cr_ref:
                 continue
             subject = _agenda_subject(reunion, odj_ref) if odj_ref else ""
-            record = _get_json(get, cr_ref)
+            record = document(cr_ref)
         except DebatesFetchError:
             continue
         legislature = (record.get("metadonnees") or {}).get("legislature") or "17"

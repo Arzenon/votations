@@ -24,7 +24,7 @@
          so a screen reader gets one sentence rather than 300 path commands. #}
       <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" width="100%"
            role="img" aria-labelledby="evo-titre evo-desc" class="evolution-chart">
-        <title id="evo-titre">Évolution des votes, jour par jour</title>
+        <title id="evo-titre">Évolution des votes, par {{ chart.period.name }}</title>
         <desc id="evo-desc">{{ chart.description }}</desc>
 
         {% for y, value in chart.y_ticks %}
@@ -56,7 +56,18 @@
         {% endfor %}
       </figcaption>
     </figure>
-    <p class="meta">Une mobilisation organisée se voit ici : elle laisse un pic sur une journée.</p>
+    {# The curve is drawn one point per day up to three months, then one point per
+       week (or wider) — see `app.charts.MAX_POINTS`. Below that threshold the two
+       sentences say the same thing and the second is not shown; past it, the page
+       has to name the difference, because a reader comparing the curve to the
+       table underneath would otherwise be comparing two different units. #}
+    <p class="meta">
+      Une mobilisation organisée se voit ici : elle laisse un pic sur {{ chart.period.span }}.
+      {% if chart.period.days > 1 %}
+      La courbe regroupe les votes par {{ chart.period.name }} ; le tableau
+      ci-dessous garde le détail jour par jour.
+      {% endif %}
+    </p>
 
     <details class="chart-data">
       <summary>Voir les chiffres jour par jour</summary>

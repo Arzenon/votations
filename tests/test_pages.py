@@ -1,6 +1,7 @@
 """Page rendering, admin guard, and the connexion placeholder."""
 
 import base64
+import re
 
 from app.config import get_settings
 from tests.helpers import admin_headers, make_law
@@ -137,12 +138,37 @@ def test_robots_and_favicon_exist(client):
 # --- C1: htmx only where it is used ------------------------------------------
 
 
+def _loads_htmx(page: str) -> bool:
+    """Whether the page pulls in the 50 kB library, not whether it mentions it.
+
+    Every page carries the `htmx-config` meta — it is in the shared base, so that
+    the two pages which *do* load htmx cannot be given it without its settings.
+    Matching on the bare word therefore stopped telling these two tests apart.
+    """
+    return "<script" in page and "htmx.min.js" in page
+
+
 def test_the_home_page_does_not_load_htmx(client):
-    assert "htmx" not in client.get("/").text
+    assert not _loads_htmx(client.get("/").text)
 
 
 def test_the_law_page_does_load_htmx(client, open_law):
-    assert "htmx" in client.get(f"/loi/{open_law.slug}").text
+    assert _loads_htmx(client.get(f"/loi/{open_law.slug}").text)
+
+
+def test_htmx_is_configured_not_to_evaluate_anything(client, open_law):
+    """Both switches off, on the page that loads the library.
+
+    The Content-Security-Policy already refuses what they permit, which is why
+    this is worth a test rather than a comment: the day somebody has to loosen
+    the CSP, nothing else would notice htmx quietly regaining the ability to
+    evaluate attribute expressions and run <script> tags out of a swapped
+    fragment.
+    """
+    page = client.get(f"/loi/{open_law.slug}").text
+    assert '<meta name="htmx-config"' in page
+    assert '"allowEval":false' in page
+    assert '"allowScriptTags":false' in page
 
 
 # --- Pages légales ------------------------------------------------------------
@@ -265,6 +291,74 @@ def test_the_share_card_exists_and_is_the_right_size(client):
     width = int.from_bytes(header[16:20], "big")
     height = int.from_bytes(header[20:24], "big")
     assert (width, height) == (1200, 630)
+
+
+# --- La feuille de style ------------------------------------------------------
+
+
+def _stylesheet_selectors() -> list[str]:
+    """The top-level selectors of styles.css, read the way a browser reads them.
+
+    A browser does not parse CSS declaration by declaration: it takes everything
+    up to the next ``{`` as a selector, whatever that text happens to be. So a
+    rule that loses its selector — the residue of a deleted component — does not
+    fail loudly. Its orphaned declarations are silently glued onto the *next*
+    rule's selector, and that next rule is the one that disappears.
+
+    This returns what the browser would end up with, so the two assertions below
+    can be about that rather than about the source text.
+    """
+    from app.templating import STATIC_DIR
+
+    css = re.sub(r"/\*.*?\*/", "", (STATIC_DIR / "styles.css").read_text(), flags=re.S)
+    selectors: list[str] = []
+    depth = 0
+    prelude = ""
+    for char in css:
+        if char == "{":
+            depth += 1
+            if depth == 1:
+                selectors.append(prelude.strip())
+                prelude = ""
+        elif char == "}":
+            depth -= 1
+            assert depth >= 0, "styles.css ferme une accolade jamais ouverte"
+            prelude = ""
+        elif depth == 0:
+            prelude += char
+    assert depth == 0, "styles.css laisse une accolade ouverte"
+    return selectors
+
+
+def test_no_rule_in_the_stylesheet_has_lost_its_selector():
+    """Deleting a component must take its whole rule, braces included.
+
+    Removing « les réserves » once left two declaration bodies and their closing
+    braces behind with no selector in front of them. Nothing failed: ruff does
+    not read CSS, no Python test touches it, and the page still rendered. What it
+    cost was the rule that happened to come next — the site-wide
+    ``:focus-visible`` ring, swallowed into an unusable selector and dropped, so
+    the whole site quietly lost its keyboard focus outline.
+
+    A stray declaration always shows up here as a selector carrying a ``;`` or a
+    ``}``, because that is exactly what the browser scooped up on its way to the
+    next ``{``.
+    """
+    for selector in _stylesheet_selectors():
+        assert ";" not in selector and "}" not in selector, (
+            f"« {selector[:80]}… » n'est pas un sélecteur : une déclaration a "
+            "perdu le sien, et la règle suivante est perdue avec elle"
+        )
+
+
+def test_the_keyboard_focus_ring_survives_parsing():
+    """The rule the orphaned declarations above happened to swallow.
+
+    Named on its own because the check above proves the file parses, not that
+    this particular rule is still in it — and this is the one whose loss nothing
+    else would report: a missing focus ring looks like the browser's default.
+    """
+    assert ":focus-visible" in _stylesheet_selectors()
 
 
 # --- « Ce que ça change en pratique » : replié plutôt que raccourci ------------
@@ -401,6 +495,69 @@ def test_one_band_renders_as_a_plain_list(client, db_session):
     assert "Dernières votations" in page
     assert "Votations ouvertes" not in page
     assert "Votations closes" not in page
+
+
+def test_an_open_votation_is_never_crowded_out_by_closed_ones(client, db_session):
+    """The band limit is per band, and this is why it has to be.
+
+    The page used to take the fifty most recently promulgated laws and group them
+    afterwards. That is one query instead of three, and it means that once fifty
+    laws are published, an open votation promulgated before the newest fifty
+    simply is not on the home page — not even under « Votations ouvertes », the
+    one band a visitor has something to do with. Fifty closed ones would be.
+
+    Asserted with a limit of two rather than fifty: the bug is about the limit
+    being reached, and reaching the real one takes fifty laws to say what three
+    say just as well.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.crud import laws as laws_crud
+
+    now = datetime.now(UTC)
+    closed = {"opens_at": now - timedelta(days=30), "closes_at": now - timedelta(days=1)}
+    # Two recent closed votations, and one open one promulgated long before them.
+    _dated(db_session, "close-recent-a", "2026-08-20", **closed)
+    _dated(db_session, "close-recent-b", "2026-08-19", **closed)
+    _dated(
+        db_session,
+        "ouverte-ancienne",
+        "2026-01-05",
+        opens_at=now - timedelta(hours=1),
+        closes_at=now + timedelta(days=30),
+    )
+
+    bands = dict(laws_crud.published_by_state(db_session, limit=2))
+    assert [law.slug for law in bands["open"]] == ["ouverte-ancienne"], (
+        "the open band is filled from the open laws, not from whatever is left of a page-wide limit"
+    )
+    assert len(bands["closed"]) == 2
+
+
+def test_a_law_appears_in_exactly_one_band(client, db_session):
+    """Three queries, one instant — or a votation can be listed twice.
+
+    The bands are derived from the voting window, so they partition the laws only
+    if all three are decided against the same "now". Three queries each reading
+    the clock would put a votation closing between the first and the third into
+    both « ouvertes » and « closes ». This pins the case that is easiest to get
+    wrong: a window that ends at this very moment.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.crud import laws as laws_crud
+
+    now = datetime.now(UTC)
+    _dated(
+        db_session,
+        "sur-le-fil",
+        "2026-08-01",
+        opens_at=now - timedelta(days=1),
+        closes_at=now,
+    )
+    bands = laws_crud.published_by_state(db_session)
+    listed = [law.slug for _, laws in bands for law in laws]
+    assert listed.count("sur-le-fil") == 1, f"listée dans plusieurs bandes : {bands}"
 
 
 def test_several_bands_are_titled_and_ordered_by_what_you_can_do(client, db_session):

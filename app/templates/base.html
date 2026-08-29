@@ -19,6 +19,15 @@
   <meta property="og:locale" content="fr_FR">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  {# htmx reads this before it initialises, on the two pages that load it. Both
+     settings default to true, and the Content-Security-Policy already refuses
+     what they permit — `script-src 'self'` with neither 'unsafe-eval' nor
+     'unsafe-inline'. Switched off here anyway, because that makes the CSP the
+     second line of defence rather than the only one: the day somebody has to
+     loosen it for an unrelated reason, htmx must not quietly start evaluating
+     attribute expressions and running <script> tags out of swapped fragments.
+     A meta element, not an inline script — the CSP forbids those too. #}
+  <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false}'>
   <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
   <script src="{{ asset_url('app.js') }}" defer></script>
   {# htmx is 50 kB and only two pages use it (the ballot, and the admin draft

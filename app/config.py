@@ -206,6 +206,17 @@ class Settings(BaseSettings):
     ai_arguments_per_side: int = Field(default=5, ge=1)
     # Whole-job deadline for a draft (archive downloads + model calls). Past this
     # the job gives up with a message rather than holding a worker indefinitely.
+    #
+    # This is a real bound, not a checkpoint between steps: every download is
+    # given what is left of it as its own total timeout, and each model call gets
+    # half of what is left so that the SDK's one retry fits inside the rest. So a
+    # step cannot outlast the budget, and neither can the job.
+    #
+    # The consequence worth knowing before lowering it: the two model calls share
+    # the budget with the downloads that precede them, and « ce que ça change en
+    # pratique » on a long loi de finances is minutes of generation. Ten minutes
+    # leaves that room; two would not, and the failure would read as a timeout
+    # rather than as a setting.
     ai_draft_deadline_seconds: int = Field(default=600, ge=1)
     # Threads reserved for drafting. Drafts run on their own small pool rather
     # than on the pool that serves requests: a job holds its thread for minutes,

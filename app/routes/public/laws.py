@@ -313,7 +313,7 @@ def results_page(
     evolution = results_crud.evolution(db, law.id, total=tally.total)
     breakdowns = demo_crud.all_breakdowns(db, law.id)
     status = law.status()
-    revision_rows, revision_total, revision_pages = laws_crud.revisions(db, law.id, page=revisions)
+    history = laws_crud.revisions(db, law.id, page=revisions)
     return templates.TemplateResponse(
         request,
         "results.html",
@@ -330,10 +330,10 @@ def results_page(
             "min_cell_count": get_settings().min_cell_count,
             "provision": demo_crud.provision_rate(db, law.id, tally=tally),
             "export_note": results_crud.export_note(db, law.id, total=tally.total),
-            "revisions": revision_rows,
-            "revision_total": revision_total,
-            "revision_page": min(max(1, revisions), revision_pages),
-            "revision_pages": revision_pages,
+            "revisions": history.rows,
+            "revision_total": history.total,
+            "revision_page": history.number,
+            "revision_pages": history.count,
         },
         headers=results_cache(status),
     )

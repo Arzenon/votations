@@ -1,7 +1,6 @@
 """Shared Jinja2 templates instance, filters and context processors."""
 
 import hashlib
-import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -94,16 +93,6 @@ def asset_url(name: str) -> str:
 templates.env.globals["asset_url"] = asset_url
 
 
-def readable_json(value) -> str:
-    """Pretty JSON with accents left as accents.
-
-    Jinja's ``tojson`` escapes non-ASCII, so an admin editing French arguments
-    would face ``d\\u00e9pistage`` instead of ``dépistage``. The result is a plain
-    string, so Jinja still escapes it for HTML on output.
-    """
-    return json.dumps(value or [], ensure_ascii=False, indent=2)
-
-
 def paragraphs(value: str | None) -> list[str]:
     """Split a text block into paragraphs on blank lines.
 
@@ -151,7 +140,6 @@ def practical_split(value: str | None) -> tuple[list[str], list[str]]:
     return blocks[:VISIBLE_AUDIENCES], blocks[VISIBLE_AUDIENCES:]
 
 
-templates.env.filters["readable_json"] = readable_json
 templates.env.filters["paragraphs"] = paragraphs
 templates.env.filters["practical_split"] = practical_split
 templates.env.filters["law_status"] = law_status

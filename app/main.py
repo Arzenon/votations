@@ -177,6 +177,21 @@ def _release_interrupted_drafts() -> None:
     instant we boot — the entrypoint migrates first, but nothing guarantees the
     connection survives to here — and refusing to start the site over a piece of
     administrative housekeeping would trade a stuck banner for an outage.
+
+    **Assumes one app container**, which is what the shipped compose file runs
+    and is stated here because nothing in the code would say so otherwise. « en
+    cours » means "a thread in *this* process is working on it", and this reads
+    it as "a thread in *any* process was" — true of a single container starting,
+    false the moment there are two: a rolling restart would mark the other
+    replica's live draft as interrupted while it is still running, and the draft
+    would then finish and overwrite the failure.
+
+    Scaling the app therefore needs a shared claim rather than this: a
+    ``claimed_at`` on the staged row, released once it is older than
+    ``AI_DRAFT_DEADLINE_SECONDS``. That column does not exist, and inventing it
+    for a deployment nobody runs would be a migration in exchange for nothing.
+    The same caveat applies to the migrations themselves — see
+    ``docker/entrypoint.sh``.
     """
     db = SessionLocal()
     try:

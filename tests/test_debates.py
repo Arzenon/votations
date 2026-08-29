@@ -3,6 +3,8 @@
 import json
 from datetime import date
 
+import pytest
+
 from app.debates import DebatesFetchError, Speech, fetch_speeches, speeches_from_record
 
 LONG = (
@@ -359,6 +361,70 @@ def test_an_unreadable_sitting_is_skipped_not_fatal():
         {"reunion_ref": "RUANR5L17S2026IDS30540", "odj_ref": "RUANR5L17S2026IDS30539PT2"},
     ]
     assert len(fetch_speeches(seances, get=get)) == 1
+
+
+def test_a_record_is_downloaded_once_however_many_agenda_items_point_at_it():
+    """A compte rendu is ~600 kB, and a sitting can carry two of our agenda items.
+
+    The dossier records those as two sittings — they are two agenda items, and
+    the pair (réunion, point) is what identifies them — so the loop fetched the
+    same réunion and the same record twice, over a link the drafting job is
+    already racing a deadline on.
+    """
+    fetched: list[str] = []
+    inner = _getter({"RUANR5L17S2026IDS30539": REUNION, "CRSANR5L17S2026O1N195": TWO_BILLS})
+
+    def counting(url: str) -> bytes:
+        fetched.append(url.rsplit("/", 1)[-1].removesuffix(".json"))
+        return inner(url)
+
+    two_items_one_sitting = [
+        {"reunion_ref": "RUANR5L17S2026IDS30539", "odj_ref": "RUANR5L17S2026IDS30539PT1"},
+        {"reunion_ref": "RUANR5L17S2026IDS30539", "odj_ref": "RUANR5L17S2026IDS30539PT2"},
+    ]
+    fetch_speeches(two_items_one_sitting, get=counting)
+
+    assert fetched.count("CRSANR5L17S2026O1N195") == 1, "the record was downloaded twice"
+    assert fetched.count("RUANR5L17S2026IDS30539") == 1, "the réunion was fetched twice"
+
+
+def test_a_sitting_that_fails_is_retried_for_the_next_item():
+    """Only successes are remembered — a failure must not be cached as one."""
+    attempts: list[str] = []
+
+    def flaky(url: str) -> bytes:
+        uid = url.rsplit("/", 1)[-1].removesuffix(".json")
+        attempts.append(uid)
+        if uid == "RUANR5L17S2026IDS30539" and attempts.count(uid) == 1:
+            raise DebatesFetchError("réseau")
+        return _getter({"RUANR5L17S2026IDS30539": REUNION, "CRSANR5L17S2026O1N195": TWO_BILLS})(url)
+
+    two_items_one_sitting = [
+        {"reunion_ref": "RUANR5L17S2026IDS30539", "odj_ref": "RUANR5L17S2026IDS30539PT1"},
+        {"reunion_ref": "RUANR5L17S2026IDS30539", "odj_ref": "RUANR5L17S2026IDS30539PT2"},
+    ]
+    out = fetch_speeches(two_items_one_sitting, get=flaky)
+
+    assert attempts.count("RUANR5L17S2026IDS30539") == 2, "the failure was cached"
+    assert [sp.speaker for sp in out] == ["M. Notre Loi"]
+
+
+def test_a_spent_budget_stops_the_loop_rather_than_skipping_every_sitting():
+    """A missing record is skipped; a spent clock is not — the two differ.
+
+    ``DebatesFetchError`` means "this sitting could not be read", and carrying on
+    is right. ``DeadlineExceeded`` means every remaining request will fail
+    instantly, so carrying on walks twenty sittings to arrive nowhere. It is
+    deliberately not the module's own error class, which is what makes the
+    `except DebatesFetchError` below it not catch it.
+    """
+    from app.opendata import DeadlineExceeded
+
+    def spent(url: str) -> bytes:
+        raise DeadlineExceeded("délai épuisé")
+
+    with pytest.raises(DeadlineExceeded):
+        fetch_speeches(SEANCES * 20, get=spent)
 
 
 def test_no_sittings_means_no_speeches():

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
 from itsdangerous import URLSafeSerializer
 from sqlalchemy import delete
 
@@ -261,19 +262,44 @@ def test_the_cookie_cannot_grow_without_bound():
 # --- A key rotation must not re-open a votation -------------------------------
 
 
-def _rotate(monkeypatch, *, new: str, fallbacks: list[str]) -> None:
-    """Reboot the auth provider on a different key, as a new host would."""
+def _forget_signing_keys() -> None:
+    """Drop everything built from SECRET_KEY, so the next use rebuilds it.
+
+    Both the voter-token provider and the profile-cookie serializer derive their
+    signing keys once and hold them for the life of the process — which is right,
+    since the key cannot change under a running server, and is exactly what a
+    test rotating the key has to defeat.
+    """
     import app.auth.base as auth_base
-    from app.auth.anonymous import AnonymousProvider
 
-    settings = get_settings()
-    monkeypatch.setattr(settings, "secret_key", new, raising=False)
-    monkeypatch.setattr(settings, "secret_key_fallbacks", fallbacks, raising=False)
+    auth_base.get_auth_provider.cache_clear()
     profile_cookie._serializer.cache_clear()
-    monkeypatch.setattr(auth_base, "_provider", AnonymousProvider())
 
 
-def test_carrying_the_old_key_keeps_a_voter_identified(client, open_law, db_session, monkeypatch):
+@pytest.fixture
+def rotate_key(monkeypatch):
+    """Reboot the signing keys on a different SECRET_KEY, as a new host would.
+
+    A fixture rather than a plain helper because the *undo* is the load-bearing
+    half. ``monkeypatch`` restores the settings on its own, but it knows nothing
+    about the two caches derived from them: left populated, they would go on
+    signing with the rotated key for the rest of the session, in tests that
+    believe they are running on the configured one. Consistently wrong keys read
+    back what they wrote, so nothing would fail — which is what makes it worth a
+    fixture instead of two lines somebody remembers.
+    """
+
+    def rotate(*, new: str, fallbacks: list[str]) -> None:
+        settings = get_settings()
+        monkeypatch.setattr(settings, "secret_key", new, raising=False)
+        monkeypatch.setattr(settings, "secret_key_fallbacks", fallbacks, raising=False)
+        _forget_signing_keys()
+
+    yield rotate
+    _forget_signing_keys()
+
+
+def test_carrying_the_old_key_keeps_a_voter_identified(client, open_law, db_session, rotate_key):
     """Moving to another host must not hand everyone a second ballot.
 
     SECRET_KEY signs the voter token, so a new host with a new key cannot read
@@ -285,7 +311,7 @@ def test_carrying_the_old_key_keeps_a_voter_identified(client, open_law, db_sess
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
     assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 1
 
-    _rotate(monkeypatch, new="une-toute-autre-cle-de-quarante-caracteres", fallbacks=[old])
+    rotate_key(new="une-toute-autre-cle-de-quarante-caracteres", fallbacks=[old])
 
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
     votes = db_session.query(Vote).filter_by(law_id=open_law.id).all()
@@ -293,7 +319,7 @@ def test_carrying_the_old_key_keeps_a_voter_identified(client, open_law, db_sess
     assert votes[0].choice == "against", "and it is still their vote to change"
 
 
-def test_dropping_the_fallback_does_log_everyone_out(client, open_law, db_session, monkeypatch):
+def test_dropping_the_fallback_does_log_everyone_out(client, open_law, db_session, rotate_key):
     """The other half of the contract, for a key you believe has leaked.
 
     Rotating with no fallback stops forged cookies being honoured, at the price
@@ -302,7 +328,7 @@ def test_dropping_the_fallback_does_log_everyone_out(client, open_law, db_sessio
     """
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
 
-    _rotate(monkeypatch, new="une-cle-de-remplacement-sans-repli-du-tout", fallbacks=[])
+    rotate_key(new="une-cle-de-remplacement-sans-repli-du-tout", fallbacks=[])
 
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
     assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 2

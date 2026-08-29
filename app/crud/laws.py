@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer, with_expression
 
-from app.crud import count_matching, paginate
+from app.crud import Page, count_matching, paginate
 from app.db import utcnow
 from app.labels import french_date, french_datetime
 from app.models import (
@@ -144,13 +144,20 @@ def _published(stmt: Select) -> Select:
 _NEWEST_LAW_FIRST = (Law.promulgated_on.desc().nullslast(), Law.created_at.desc())
 
 
-def list_published(db: Session, *, limit: int = 50) -> list[Law]:
+def list_published(
+    db: Session, *, status: str | None = None, limit: int = 50, now: datetime | None = None
+) -> list[Law]:
     """Published, non-archived laws, most recently promulgated first (home page).
 
     Carries :attr:`~app.models.law.Law.excerpt`, not the whole summary.
+
+    ``status`` narrows to one of the derived states, in SQL — see
+    :func:`_apply_status`. That is what lets :func:`published_by_state` apply the
+    limit to each band rather than to the page as a whole, and ``now`` is what
+    keeps the three bands it asks for consistent with each other.
     """
     stmt = (
-        _published(select(Law))
+        _apply_status(_published(select(Law)), status, now=now)
         .options(*_TITLES_ONLY_DEFERRED, _EXCERPT)
         .order_by(*_NEWEST_LAW_FIRST)
         .limit(limit)
@@ -172,15 +179,32 @@ def published_by_state(db: Session, *, limit: int = 50) -> list[tuple[str, list[
     renders as a plain chronological list. It starts grouping itself on the day
     the windows diverge, with no change here and none to the ordering.
 
-    Grouped in Python rather than by three queries: the page reads fifty rows it
-    has already fetched, and `status()` is derived from the live clock rather than
-    stored, so the database cannot answer this any more cheaply than we can.
+    **``limit`` is per band, and has to be.** This used to take the ``limit``
+    most recently promulgated laws and group them afterwards, in one query. That
+    reads as an optimisation and is a bug waiting for the corpus to grow: once
+    more than ``limit`` laws are published, an open votation whose promulgation
+    date is older than the newest fifty falls off the page — out of « Votations
+    ouvertes », the one band a visitor has something to *do* with — while fifty
+    closed ones fill it. The whole point of the bands is that what you can vote
+    on cannot be crowded out by what you cannot.
+
+    So it is one query per band. Three indexed reads of a table holding hundreds
+    of rows, against a correctness bug that only shows up in production and only
+    once it is too late to notice.
+
+    All three read the clock at the *same* instant, and that is not decoration.
+    The states are derived from the voting window, so three queries asking three
+    slightly different "now"s can disagree about one law: a votation closing in
+    the microseconds between the first query and the third is open to one and
+    closed to the other, and appears on the page twice. Grouping in Python could
+    not do that, because it classified each row once — pinning the instant is
+    what buys the same guarantee back.
     """
-    laws = list_published(db, limit=limit)
-    grouped: dict[str, list[Law]] = {state: [] for state in HOME_BANDS}
-    for law in laws:
-        grouped[law.status()].append(law)
-    return [(state, grouped[state]) for state in HOME_BANDS if grouped[state]]
+    now = utcnow()
+    bands = [
+        (state, list_published(db, status=state, limit=limit, now=now)) for state in HOME_BANDS
+    ]
+    return [(state, laws) for state, laws in bands if laws]
 
 
 def public_urls(db: Session, *, limit: int = 5000) -> list[tuple[str, datetime]]:
@@ -205,12 +229,17 @@ def search(
     status: str | None = None,
     page: int = 1,
     page_size: int = 20,
-) -> tuple[list[Law], int, int]:
+) -> Page[Law]:
     """Advanced search (V1): across title/ref/summary, with status filter + pagination.
 
-    Returns (rows, total_matching, pages). Both the filter and the page window are
-    applied in SQL, so a large corpus is never loaded into the process to be
-    sliced afterwards.
+    Both the filter and the page window are applied in SQL, so a large corpus is
+    never loaded into the process to be sliced afterwards.
+
+    Ordered like the home page, by :data:`_NEWEST_LAW_FIRST`. It used to order by
+    `created_at` — the moment an administrator pressed save — which is the very
+    thing the promulgation date was added to stop the home page doing. Leaving
+    search on it meant the same corpus was ranked two different ways depending on
+    which page you reached it from, and only one of them was about the law.
     """
     stmt = _published(select(Law))
     if query:
@@ -218,16 +247,16 @@ def search(
     stmt = _apply_status(stmt, status)
 
     total = count_matching(db, stmt)
-    page, pages, offset = paginate(page, total, page_size)
+    number, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
             stmt.options(*_TITLES_ONLY_DEFERRED)
-            .order_by(Law.created_at.desc())
+            .order_by(*_NEWEST_LAW_FIRST)
             .offset(offset)
             .limit(page_size)
         )
     )
-    return rows, total, pages
+    return Page(rows=rows, total=total, number=number, count=pages)
 
 
 def _escape_like(value: str) -> str:
@@ -289,17 +318,21 @@ def _apply_search(stmt: Select, query: str) -> Select:
     )
 
 
-def _apply_status(stmt: Select, status: str | None) -> Select:
+def _apply_status(stmt: Select, status: str | None, *, now: datetime | None = None) -> Select:
     """Translate the derived status into window predicates the database can filter on.
 
     ``Law.status()`` computes the same thing from the live clock; expressing it in
     SQL is what lets the page window be applied before rows are fetched. Only the
     three states a published law can be in are handled — the caller has already
     required ``published``, so "draft" cannot match anything.
+
+    ``now`` is for a caller asking about more than one state: the three states
+    partition the laws only if all three are decided against the same instant.
+    Left unset it reads the clock, which is right for the one-state callers.
     """
     if not status:
         return stmt
-    now = utcnow()
+    now = now or utcnow()
     opened = or_(Law.opens_at.is_(None), Law.opens_at <= now)
     not_closed = or_(Law.closes_at.is_(None), Law.closes_at > now)
     if status == STATUS_OPEN:
@@ -409,8 +442,8 @@ REVISIONS_PAGE_SIZE = 20
 
 def revisions(
     db: Session, law_id: int, *, page: int = 1, page_size: int = REVISIONS_PAGE_SIZE
-) -> tuple[list[LawRevision], int, int]:
-    """Recorded changes to this law, newest first. Returns (rows, total, pages).
+) -> Page[LawRevision]:
+    """Recorded changes to this law, newest first.
 
     Paginated because this is rendered on a *public* page and the underlying
     table has no ceiling: every edit to a published law adds a row holding both
@@ -420,7 +453,7 @@ def revisions(
     """
     stmt = select(LawRevision).where(LawRevision.law_id == law_id)
     total = count_matching(db, stmt)
-    page, pages, offset = paginate(page, total, page_size)
+    number, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
             stmt.order_by(LawRevision.changed_at.desc(), LawRevision.id.desc())
@@ -428,7 +461,7 @@ def revisions(
             .limit(page_size)
         )
     )
-    return rows, total, pages
+    return Page(rows=rows, total=total, number=number, count=pages)
 
 
 def count_revisions(db: Session, law_id: int) -> int:
@@ -470,14 +503,20 @@ def purge(db: Session, law: Law) -> None:
 
 def list_all(
     db: Session, *, page: int = 1, page_size: int = 50, archived: bool = False
-) -> tuple[list[Law], int, int]:
-    """Laws for the administration, paginated. Archived ones are a separate view."""
+) -> Page[Law]:
+    """Laws for the administration, paginated. Archived ones are a separate view.
+
+    Ordered by `created_at`, deliberately unlike the public listings: this table
+    is where somebody goes back to the law they were just working on, and "most
+    recently saved first" is the order that puts it at the top. The public pages
+    rank by what the law *is*; this one ranks by what the administrator did last.
+    """
     stmt = select(Law).where(
         Law.archived_at.is_not(None) if archived else Law.archived_at.is_(None)
     )
 
     total = count_matching(db, stmt)
-    page, pages, offset = paginate(page, total, page_size)
+    number, pages, offset = paginate(page, total, page_size)
     rows = list(
         db.scalars(
             stmt.options(*_TITLES_ONLY_DEFERRED)
@@ -486,7 +525,7 @@ def list_all(
             .limit(page_size)
         )
     )
-    return rows, total, pages
+    return Page(rows=rows, total=total, number=number, count=pages)
 
 
 def count_archived(db: Session) -> int:

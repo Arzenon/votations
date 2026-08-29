@@ -10,46 +10,72 @@ from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.db import get_db
 from app.drafting import schedule_draft
-from app.models import DRAFT_FAILED, DRAFT_PENDING, STATUS_IGNORED, STATUS_NEW
-from app.routes.admin.context import cached_draft, law_form_context
+from app.models import DRAFT_FAILED, STATUS_IGNORED, STATUS_IMPORTED, STATUS_NEW
+from app.routes.admin.context import cached_draft, draft_state_context, law_form_context
 from app.routes.admin.forms import LawForm, draft_form
-from app.routes.admin.guard import require_admin
 from app.templating import templates
 
 router = APIRouter()
+
+#: The status filter, in the order an administrator works through it. « tous » is
+#: not a stored status — it is this page's word for "no filter" — which is why it
+#: sits here beside the three that are, rather than being derived from them.
+_ALL_STATUSES = "tous"
+STATUS_CHOICES = (
+    (STATUS_NEW, "Nouvelles"),
+    (STATUS_IMPORTED, "Importées"),
+    (STATUS_IGNORED, "Ignorées"),
+    (_ALL_STATUSES, "Tout l'historique"),
+)
+
+SORT_CHOICES = (
+    (imports_crud.ORDER_BY_DATE, "Date de promulgation"),
+    (imports_crud.ORDER_BY_SEANCES, "Séances publiques"),
+)
 
 
 @router.get("/imports", response_class=HTMLResponse)
 def imports_list(
     request: Request,
-    statut: str = "nouveau",
+    statut: str = STATUS_NEW,
     # Triage: narrow to one kind of text, and rank by how much it was argued over.
     procedure: str = "",
     tri: str = imports_crud.ORDER_BY_DATE,
     page: int = 1,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Laws found by the daily Assemblée nationale import, awaiting a decision."""
-    wanted = None if statut == "tous" else statut
-    items, total, pages = imports_crud.list_by_status(
+    wanted = None if statut == _ALL_STATUSES else statut
+    staged = imports_crud.list_by_status(
         db, status=wanted, procedure=procedure or None, order=tri, page=page
     )
     return templates.TemplateResponse(
         request,
         "admin/imports.html",
         {
-            "items": items,
+            "items": staged.rows,
             "statut": statut,
             "procedure": procedure,
             "tri": tri,
+            "status_choices": STATUS_CHOICES,
+            "sort_choices": SORT_CHOICES,
+            # The « Séances » column header is a second way to reach one of those
+            # sorts, so it needs the value by name rather than by its position in
+            # the list above.
+            "sort_by_seances": imports_crud.ORDER_BY_SEANCES,
+            # Whether « Réinitialiser » has anything to undo. Decided here rather
+            # than by a three-clause condition in the template comparing against
+            # the defaults: the defaults are this function's, not the page's.
+            "filtered": bool(procedure)
+            or tri != imports_crud.ORDER_BY_DATE
+            or statut != STATUS_NEW,
             # Every procedure present under the current status filter, with counts,
             # so the dropdown says how many rows each choice will show.
             "procedures": imports_crud.procedures(db, status=wanted),
-            "seances": imports_crud.seance_counts(db, [item.id for item in items]),
-            "total": total,
-            "page": min(max(1, page), pages),
-            "pages": pages,
+            "seances": imports_crud.seance_counts(db, [item.id for item in staged.rows]),
+            "total": staged.total,
+            "page": staged.number,
+            "pages": staged.count,
             "pending_imports": imports_crud.count_new(db),
             "ai_enabled": bool(get_settings().anthropic_api_key),
         },
@@ -57,7 +83,7 @@ def imports_list(
 
 
 @router.post("/imports/{item_id}/ignorer")
-def ignore_import(item_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+def ignore_import(item_id: int, db: Session = Depends(get_db)):
     item = imports_crud.get_by_id(db, item_id)
     if item is None:
         raise HTTPException(404)
@@ -66,29 +92,20 @@ def ignore_import(item_id: int, _: str = Depends(require_admin), db: Session = D
 
 
 @router.post("/imports/{item_id}/restaurer")
-def restore_import(item_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)):
+def restore_import(item_id: int, db: Session = Depends(get_db)):
     item = imports_crud.get_by_id(db, item_id)
     if item is None:
         raise HTTPException(404)
     imports_crud.set_status(db, item, status=STATUS_NEW)
-    return RedirectResponse("/admin/imports?statut=tous", status_code=303)
-
-
-def _draft_state_context(item) -> dict:
-    return {
-        "item": item,
-        "draft_status": item.draft_status,
-        "draft_error": item.draft_error,
-        "pending": item.draft_status == DRAFT_PENDING,
-        "failed": item.draft_status == DRAFT_FAILED,
-    }
+    # Back to the view the row was restored *from*, which is the one that shows
+    # ignored rows at all.
+    return RedirectResponse(f"/admin/imports?statut={_ALL_STATUSES}", status_code=303)
 
 
 @router.post("/imports/{item_id}/brouillon", response_class=HTMLResponse)
 def draft_import(
     request: Request,
     item_id: int,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
     form: LawForm = Depends(draft_form),
     regenerer: str = Form(""),
@@ -125,7 +142,7 @@ def draft_import(
 
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
-            request, "admin/_draft_state.html", _draft_state_context(item)
+            request, "admin/_draft_state.html", draft_state_context(item)
         )
 
     # No JavaScript, and this row has already produced a law: send the
@@ -154,7 +171,6 @@ def draft_import(
 def dismiss_draft_failure(
     request: Request,
     item_id: int,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Acknowledge a failed draft, so its banner stops being shown.
@@ -177,7 +193,7 @@ def dismiss_draft_failure(
 
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
-            request, "admin/_draft_state.html", _draft_state_context(item)
+            request, "admin/_draft_state.html", draft_state_context(item)
         )
     return RedirectResponse(f"/admin/lois/nouvelle?import_id={item.id}", status_code=303)
 
@@ -186,13 +202,10 @@ def dismiss_draft_failure(
 def draft_state(
     request: Request,
     item_id: int,
-    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """The polling target for a draft in progress (HTMX swaps this fragment)."""
     item = imports_crud.get_by_id(db, item_id)
     if item is None:
         raise HTTPException(404)
-    return templates.TemplateResponse(
-        request, "admin/_draft_state.html", _draft_state_context(item)
-    )
+    return templates.TemplateResponse(request, "admin/_draft_state.html", draft_state_context(item))

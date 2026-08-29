@@ -185,14 +185,6 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
 .form-actions button.secondary:hover { background: #eef2fb; }
 
 
-/* Reservations: shown for information, deliberately not editable and never
-   pre-filled into the argument blocks — a supporter's misgiving is not opposition. */
-  background: #fff; border: 1px solid var(--line); border-left: 3px solid #8a5a00;
-  border-radius: var(--radius); padding: 0.9rem 1.1rem; margin: 1rem 0;
-}
-  margin: 0; font-style: italic; border-left: 2px solid var(--line); padding-left: 0.8rem;
-}
-
 /* --- Accessibility ------------------------------------------------------- */
 
 /* A visible focus ring everywhere, so the site is usable from the keyboard.

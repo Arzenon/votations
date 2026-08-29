@@ -28,23 +28,39 @@ from app.routes.public.common import exports_busy, not_found, too_many_exports, 
 router = APIRouter()
 
 
-def _export_refused(request: Request) -> HTMLResponse | None:
-    """Why this export may not start right now, or None if it may.
+def at_capacity(request: Request) -> HTMLResponse | None:
+    """The pool guard: whether another export may stream at all, from anyone.
 
-    Two different limits. The rate limit is about one caller downloading in a
-    loop: one download is a full scan of a law's votes, and legitimate use is a
-    handful of files. The concurrency cap is about everyone at once — an export
-    holds a database connection for as long as the client takes to read it, so a
-    few slow readers can occupy the whole pool and take the ordinary pages down
-    with them, well inside every per-address limit.
+    An export holds a database connection for as long as the client takes to
+    read it, so a few slow readers can occupy the whole pool and take the
+    ordinary pages down with them — well inside every per-address limit, because
+    nothing about any one of those requests is excessive.
 
-    Capacity is checked first, and deliberately does not record a hit: refusing
-    someone because the server is busy must not also spend the allowance they
-    would need to come back in a minute.
+    Public because the administration's own export is subject to it too: the cap
+    exists to protect the database, and a connection held by an administrator is
+    held just as long as one held by anybody else. What the administration is
+    exempt from is the *rate* limit below, which is a different question.
+
+    Deliberately records no hit: refusing someone because the server is busy must
+    not also spend the allowance they would need to come back in a minute.
     """
-    settings = get_settings()
-    if not ratelimit.slots_free(limit=settings.export_max_concurrent):
+    if not ratelimit.slots_free(limit=get_settings().export_max_concurrent):
         return exports_busy(request)
+    return None
+
+
+def _export_refused(request: Request) -> HTMLResponse | None:
+    """Why this public export may not start right now, or None if it may.
+
+    Two different limits, in the order that keeps them honest. Capacity is about
+    everyone at once (see :func:`at_capacity`); the rate limit is about one
+    caller downloading in a loop, where one download is a full scan of a law's
+    votes and legitimate use is a handful of files.
+    """
+    refused = at_capacity(request)
+    if refused is not None:
+        return refused
+    settings = get_settings()
     if ratelimit.too_many(
         request,
         limit=settings.export_rate_limit,
@@ -97,23 +113,29 @@ def csv_response(db: Session, law: Law) -> StreamingResponse:
 
 @router.get("/loi/{slug}/export.csv")
 def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
-    law = visible(db, slug)
-    if law is None:
-        return not_found(request)
+    # Refused *before* the law is looked up. The limits exist for a caller in a
+    # loop, and a loop is exactly where doing an indexed read per refusal is
+    # wasted work — the refusal does not need to know whether the slug is real.
+    # The consequence is that a request for a law that does not exist now spends
+    # allowance too, which is the right way round: a scanner walking export URLs
+    # is precisely what should meet the limit.
     refused = _export_refused(request)
     if refused is not None:
         return refused
+    law = visible(db, slug)
+    if law is None:
+        return not_found(request)
     return csv_response(db, law)
 
 
 @router.get("/loi/{slug}/export.json")
 def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
+    refused = _export_refused(request)  # see the CSV route for why this comes first
+    if refused is not None:
+        return refused
     law = visible(db, slug)
     if law is None:
         return not_found(request)
-    refused = _export_refused(request)
-    if refused is not None:
-        return refused
 
     # One pass over the votes answers both the total and how many carried a
     # profile; the two used to be a COUNT and a COUNT … FILTER over the same rows.
@@ -176,5 +198,9 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
     return StreamingResponse(
         document(),
         media_type="application/json; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="votations-{slug}.json"'},
+        # `law.slug`, not the path parameter — same reason the CSV route above and
+        # `laws._back_to` use the column: a slug is what the database holds, not
+        # what the caller typed. The two are the same string today because
+        # `visible` matched on it, and this value ends up in a response header.
+        headers={"Content-Disposition": f'attachment; filename="votations-{law.slug}.json"'},
     )

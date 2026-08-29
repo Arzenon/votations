@@ -31,15 +31,99 @@ PAD_BOTTOM = 36.0
 # At most this many labels on the time axis, whatever the number of days.
 MAX_X_LABELS = 7
 
-# Past this many days the per-day dots are dropped and the curve is drawn as a
-# line and an area alone. A year-long votation plots 365 points 1.8 px apart, so
-# `r="3"` circles overlap fourfold: they stop marking anything and merge into a
-# thick band, while costing about 100 kB of extra SVG on a page this site
-# promises to serve over slow connections. The exact figures stay available
-# underneath, in the table the chart is a picture of.
+# Past this many drawn points the dots are dropped and the curve is a line and an
+# area alone: `r="3"` circles closer together than their own diameter stop
+# marking anything and merge into a thick band.
 MAX_DOTS = 60
 
+# And past this many, days are grouped together rather than drawn one by one.
+#
+# Ninety points is already dense on a 720-unit canvas — seven pixels apart — and
+# a year-long votation asked for 365, which is 1.8. At that spacing there is no
+# per-day resolution left to see: the curve is sub-pixel in x, the three series
+# overlap into a smear, and the figure costs 90 kB of path data on a page this
+# site promises to serve over slow connections. Grouping is what makes it legible
+# again, not only smaller — a year drawn week by week is 53 points, 12 px apart,
+# and gets its dots back.
+#
+# Nothing is hidden by it. The table underneath is built from the daily buckets
+# and stays daily, which is what the chart is a picture *of*; this only decides
+# how the picture is drawn.
+MAX_POINTS = 90
+
 SERIES_LABELS = {"for": "Pour", "against": "Contre", "abstain": "Abstention"}
+
+
+@dataclass(frozen=True)
+class Period:
+    """How much time one drawn point covers, and how to say so in French."""
+
+    days: int
+    #: « jour » — read as « par {name} », so it names the unit, not a count.
+    name: str
+    #: « une journée » — read as « en {span} » and « un pic sur {span} ». Both
+    #: sentences are about one point's worth of time, so they share one wording;
+    #: assembling it in the template instead would put French grammar in a place
+    #: no test reads.
+    span: str
+
+
+# The widths a point may cover, narrowest first. Whole weeks past the first, so a
+# grouped point always spans the same days of the week as its neighbours and a
+# weekly rhythm in the votes cannot turn into a wobble in the curve.
+PERIODS = (
+    Period(1, "jour", "une journée"),
+    Period(7, "semaine", "une semaine"),
+    Period(14, "quinzaine", "une quinzaine"),
+    Period(28, "période de quatre semaines", "quatre semaines"),
+)
+
+
+@dataclass(frozen=True)
+class _Point:
+    """One drawn point: where it starts, and the votes it covers."""
+
+    label: str
+    counts: dict[str, int]
+
+
+def _period_for(days: int) -> Period:
+    """The narrowest period that keeps the curve under :data:`MAX_POINTS`.
+
+    Falls back to the widest rung rather than inventing one: a votation open long
+    enough to overflow four-week points is seven years old, and drawing it with a
+    few points too many is a better answer than a unit nobody can name.
+    """
+    for period in PERIODS:
+        if -(-days // period.days) <= MAX_POINTS:
+            return period
+    return PERIODS[-1]
+
+
+def _grouped(buckets, period: Period) -> list[_Point]:
+    """Sum the daily buckets into points of ``period``, oldest first.
+
+    Summed, never averaged. The one reading this curve exists for is « une
+    mobilisation organisée laisse un pic » — and an average is precisely the
+    operation that dissolves a spike into the days around it, while a sum carries
+    it into the point that contains it.
+
+    Grouping runs from the oldest day, so the *last* point is the one that may
+    cover a short period. On a votation still open that is not an artefact at
+    all — the current week genuinely is not over — and on a closed one it is a
+    single point at the edge rather than anything in the body of the curve.
+    """
+    if period.days == 1:
+        return [_Point(b.label, dict(b.counts)) for b in buckets]
+    return [
+        _Point(
+            window[0].label,
+            {key: sum(b.counts.get(key, 0) for b in window) for key in SERIES_LABELS},
+        )
+        for window in (
+            buckets[start : start + period.days] for start in range(0, len(buckets), period.days)
+        )
+    ]
 
 
 @dataclass
@@ -66,6 +150,10 @@ class EvolutionChart:
     x_ticks: list[tuple[float, str]]
     max_value: int
     description: str
+    #: What one point covers. Read by the template, which has to say so: a curve
+    #: drawn week by week over a table drawn day by day is only honest if the
+    #: page names the difference.
+    period: Period = PERIODS[0]
 
 
 def _nice_ceiling(value: int) -> tuple[int, int]:
@@ -122,13 +210,20 @@ def _short_date(label: str) -> str:
         return label
 
 
-def _describe(buckets, series: list[Series]) -> str:
-    """The sentence a screen reader gets instead of the picture."""
+def _describe(buckets, series: list[Series], period: Period) -> str:
+    """The sentence a screen reader gets instead of the picture.
+
+    ``buckets`` is the *daily* list, not the grouped one, because the span has to
+    end on the last day anybody voted — the last grouped point is labelled with
+    the day its period *starts*, which would cut the sentence short by up to a
+    period. The peaks come from ``series`` and are therefore per grouped point,
+    which is why the unit is named rather than assumed.
+    """
     if not buckets:
         return "Aucune donnée."
     span = f"du {_short_date(buckets[0].label)} au {_short_date(buckets[-1].label)}"
-    parts = [f"{s.label} : {s.total} votes, au plus {s.peak} en un jour" for s in series]
-    return f"Votes par jour {span}. " + " ; ".join(parts) + "."
+    parts = [f"{s.label} : {s.total} votes, au plus {s.peak} en {period.span}" for s in series]
+    return f"Votes par {period.name} {span}. " + " ; ".join(parts) + "."
 
 
 def build_evolution_chart(buckets) -> EvolutionChart | None:
@@ -136,12 +231,24 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
 
     Returns None when there is nothing to draw — the caller already withholds the
     data below the anonymity threshold, so this only guards the empty case.
+
+    ``buckets`` is always one entry per calendar day; how many of them share a
+    drawn point is decided here (see :data:`MAX_POINTS`) and nowhere else, so the
+    caller and the table it also feeds are unaffected.
     """
     if not buckets:
         return None
 
+    # `buckets` stays what the parameter says it is — one entry per calendar day —
+    # and `drawn` is what actually goes on the canvas. Everything below is about
+    # the picture and reads `drawn`; the two places that are about the votation
+    # rather than the picture, the axis's final label and the text description,
+    # say `buckets` and mean it.
+    period = _period_for(len(buckets))
+    drawn = _grouped(buckets, period)
+
     keys = list(SERIES_LABELS)
-    peak = max((max(b.counts.get(k, 0) for k in keys) for b in buckets), default=0)
+    peak = max((max(b.counts.get(k, 0) for k in keys) for b in drawn), default=0)
     top, step = _nice_ceiling(peak)
 
     plot_left, plot_right = PAD_LEFT, WIDTH - PAD_RIGHT
@@ -150,16 +257,16 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     plot_width = plot_right - plot_left
 
     def x_at(index: int) -> float:
-        if len(buckets) == 1:
+        if len(drawn) == 1:
             return (plot_left + plot_right) / 2
-        return plot_left + plot_width * index / (len(buckets) - 1)
+        return plot_left + plot_width * index / (len(drawn) - 1)
 
     def y_at(value: int) -> float:
         return plot_bottom - plot_height * (value / top if top else 0)
 
     series = []
     for key in keys:
-        points = [(x_at(i), y_at(b.counts.get(key, 0))) for i, b in enumerate(buckets)]
+        points = [(x_at(i), y_at(b.counts.get(key, 0))) for i, b in enumerate(drawn)]
         line = _smooth(points)
         area = ""
         if len(points) > 1:
@@ -167,7 +274,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
                 f"{line} L {points[-1][0]:.1f} {plot_bottom:.1f} "
                 f"L {points[0][0]:.1f} {plot_bottom:.1f} Z"
             )
-        counts = [b.counts.get(key, 0) for b in buckets]
+        counts = [b.counts.get(key, 0) for b in drawn]
         series.append(
             Series(
                 key=key,
@@ -175,7 +282,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
                 line=line,
                 area=area,
                 # Dropped on a long votation — see MAX_DOTS.
-                dots=points if len(buckets) <= MAX_DOTS else [],
+                dots=points if len(drawn) <= MAX_DOTS else [],
                 total=sum(counts),
                 peak=max(counts, default=0),
             )
@@ -193,14 +300,29 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     # label count instead left room for the final day to be appended on top of a
     # full set, and a year-long votation drew eight labels under a constant that
     # says at most seven.
-    stride = max(1, -(-(len(buckets) - 1) // max(1, MAX_X_LABELS - 1)))
-    indices = [i for i in range(len(buckets)) if i % stride == 0]
-    last = len(buckets) - 1
+    stride = max(1, -(-(len(drawn) - 1) // max(1, MAX_X_LABELS - 1)))
+    indices = [i for i in range(len(drawn)) if i % stride == 0]
+    last = len(drawn) - 1
     if last not in indices:
         if indices and last - indices[-1] < stride / 2:
             indices.pop()
         indices.append(last)
-    x_ticks = [(x_at(i), _short_date(buckets[i].label)) for i in indices]
+    x_ticks = [(x_at(i), _short_date(drawn[i].label)) for i in indices]
+
+    # The right-hand label names the last day of the votation, not the day its
+    # last point *starts* on.
+    #
+    # A point is labelled with the day its period opens, which is the right
+    # answer for every tick along the axis and the wrong one at the very end:
+    # grouped by week, a votation closing on a Wednesday ends on a point labelled
+    # with the preceding Sunday, and the figure then dates the end of the vote
+    # four days early. Nothing else on the chart carries that date — the axis is
+    # the only place a reader can read where the curve stops — so the last tick
+    # is the one that has to name it.
+    #
+    # A no-op while the curve is drawn day by day, where the two are the same day.
+    if x_ticks:
+        x_ticks[-1] = (x_ticks[-1][0], _short_date(buckets[-1].label))
 
     return EvolutionChart(
         width=WIDTH,
@@ -213,5 +335,6 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         y_ticks=y_ticks,
         x_ticks=x_ticks,
         max_value=top,
-        description=_describe(buckets, series),
+        description=_describe(buckets, series, period),
+        period=period,
     )

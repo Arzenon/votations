@@ -44,10 +44,24 @@
 
 	# The app is not published outside the compose network: this is the only door.
 	reverse_proxy app:8000 {
-		# Overwrite rather than append. Caddy's default appends the peer address
-		# to whatever the caller sent, so a request carrying its own
-		# X-Forwarded-For would hand the app a forged client address — and the
-		# vote rate limit is keyed on exactly that.
+		# Overwrite rather than append, so the header the app reads holds the
+		# peer address and nothing the caller wrote. The vote rate limit is keyed
+		# on exactly that.
+		#
+		# Caddy already does this on its own: with no `trusted_proxies` declared
+		# it treats every peer as untrusted and *replaces* an incoming
+		# X-Forwarded-For instead of appending to it (verified against 2.10 —
+		# declaring the peer trusted is what switches it back to appending). So
+		# this line is redundant today, and Caddy says so with a warning on every
+		# start. It is kept because "redundant today" is a statement about
+		# somebody else's default, on the one value that decides whose votes get
+		# rate-limited; the app's own `TRUSTED_PROXY_HOPS` reads the chain from
+		# the right for the same reason, and neither guarantee should be the only
+		# one.
+		#
+		# X-Real-IP is set for the same reason and read by nothing here — the app
+		# uses X-Forwarded-For alone. It is conventional enough that a future
+		# component would expect it, and wrong enough to leave forgeable.
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Real-IP {remote_host}
 	}
@@ -71,10 +85,27 @@
 		-Server
 	}
 
-	# Access logs record client IPs, which would pair addresses with vote
-	# timestamps. Errors only.
+	# `level ERROR` is not the same thing as "no access log": it keeps the
+	# entries for requests that failed, and those still carry `remote_ip`. On a
+	# 5xx during `POST /loi/…/vote` that is an address next to the instant of a
+	# vote attempt — precisely the pairing /vie-privee promises this site does
+	# not record, on the page written to be checkable rather than reassuring.
+	#
+	# So the addresses are dropped from the entry and everything else is kept: a
+	# 5xx still names its method, path and status, which is what makes the log
+	# worth having at all. Caddy redacts `Cookie` on its own; it is deleted here
+	# too, because "on its own" is a default someone else owns — and the voter
+	# token is the one header that must never reach a log line.
 	log {
 		output stderr
 		level ERROR
+		format filter {
+			fields {
+				request>remote_ip delete
+				request>client_ip delete
+				request>headers>X-Forwarded-For delete
+				request>headers>Cookie delete
+			}
+		}
 	}
 }

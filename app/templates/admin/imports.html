@@ -15,14 +15,19 @@
 {# Triage, not a to-do list. Most of what the daily job stages is not votation
    material — treaty ratifications above all — and the texts that are worth one
    are the texts that were argued over. These two controls are what turn a long
-   queue into a short shortlist. #}
+   queue into a short shortlist.
+
+   Both dropdowns list values the route builds from the stored constants, rather
+   than spelling « importe » and « seances » out here. The literals worked, and
+   were four copies of values whose only definition lives in `app.models` and
+   `app.crud.imports` — a rename there would have left this page filtering on
+   strings the database had stopped using, with nothing to say so. #}
 <form class="import-filters" action="/admin/imports" method="get">
   <label>Statut
     <select name="statut">
-      <option value="nouveau" {% if statut == 'nouveau' %}selected{% endif %}>Nouvelles</option>
-      <option value="importe" {% if statut == 'importe' %}selected{% endif %}>Importées</option>
-      <option value="ignore" {% if statut == 'ignore' %}selected{% endif %}>Ignorées</option>
-      <option value="tous" {% if statut == 'tous' %}selected{% endif %}>Tout l'historique</option>
+      {% for value, label in status_choices %}
+      <option value="{{ value }}" {% if statut == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
     </select>
   </label>
   <label>Procédure
@@ -37,12 +42,13 @@
   </label>
   <label>Trier par
     <select name="tri">
-      <option value="date" {% if tri != 'seances' %}selected{% endif %}>Date de promulgation</option>
-      <option value="seances" {% if tri == 'seances' %}selected{% endif %}>Séances publiques</option>
+      {% for value, label in sort_choices %}
+      <option value="{{ value }}" {% if tri == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
     </select>
   </label>
   <button type="submit">Filtrer</button>
-  {% if procedure or tri == 'seances' or statut != 'nouveau' %}
+  {% if filtered %}
   <a href="/admin/imports">Réinitialiser</a>
   {% endif %}
 </form>
@@ -56,15 +62,15 @@
       {# The count is the best proxy on this page for "was this contested" — and
          so for whether a citizen would want a say. Sortable from here because
          that is the whole point of showing it. #}
-      <th><a href="/admin/imports?statut={{ statut | urlencode }}&procedure={{ procedure | urlencode }}&tri=seances"
-             title="Trier par nombre de séances publiques">Séances{% if tri == 'seances' %} ↓{% endif %}</a></th>
+      <th><a href="/admin/imports?statut={{ statut | urlencode }}&procedure={{ procedure | urlencode }}&tri={{ sort_by_seances | urlencode }}"
+             title="Trier par nombre de séances publiques">Séances{% if tri == sort_by_seances %} ↓{% endif %}</a></th>
       <th>Procédure</th><th>Statut</th><th>Actions</th>
     </tr>
   </thead>
   <tbody>
     {% for item in items %}
     <tr>
-      <td>{{ item.promulgated_on.strftime('%d/%m/%Y') }}</td>
+      <td>{{ item.promulgated_on | french_date }}</td>
       <td>
         LOI n° {{ item.law_code }}
         {% if item.jo_number %}<br><small>JO n° {{ item.jo_number }}</small>{% endif %}
@@ -87,7 +93,7 @@
       <td>{{ item.procedure }}</td>
       <td><span class="status status-{{ item.status }}">{{ item.status | import_status }}</span></td>
       <td class="actions">
-        {% if item.status == 'importe' %}
+        {% if item.is_imported %}
           {% if item.law_id %}<a href="/admin/lois/{{ item.law_id }}">Voir la votation</a>{% endif %}
         {% else %}
           <a href="/admin/lois/nouvelle?import_id={{ item.id }}">Créer la votation</a>

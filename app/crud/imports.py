@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, defer
 
 from app.assemblee import PromulgatedLaw
-from app.crud import count_matching, paginate
+from app.crud import Page, count_matching, paginate
 from app.db import utcnow
 from app.logging_config import get_logger
 from app.models import (
@@ -164,8 +164,8 @@ def list_by_status(
     order: str = ORDER_BY_DATE,
     page: int = 1,
     page_size: int = 50,
-) -> tuple[list[ImportedLaw], int, int]:
-    """Staged laws, most recently promulgated first. Returns (rows, total, pages).
+) -> Page[ImportedLaw]:
+    """Staged laws, most recently promulgated first.
 
     ``draft`` and ``seances`` are deferred: a stored draft is a whole AI
     presentation — two prose blocks and up to a dozen quotes — and the list shows
@@ -185,7 +185,7 @@ def list_by_status(
         stmt = stmt.where(ImportedLaw.procedure == procedure)
 
     total = count_matching(db, stmt)
-    page, pages, offset = paginate(page, total, page_size)
+    number, pages, offset = paginate(page, total, page_size)
 
     ordering: tuple[ColumnElement[Any], ...]
     if order == ORDER_BY_SEANCES:
@@ -202,7 +202,7 @@ def list_by_status(
             .limit(page_size)
         )
     )
-    return rows, total, pages
+    return Page(rows=rows, total=total, number=number, count=pages)
 
 
 def procedures(db: Session, *, status: str | None = None) -> list[tuple[str, int]]:

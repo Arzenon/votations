@@ -1,6 +1,6 @@
 """V1: advanced search filtering and anti-manipulation evolution gating."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import event
 
@@ -19,14 +19,14 @@ def test_search_matches_summary_and_title(db_session):
         ]
     )
     db_session.commit()
-    rows, total, _pages = laws_crud.search(db_session, query="climat")
-    assert total == 1
-    assert rows[0].slug == "a"
+    found = laws_crud.search(db_session, query="climat")
+    assert found.total == 1
+    assert found.rows[0].slug == "a"
 
 
 def test_search_status_filter(db_session, open_law, closed_law):
-    rows, _total, _pages = laws_crud.search(db_session, status="closed")
-    assert [law.slug for law in rows] == ["loi-close"]
+    found = laws_crud.search(db_session, status="closed")
+    assert [law.slug for law in found.rows] == ["loi-close"]
 
 
 def test_evolution_hidden_below_min_volume(db_session, open_law):
@@ -63,19 +63,34 @@ def test_search_pages_in_sql_not_in_python(db_session):
 
     event.listen(bind, "before_cursor_execute", record)
     try:
-        rows, total, _pages = laws_crud.search(db_session, page=2, page_size=20)
+        found = laws_crud.search(db_session, page=2, page_size=20)
     finally:
         event.remove(bind, "before_cursor_execute", record)
 
-    assert total == 45
-    assert len(rows) == 20
+    assert found.total == 45
+    assert len(found.rows) == 20
     selects = [s for s in seen if s.upper().startswith("SELECT")]
     assert any("LIMIT" in s for s in selects), "the window must be applied by the database"
 
 
+def test_search_is_ordered_like_the_home_page(db_session):
+    """One corpus, one order — whichever page you reach it from.
+
+    The home page was moved off `created_at` (the moment somebody pressed save)
+    and onto the promulgation date; search was left behind, so the same two laws
+    ranked one way on the home page and the other way here. Inserted newest-first
+    below precisely so that data-entry order and promulgation order disagree.
+    """
+    make_law(db_session, slug="loi-recente", title="Loi commune", promulgated_on=date(2026, 8, 20))
+    make_law(db_session, slug="loi-ancienne", title="Loi commune", promulgated_on=date(2026, 1, 5))
+
+    found = laws_crud.search(db_session, query="commune")
+    assert [law.slug for law in found.rows] == ["loi-recente", "loi-ancienne"]
+
+
 def test_search_by_status_filters_correctly(db_session, open_law, closed_law):
-    opened, _, _pages = laws_crud.search(db_session, status="open")
-    closed, _, _pages = laws_crud.search(db_session, status="closed")
+    opened = laws_crud.search(db_session, status="open").rows
+    closed = laws_crud.search(db_session, status="closed").rows
     assert [law.slug for law in opened] == [open_law.slug]
     assert [law.slug for law in closed] == [closed_law.slug]
 
@@ -92,12 +107,12 @@ def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
     db_session.add(Law(slug="autre", title="Loi ordinaire", published=True))
     db_session.commit()
 
-    hits, total, _pages = laws_crud.search(db_session, query="100 %")
-    assert total == 1
-    assert hits[0].slug == "pourcent"
+    found = laws_crud.search(db_session, query="100 %")
+    assert found.total == 1
+    assert found.rows[0].slug == "pourcent"
 
     # A bare "%" is not "match everything".
-    assert laws_crud.search(db_session, query="%")[1] == 0
+    assert laws_crud.search(db_session, query="%").total == 0
 
     # The official reference is still matched with LIKE, so both wildcards have
     # to stay literal there: "2026_214" must not match "2026-214".
@@ -105,8 +120,8 @@ def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
         Law(slug="ref", title="Texte référencé", official_ref="LOI n° 2026-214", published=True)
     )
     db_session.commit()
-    assert laws_crud.search(db_session, query="2026-214")[1] == 1
-    assert laws_crud.search(db_session, query="2026_214")[1] == 0
+    assert laws_crud.search(db_session, query="2026-214").total == 1
+    assert laws_crud.search(db_session, query="2026_214").total == 0
 
 
 # --- Recherche plein texte ----------------------------------------------------
@@ -114,33 +129,33 @@ def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
 
 def test_search_finds_a_plural_from_the_singular(client, db_session):
     make_law(db_session, slug="loi-retraites", title="Réforme des retraites", summary_text="Texte.")
-    assert laws_crud.search(db_session, query="retraite")[1] == 1
-    assert laws_crud.search(db_session, query="retraites")[1] == 1
+    assert laws_crud.search(db_session, query="retraite").total == 1
+    assert laws_crud.search(db_session, query="retraites").total == 1
 
 
 def test_search_matches_a_word_still_being_typed(client, db_session):
     make_law(db_session, slug="loi-logement", title="Encadrement des loyers", summary_text="Texte.")
-    assert laws_crud.search(db_session, query="loye")[1] == 1
-    assert laws_crud.search(db_session, query="encadr")[1] == 1
+    assert laws_crud.search(db_session, query="loye").total == 1
+    assert laws_crud.search(db_session, query="encadr").total == 1
 
 
 def test_search_still_finds_a_law_by_its_official_number(client, db_session):
     make_law(db_session, slug="loi-num", title="Un texte", official_ref="LOI n° 2026-214")
-    assert laws_crud.search(db_session, query="2026-214")[1] == 1
+    assert laws_crud.search(db_session, query="2026-214").total == 1
 
 
 def test_search_requires_every_word(client, db_session):
     make_law(db_session, slug="loi-a1", title="Réforme des retraites", summary_text="Texte.")
     make_law(db_session, slug="loi-b1", title="Réforme du logement", summary_text="Texte.")
-    assert laws_crud.search(db_session, query="réforme")[1] == 2
-    assert laws_crud.search(db_session, query="réforme retraite")[1] == 1
+    assert laws_crud.search(db_session, query="réforme").total == 2
+    assert laws_crud.search(db_session, query="réforme retraite").total == 1
 
 
 def test_search_ignores_punctuation_a_visitor_types(client, db_session):
     """`to_tsquery` would treat these as syntax and fail the whole query."""
     make_law(db_session, slug="loi-ponct", title="Loi sur l'eau", summary_text="Texte.")
     for query in ("l'eau", "eau !", "(eau)", "eau & | :"):
-        assert laws_crud.search(db_session, query=query)[1] == 1, query
+        assert laws_crud.search(db_session, query=query).total == 1, query
 
 
 def test_the_curve_keeps_the_days_nobody_voted(db_session, open_law, monkeypatch):

@@ -8,6 +8,7 @@ MVP wires up :class:`~app.auth.anonymous.AnonymousProvider`. In V2 a
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
 from fastapi import Request, Response
@@ -49,14 +50,21 @@ class AuthProvider(Protocol):
         ...
 
 
-_provider: AuthProvider | None = None
-
-
+@lru_cache(maxsize=1)
 def get_auth_provider() -> AuthProvider:
-    """Return the process-wide auth provider (FastAPI dependency)."""
-    global _provider
-    if _provider is None:
-        from app.auth.anonymous import AnonymousProvider
+    """Return the process-wide auth provider (FastAPI dependency).
 
-        _provider = AnonymousProvider()
-    return _provider
+    Cached rather than assigned to a module global behind an ``if is None``. The
+    routes are sync ``def``, so Starlette runs each one on its own thread and two
+    requests arriving together could both find the global empty and each build a
+    provider — the same race ``app.drafting._executor`` takes a lock against, and
+    the reason that one takes a lock is that a second provider built and dropped
+    is a bug waiting for the object to start holding something.
+
+    ``lru_cache`` on a no-argument function is the whole fix: it does the
+    build-once itself, under its own lock, and « process-wide » becomes something
+    the code says rather than something the caller has to arrange.
+    """
+    from app.auth.anonymous import AnonymousProvider
+
+    return AnonymousProvider()

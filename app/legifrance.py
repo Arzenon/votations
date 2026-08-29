@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import re
 import tarfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from xml.etree.ElementTree import Element  # type only — parsing goes through defusedxml
@@ -83,7 +84,35 @@ class LawText:
 # is there so a truncated read is a message and a retry rather than the host's
 # memory. The per-member cap above still applies once the archive is open.
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
-_default_getter = getter(timeout=180.0, max_bytes=MAX_ARCHIVE_BYTES, error=LegifranceFetchError)
+
+#: Per-operation socket timeout. Generous, because the archives are large and the
+#: portal is not fast; it is not a bound on how long a download may take in
+#: total — see :func:`bounded_getter` for callers that need one.
+TIMEOUT = 180.0
+
+_default_getter = getter(timeout=TIMEOUT, max_bytes=MAX_ARCHIVE_BYTES, error=LegifranceFetchError)
+
+
+def bounded_getter(remaining: Callable[[], float]) -> Getter:
+    """The default getter, with every request held to the caller's own budget.
+
+    For the drafting job, which promises to give up rather than hold a worker
+    (see ``AI_DRAFT_DEADLINE_SECONDS``). Locating one law can mean seven requests
+    — the archive index, then up to six daily archives — and at 180 s of socket
+    timeout each, with no total bound on any of them, "seven requests" was the
+    only thing the promise actually rested on.
+
+    A budget that runs out mid-search raises
+    :class:`~app.opendata.DeadlineExceeded`, which :func:`fetch_law_text` does not
+    catch: the loop stops at that candidate rather than trying the rest and
+    reporting the law as missing.
+    """
+    return getter(
+        timeout=TIMEOUT,
+        max_bytes=MAX_ARCHIVE_BYTES,
+        error=LegifranceFetchError,
+        remaining=remaining,
+    )
 
 
 def _base_url() -> str:

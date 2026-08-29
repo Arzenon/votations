@@ -7,13 +7,15 @@ a missing origin check, a header the reverse proxy stopped adding, and a
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.crud import laws as laws_crud
 from app.main import app
 from app.models import Law
-from tests.helpers import admin_headers, basic_auth
+from tests.helpers import admin_headers, basic_auth, make_law
 
 # --- Cross-site admin requests ------------------------------------------------
 
@@ -107,6 +109,55 @@ def test_the_sites_own_ballot_still_votes(client, open_law):
 
 
 # --- A2: non-ASCII credentials ------------------------------------------------
+
+
+def test_every_admin_route_refuses_a_request_with_no_credentials(client):
+    """Authentication is the router's, not each handler's — held here.
+
+    Every one of these routes did carry `Depends(require_admin)` in its own
+    signature, fourteen times over, and that is the risk rather than the defence:
+    the fifteenth is added by someone who did not know it had to be repeated, and
+    nothing would say so. It is declared once on the router now.
+
+    Asserted by *asking* rather than by reading the dependency tree. A first
+    attempt walked `app.routes` looking for the guard and passed while finding
+    nothing at all — this version of FastAPI keeps included routers nested rather
+    than flattened, so the walk matched no admin route and the assertion was
+    vacuously true. The schema knows every path, and a 401 is the thing that
+    actually has to be true.
+    """
+    paths = {
+        path: methods
+        for path, methods in client.app.openapi()["paths"].items()
+        if path.startswith("/admin")
+    }
+    assert len(paths) > 10, "the administration really is in the schema"
+
+    leaked = []
+    for path, methods in paths.items():
+        # Any id will do: the guard runs long before the handler looks one up.
+        url = re.sub(r"\{[^}]+\}", "1", path)
+        for method in methods:
+            answer = client.request(method.upper(), url, follow_redirects=False)
+            if answer.status_code != 401:
+                leaked.append(f"{method.upper()} {url} → {answer.status_code}")
+    assert not leaked, f"routes d'administration atteignables sans identifiants : {leaked}"
+
+
+def test_a_cross_site_post_is_refused_before_the_credentials_are_read(client, db_session):
+    """The order the two router-level guards run in, and it matters.
+
+    `require_same_origin` is declared first so a forged cross-site POST is
+    refused as such — with a 403 — rather than prompting for credentials that
+    the browser would have attached anyway.
+    """
+    law = make_law(db_session, slug="loi-ordre", title="Loi ordre")
+    r = client.post(
+        f"/admin/lois/{law.id}/archiver",
+        headers={**admin_headers(), "Origin": "https://ailleurs.example"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
 
 
 def test_an_accented_credential_is_refused_not_a_crash(client):

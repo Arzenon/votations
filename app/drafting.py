@@ -27,13 +27,16 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.ai import AiDraftError, build_client, generate_draft, select_arguments
+from app.ai import AI_ATTEMPTS, AiDraftError, build_client, generate_draft, select_arguments
 from app.config import get_settings
 from app.crud import imports as imports_crud
 from app.db import SessionLocal
 from app.debates import DebatesFetchError, fetch_speeches
+from app.debates import bounded_getter as debates_getter
 from app.legifrance import LegifranceFetchError, fetch_law_text
+from app.legifrance import bounded_getter as legifrance_getter
 from app.logging_config import get_logger
+from app.opendata import DeadlineExceeded
 
 log = get_logger("drafting")
 
@@ -78,13 +81,25 @@ def shutdown_drafting() -> None:
         pool.shutdown(wait=False, cancel_futures=True)
 
 
-class DeadlineExceeded(RuntimeError):
-    """Raised when the job has spent its whole budget and stops rather than hang."""
-
-
 @dataclass
 class _Deadline:
-    """A wall-clock budget checked between the job's long steps."""
+    """The job's wall-clock budget, and the thing every slow step is held to.
+
+    It used to be checked only *between* the steps, which made it a budget in
+    name and nothing in fact: each step was individually unbounded. Locating a
+    law is up to seven downloads at a 180-second socket timeout apiece — and a
+    socket timeout is per read, so a server dribbling bytes resets it for ever.
+    Reading twenty sittings is forty more. The two model calls used the SDK's own
+    ten-minute timeout, three attempts each. Ten minutes of budget could take
+    hours, and the setting's promise — "gives up rather than holding a worker" —
+    was not one the code could keep.
+
+    So :meth:`remaining` is what the rest of the job now runs on: the getters
+    take it per request (:func:`app.legifrance.bounded_getter`) and the model
+    calls take it as their timeout (:func:`_within`). :meth:`check` stays, as the
+    cheap gate at the top of each step that reports *which* step there was no
+    time left for.
+    """
 
     seconds: float
     started: float
@@ -93,12 +108,37 @@ class _Deadline:
     def start(cls, seconds: float) -> _Deadline:
         return cls(seconds=seconds, started=time.monotonic())
 
+    def remaining(self) -> float:
+        """Seconds left in the budget; never negative."""
+        return max(0.0, self.seconds - (time.monotonic() - self.started))
+
     def check(self, step: str) -> None:
-        if time.monotonic() - self.started > self.seconds:
+        if self.remaining() <= 0:
             raise DeadlineExceeded(
                 f"délai dépassé ({self.seconds:.0f} s) avant l'étape « {step} » — "
                 "à réessayer, ou à rédiger à la main"
             )
+
+
+def _within(client, deadline: _Deadline):
+    """``client``, with this call held to what is left of the budget.
+
+    ``with_options`` shares the underlying connection pool, so the job still
+    makes its four requests down one connection — this narrows the timeout and
+    nothing else.
+
+    Divided by :data:`~app.ai.AI_ATTEMPTS` because the SDK retries on its own,
+    including on a timeout: a full-budget timeout retried once is two budgets. A
+    call therefore gets half of what is left, and its retry fits in the other
+    half.
+
+    ``None`` passes straight through — that is the no-API-key path, where
+    ``generate_draft`` builds a client itself purely in order to raise the
+    "feature switched off" refusal the administrator needs to read.
+    """
+    if client is None:
+        return None
+    return client.with_options(timeout=deadline.remaining() / AI_ATTEMPTS)
 
 
 SessionFactory = Callable[[], Session]
@@ -213,9 +253,11 @@ def build_draft(item_id: int, *, session_factory: SessionFactory | None = None) 
 
         try:
             deadline.check("texte officiel")
-            law_text = fetch_law_text(job.nor, job.jo_date)
+            # Bounded getters, so the archive downloads are held to the same
+            # budget as everything else rather than to a socket timeout each.
+            law_text = fetch_law_text(job.nor, job.jo_date, legifrance_getter(deadline.remaining))
             deadline.check("rédaction des blocs factuels")
-            draft = generate_draft(law_text, client=client)
+            draft = generate_draft(law_text, client=_within(client, deadline))
         except (LegifranceFetchError, AiDraftError, DeadlineExceeded) as exc:
             log.warning("brouillon échoué pour l'import %s : %s", item_id, exc)
             _fail(new_session, item_id, message=f"LOI n° {job.law_code} : {exc}")
@@ -232,9 +274,9 @@ def build_draft(item_id: int, *, session_factory: SessionFactory | None = None) 
         else:
             try:
                 deadline.check("comptes rendus de séance")
-                speeches = fetch_speeches(job.seances)
+                speeches = fetch_speeches(job.seances, debates_getter(deadline.remaining))
                 deadline.check("sélection des arguments")
-                arguments = select_arguments(law_text, speeches, client=client)
+                arguments = select_arguments(law_text, speeches, client=_within(client, deadline))
                 notes = list(arguments.notes)
             except (DebatesFetchError, AiDraftError, DeadlineExceeded) as exc:
                 notes.append(f"Arguments non proposés : {exc}")

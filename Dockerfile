@@ -23,13 +23,29 @@ COPY requirements.lock ./
 RUN pip install --no-deps --require-hashes -r requirements.lock
 
 # The application itself, in the layer that actually changes.
+#
+# Copied, not installed. `pip install -e .` used to run here, and it was the one
+# step in this build that reached the network unpinned: pip's default build
+# isolation fetches a `setuptools` from PyPI to run the backend declared in
+# pyproject.toml, with no version and no hash — in a build whose whole claim,
+# stated above, is that the same commit produces the same image.
+#
+# Nothing needed the install. Every process in this image starts from WORKDIR
+# /app and puts it on `sys.path` itself: uvicorn inserts its `--app-dir`
+# (defaulting to the working directory), `alembic.ini` sets `prepend_sys_path =
+# .`, and `python -m scripts.…` — which is how all three job containers run —
+# prepends the working directory the way `-m` always does.
+#
+# The one thing that goes away with it: `import app` no longer works from an
+# arbitrary directory inside the container. `docker compose exec` starts in
+# WORKDIR, so it does not come up in practice; `cd /app` first if it ever does.
 COPY pyproject.toml ./
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
 COPY scripts ./scripts
 COPY docker ./docker
-RUN pip install --no-deps -e . && chmod +x docker/*.sh
+RUN chmod +x docker/*.sh
 
 # Nothing here needs to write to the image, and nothing needs root.
 RUN useradd --system --create-home --uid 10001 votations \

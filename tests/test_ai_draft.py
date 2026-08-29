@@ -404,7 +404,11 @@ def test_law_form_carries_the_source_links(client, db_session):
 def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=None, speeches=("s",)):
     """Point the background drafting job at fakes instead of the network."""
 
-    def fetch(nor, jo_date):
+    # Both fakes take the getter the job now hands down — it carries the job's
+    # remaining budget, so that every download is bounded by the same clock as
+    # the rest of the run. Mirroring the real signature is what keeps that
+    # plumbing honest: a fake that ignored the argument would hide its removal.
+    def fetch(nor, jo_date, get=None):
         if fail:
             raise fail
         return LAW
@@ -416,7 +420,7 @@ def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=Non
 
     monkeypatch.setattr("app.drafting.fetch_law_text", fetch)
     monkeypatch.setattr("app.drafting.generate_draft", generate)
-    monkeypatch.setattr("app.drafting.fetch_speeches", lambda seances: list(speeches))
+    monkeypatch.setattr("app.drafting.fetch_speeches", lambda seances, get=None: list(speeches))
     if arguments is not None:
         monkeypatch.setattr("app.drafting.select_arguments", lambda law, sp, client=None: arguments)
 
@@ -701,6 +705,152 @@ def test_the_job_gives_up_rather_than_hanging(db_session, background_db, monkeyp
     stored = db_session.get(ImportedLaw, item.id)
     assert stored.draft_status == "echec"
     assert "délai dépassé" in stored.draft_error
+
+
+def _deadline_of(get) -> float | None:
+    """What total budget this getter would give one request, or None if unbounded.
+
+    The deadline is not a value a getter exposes — it is the one it passes on —
+    so this stands in for the transport and reads it there.
+
+    Restores by hand rather than through the `monkeypatch` fixture: this is
+    called from inside a job whose own fakes that fixture is holding, and
+    ``monkeypatch.undo()`` reverts *all* of them, not the last one.
+    """
+    from contextlib import suppress
+
+    from app import opendata
+
+    if get is None:
+        return None  # no getter handed down at all: nothing bounds the fetch
+    captured: list[float | None] = []
+
+    def spy(url, **kwargs):
+        captured.append(kwargs.get("deadline"))
+        raise _Stop
+
+    real, opendata.fetch = opendata.fetch, spy
+    try:
+        with suppress(_Stop):
+            get("https://example.invalid/x")
+    finally:
+        opendata.fetch = real
+    return captured[0] if captured else None
+
+
+class _Stop(Exception):
+    """Ends a fetch the instant its arguments have been read."""
+
+
+def test_the_budget_reaches_the_downloads_themselves(db_session, background_db, monkeypatch):
+    """The deadline is what every fetch is bounded by, not a gate between steps.
+
+    Checking it only between steps made it a budget in name: locating one law is
+    up to seven downloads at a 180-second socket timeout apiece, and a socket
+    timeout is per read — a server dribbling bytes resets it for ever. Ten
+    minutes of budget could take hours, on the one setting that promises not to.
+
+    So the job hands both fetchers a getter carrying what is left of the clock.
+    This checks the wiring: that the getter arrives, and that what it carries is
+    the budget rather than nothing.
+    """
+    from app import drafting
+    from app.ai import SelectedArguments
+
+    item = _stage(db_session)
+    # A sitting, so the second half of the job runs at all: with none, the
+    # arguments step is skipped by design and the getter it is handed never
+    # exists to be checked.
+    item.seances = [{"reunion_ref": "RUANR5L17S2026PO1", "odj_ref": "ODJ1", "date": "2026-07-01"}]
+    db_session.commit()
+    monkeypatch.setattr(get_settings(), "ai_draft_deadline_seconds", 600, raising=False)
+
+    seen: dict[str, float | None] = {}
+
+    def fetch(nor, jo_date, get=None):
+        seen["texte officiel"] = _deadline_of(get)
+        return LAW
+
+    def speeches(seances, get=None):
+        seen["comptes rendus"] = _deadline_of(get)
+        return ["s"]
+
+    monkeypatch.setattr("app.drafting.fetch_law_text", fetch)
+    monkeypatch.setattr("app.drafting.fetch_speeches", speeches)
+    monkeypatch.setattr("app.drafting.generate_draft", lambda law, *, client=None: DRAFT)
+    monkeypatch.setattr(
+        "app.drafting.select_arguments", lambda law, sp, client=None: SelectedArguments()
+    )
+
+    drafting.build_draft(item.id)
+
+    for step in ("texte officiel", "comptes rendus"):
+        budget = seen.get(step)
+        assert budget is not None, f"les téléchargements « {step} » ne sont pas bornés"
+        assert 0 < budget <= 600, f"« {step} » a reçu {budget} s sur un budget de 600 s"
+
+
+def test_a_download_that_never_ends_is_cut_at_the_budget(monkeypatch):
+    """The bound a socket timeout cannot give: total time, not time per read.
+
+    A server that sends one byte every hundredth of a second never trips an httpx
+    timeout — each read succeeds — so before this the download simply did not
+    end, and neither did the draft holding a worker for it.
+    """
+    import time
+    from contextlib import contextmanager
+
+    from app import opendata
+
+    class _Dribble:
+        def raise_for_status(self):
+            pass
+
+        def iter_bytes(self, size):
+            while True:
+                time.sleep(0.01)
+                yield b"x"
+
+    @contextmanager
+    def never_ending(*args, **kwargs):
+        yield _Dribble()
+
+    monkeypatch.setattr(opendata.httpx, "stream", never_ending)
+
+    started = time.monotonic()
+    with pytest.raises(opendata.DeadlineExceeded, match="trop lent"):
+        opendata.fetch(
+            "https://example.invalid/lent",
+            timeout=60.0,
+            max_bytes=10**9,
+            error=RuntimeError,
+            deadline=0.2,
+        )
+    assert time.monotonic() - started < 5, "it was cut at the budget, not at the timeout"
+
+
+def test_a_spent_budget_refuses_before_opening_a_connection(monkeypatch):
+    """And says so as a deadline, not as "this source is unreachable".
+
+    The distinction is what stops the loops: `fetch_speeches` treats its own
+    error as "skip this sitting and try the next", which is right for one missing
+    record and wrong for a clock that has run out — every remaining sitting would
+    fail the same way.
+    """
+    from app import opendata
+
+    def never_called(*args, **kwargs):  # pragma: no cover - the point is that it is not
+        raise AssertionError("a connection was opened on a spent budget")
+
+    monkeypatch.setattr(opendata.httpx, "stream", never_called)
+    with pytest.raises(opendata.DeadlineExceeded):
+        opendata.fetch(
+            "https://example.invalid/x",
+            timeout=60.0,
+            max_bytes=1000,
+            error=RuntimeError,
+            deadline=0,
+        )
 
 
 def test_draft_route_requires_auth(client, db_session):
