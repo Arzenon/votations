@@ -161,4 +161,21 @@ class DemographicTally(Base):
     dimension: Mapped[str] = mapped_column(String(16))  # "age" | "sexe"
     category: Mapped[str] = mapped_column(String(32))  # e.g. "35-49" | "femme"
     choice: Mapped[str] = mapped_column(String(16))  # for | against | abstain
+
+    #: The live counter, moved by every ballot.
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+    #: The value the public results page is allowed to *show* while the vote is
+    #: still open — `count` as it stood at the law's last snapshot.
+    #:
+    #: The two exist separately because the suppression rule above protects a
+    #: single reading and not a sequence of them. Serving `count` live meant two
+    #: reads of a public page, thirty seconds apart, could be subtracted from one
+    #: another: the difference was one ballot, and it named that voter's choice
+    #: *and* their age, sex and région together — reconstructing exactly the joint
+    #: cell this table refuses to store, from pages anyone may fetch.
+    #:
+    #: This column moves in steps of at least MIN_BUCKET_VOLUME profiled votes and
+    #: at most once an hour, so a difference between two readings can never be
+    #: attributed to a person. See `app.crud.demographics.refresh_snapshot`.
+    published_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

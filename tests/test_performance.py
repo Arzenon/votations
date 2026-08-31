@@ -283,3 +283,39 @@ def test_the_home_page_counts_every_law_s_votes_in_one_query(client, db_session,
         client.get("/")
     counted = [q for q in seen if "count" in q.lower() and " votes" in q.lower()]
     assert len(counted) <= 1, f"{len(counted)} requêtes de comptage : {counted}"
+
+
+# --- The public listings must stay on ix_laws_home ----------------------------
+
+
+def test_the_public_visibility_filter_can_use_its_partial_index():
+    """`published`, never `published IS true` — and this is why.
+
+    Postgres applies a partial index only where it can *prove* the query's WHERE
+    implies the index predicate, and it cannot prove that of ``IS true``. The
+    explicit spelling therefore disqualified `ix_laws_home` silently: identical
+    results, identical rows, and every public listing back to reading the whole
+    table and sorting it — 26.8 ms against 0.3 ms at fifty thousand laws.
+
+    Tidying `_published` back to `.is_(True)` is exactly the change a reviewer
+    would wave through, so it is asserted here rather than left to a comment.
+    """
+    from sqlalchemy import select
+
+    from app.crud.laws import _published
+    from app.models import Law
+
+    where = str(_published(select(Law.id)).compile(compile_kwargs={"literal_binds": True}))
+    assert "laws.published AND" in where
+    assert "published IS true" not in where.lower()
+
+
+def test_the_index_the_listings_rely_on_is_declared():
+    """Its two halves live in different files; neither works without the other."""
+    from sqlalchemy import text
+
+    from app.models import Law
+
+    index = next(i for i in Law.__table__.indexes if i.name == "ix_laws_home")
+    where = index.dialect_options["postgresql"]["where"]
+    assert str(text("published AND archived_at IS NULL")) == str(where)

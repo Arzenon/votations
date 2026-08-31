@@ -27,6 +27,24 @@ from app.routes.public.common import exports_busy, not_found, too_many_exports, 
 
 router = APIRouter()
 
+#: How much of an export is assembled before a piece of it is handed over.
+#:
+#: Both generators below used to ``yield`` once per vote, which is the obvious
+#: shape and the expensive one. Starlette turns a sync generator into an async
+#: one with ``iterate_in_threadpool``, so **every** ``yield`` costs a round trip
+#: through ``anyio.to_thread`` — and that is the same default limiter
+#: ``app.main``'s lifespan pins to ``db_max_threads`` precisely to keep the
+#: site's capacity in step with the connection pool. It then sends one ASGI
+#: message per piece, which uvicorn writes as its own chunk: about ten bytes of
+#: framing around twenty-five bytes of payload.
+#:
+#: A votation with a hundred thousand votes therefore took a hundred thousand
+#: tokens off the limiter that serves every page, and wrote a hundred thousand
+#: chunks. Sixty-four kilobytes' worth at a time makes both about two thousand
+#: times rarer, and bounds what one export holds in memory at the same figure —
+#: which is the property that mattered in the first place, and is unchanged.
+_CHUNK_CHARS = 64 * 1024
+
 
 def at_capacity(request: Request) -> HTMLResponse | None:
     """The pool guard: whether another export may stream at all, from anyone.
@@ -95,11 +113,13 @@ def csv_response(db: Session, law: Law) -> StreamingResponse:
             writer.writeheader()
             for row in results_crud.iter_export_rows(db, law.id, total=total):
                 writer.writerow(row)
-                # Hand each chunk over as it is written, so a large votation never
-                # holds the whole export in memory twice.
-                yield buf.getvalue()
-                buf.seek(0)
-                buf.truncate(0)
+                # Handed over a bufferful at a time, so a large votation never
+                # holds the whole export in memory — and does not pay a thread
+                # hop per vote to say so. See `_CHUNK_CHARS`.
+                if buf.tell() >= _CHUNK_CHARS:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
             tail = buf.getvalue()
             if tail:
                 yield tail
@@ -156,7 +176,7 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
                 for r in bd.rows
             ],
         }
-        for bd in demo_crud.all_breakdowns(db, law.id)
+        for bd in demo_crud.all_breakdowns(db, law)
         if bd.shown
     ]
     provision = demo_crud.provision_rate(db, law.id, tally=tally)
@@ -169,11 +189,23 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
             "percentage": provision.percentage,
         },
         "votes_note": results_crud.export_note(db, law.id, total=total),
+        # Dated for the same reason the page is: while the votation is open
+        # these are a snapshot, and a file that did not say so would invite
+        # exactly the differencing the snapshot exists to stop — this endpoint
+        # serves the same numbers, in a form far easier to poll.
+        "demographics_as_of": (
+            law.demographics_snapshot_at.isoformat()
+            if law.is_open() and law.demographics_snapshot_at
+            else None
+        ),
         "demographics_note": (
             "Répartitions agrégées uniquement, masquées sous le seuil "
             "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
             "de grandeur national INSEE (approx.), jamais utilisé pour "
-            "repondérer."
+            "repondérer. Tant que la votation est ouverte, ces répartitions "
+            "sont arrêtées à la date 'demographics_as_of' et n'avancent que "
+            "par paliers : les publier en direct permettrait de déduire le "
+            "profil d'une personne en comparant deux téléchargements."
         ),
     }
 
@@ -183,17 +215,29 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
         The whole set used to be materialised into a list and then serialised —
         two full copies of every vote in memory at once, on an endpoint anyone
         can request. The rows are the only unbounded part, so they are the part
-        that streams.
+        that streams — a bufferful at a time, for the reason given at
+        :data:`_CHUNK_CHARS`.
         """
         with ratelimit.export_slot():  # see the CSV route for why it is here
             head = json.dumps(envelope, ensure_ascii=False)
             # Splice the vote array into the object rather than building a second one.
             yield head[:-1] + ', "votes": ['
+            pending: list[str] = []
+            size = 0
             first = True
             for row in results_crud.iter_export_rows(db, law.id, total=total):
-                yield ("" if first else ",") + json.dumps(row, ensure_ascii=False)
+                piece = ("" if first else ",") + json.dumps(row, ensure_ascii=False)
                 first = False
-            yield "]}"
+                pending.append(piece)
+                size += len(piece)
+                if size >= _CHUNK_CHARS:
+                    yield "".join(pending)
+                    pending.clear()
+                    size = 0
+            # The closing brackets ride along with whatever is left, so the last
+            # rows and the end of the document are one piece rather than two.
+            pending.append("]}")
+            yield "".join(pending)
 
     return StreamingResponse(
         document(),

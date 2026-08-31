@@ -20,7 +20,6 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
@@ -40,6 +39,63 @@ from app.opendata import DeadlineExceeded
 
 log = get_logger("drafting")
 
+# Set while the process is shutting down. Read in two places: a queued draft
+# that has not started never starts, and `_Deadline.check` turns it into the
+# ordinary "no time left" failure at the top of every step — so a draft caught
+# between steps records *why* it stopped instead of vanishing.
+_stopping = threading.Event()
+
+
+class _DraftPool:
+    """Drafts run here, on daemon threads, capped at ``draft_workers``.
+
+    **Not a ThreadPoolExecutor**, and the reason is the whole point of this
+    class. Its workers are ordinary threads, and `concurrent.futures.thread`
+    registers an atexit hook that *joins every one of them* before the
+    interpreter exits. ``shutdown(wait=False, cancel_futures=True)`` therefore
+    returned instantly and changed nothing: `cancel_futures` drops what is still
+    queued, a draft already running keeps its thread, and the process then sat in
+    that join for as long as the draft had left — up to
+    ``AI_DRAFT_DEADLINE_SECONDS``. Docker stops waiting after ten seconds, so a
+    redeploy during a draft ended in SIGKILL and exit 137, on a shutdown path
+    whose docstring promised the opposite.
+
+    Cooperative cancellation alone cannot fix that: the budget is spent inside a
+    single model call, whose timeout is already set and cannot be retracted from
+    another thread. A daemon thread is not joined at exit, so the process leaves
+    immediately and the abandoned draft is recovered at the next boot by
+    `app.crud.imports.release_interrupted_drafts` — which exists for exactly this
+    and already says so.
+
+    Threads are spawned per job rather than kept alive, and the semaphore is what
+    bounds how many *run* at once; the rest wait on it. That is a queue in a
+    slightly different shape from the executor's, and it holds because of what
+    feeds it: `mark_draft_pending` claims a staged row with a conditional UPDATE,
+    so a row that is already drafting cannot be scheduled again, and the number of
+    waiting jobs is bounded by the corpus rather than by how fast anybody clicks.
+    """
+
+    def __init__(self, workers: int) -> None:
+        self._slots = threading.Semaphore(workers)
+
+    def submit(self, fn: Callable[..., None], *args: object) -> None:
+        threading.Thread(
+            target=self._run,
+            args=(fn, args),
+            daemon=True,
+            name="draft",
+        ).start()
+
+    def _run(self, fn: Callable[..., None], args: tuple) -> None:
+        with self._slots:
+            # Checked after the wait, not before it: a job that queued while the
+            # service was healthy and reached the front after SIGTERM has nothing
+            # to write its result to.
+            if _stopping.is_set():
+                return
+            fn(*args)
+
+
 # Drafts run on their own small pool, not on the thread pool that serves
 # requests. Starlette runs a sync background task on the request pool, which is
 # capped at `db_max_threads`; a draft holds its thread for as long as
@@ -47,7 +103,7 @@ log = get_logger("drafting")
 # drafts used to take a visible slice of the site's capacity with them. Here the
 # worst case is that drafts queue behind each other, which is the right queue to
 # be in.
-_pool: ThreadPoolExecutor | None = None
+_pool: _DraftPool | None = None
 # Built lazily from request threads, so two administrators clicking at the same
 # instant could otherwise each see `_pool is None` and build one — leaving a pool
 # nothing holds a reference to, with `draft_workers` threads of its own and no
@@ -55,30 +111,33 @@ _pool: ThreadPoolExecutor | None = None
 _pool_lock = threading.Lock()
 
 
-def _executor() -> ThreadPoolExecutor:
+def _executor() -> _DraftPool:
     global _pool
     with _pool_lock:
         if _pool is None:
-            _pool = ThreadPoolExecutor(
-                max_workers=get_settings().draft_workers, thread_name_prefix="draft"
-            )
+            _pool = _DraftPool(get_settings().draft_workers)
         return _pool
 
 
-def schedule_draft(item_id: int) -> Future:
+def schedule_draft(item_id: int) -> None:
     """Queue a draft run. Returns immediately; the form polls for the outcome."""
-    return _executor().submit(build_draft, item_id)
+    _executor().submit(build_draft, item_id)
 
 
 def shutdown_drafting() -> None:
-    """Stop accepting drafts and let the app exit without waiting ten minutes."""
+    """Stop accepting drafts and let the app exit without waiting ten minutes.
+
+    Two mechanisms, because a draft can be stopped in two different places. One
+    that has not started, or that is between steps, is refused cooperatively and
+    records a readable failure. One that is inside a download or a model call
+    cannot be interrupted at all — so it is simply abandoned, which is what the
+    daemon threads in :class:`_DraftPool` are for, and which
+    `release_interrupted_drafts` cleans up at the next boot.
+    """
+    _stopping.set()
     global _pool
     with _pool_lock:
-        pool, _pool = _pool, None
-    if pool is not None:
-        # Outside the lock: `shutdown` does not wait here, but keeping it out
-        # means a later `_executor()` never blocks behind a teardown.
-        pool.shutdown(wait=False, cancel_futures=True)
+        _pool = None
 
 
 @dataclass
@@ -98,7 +157,8 @@ class _Deadline:
     take it per request (:func:`app.legifrance.bounded_getter`) and the model
     calls take it as their timeout (:func:`_within`). :meth:`check` stays, as the
     cheap gate at the top of each step that reports *which* step there was no
-    time left for.
+    time left for — and, since it is already called at every step boundary, as
+    the place a shutdown gets to stop the job.
     """
 
     seconds: float
@@ -113,6 +173,14 @@ class _Deadline:
         return max(0.0, self.seconds - (time.monotonic() - self.started))
 
     def check(self, step: str) -> None:
+        # A stopping service is a spent budget by another name: nothing after
+        # this point can be written anywhere the administrator will see it, so
+        # the job stops here and says which step it had reached.
+        if _stopping.is_set():
+            raise DeadlineExceeded(
+                f"le service s'est arrêté avant l'étape « {step} » — relancez la "
+                "génération, ou rédigez les blocs à la main"
+            )
         if self.remaining() <= 0:
             raise DeadlineExceeded(
                 f"délai dépassé ({self.seconds:.0f} s) avant l'étape « {step} » — "

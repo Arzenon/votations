@@ -8,7 +8,6 @@ throttle here has to do actual work.
 from __future__ import annotations
 
 import secrets
-from typing import TypedDict
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -39,19 +38,6 @@ def _too_many() -> HTTPException:
     )
 
 
-class _Throttle(TypedDict):
-    """The three arguments both throttle calls below share.
-
-    A plain dict read back as ``dict[str, object]``, which is not something you
-    can unpack into ``too_many``'s typed parameters — and the two calls have to
-    agree exactly, or the check and the record would use different buckets.
-    """
-
-    limit: int
-    window_seconds: int
-    bucket: str
-
-
 def _matches(sent: str, expected: str) -> bool:
     """Constant-time comparison that survives an accented password.
 
@@ -79,7 +65,7 @@ def require_admin(request: Request, credentials: HTTPBasicCredentials = Depends(
     working administrator is never slowed down.
     """
     settings = get_settings()
-    throttle = _Throttle(
+    throttle = ratelimit.Throttle(
         limit=settings.admin_rate_limit,
         window_seconds=settings.admin_rate_window_seconds,
         bucket="admin",

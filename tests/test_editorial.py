@@ -39,7 +39,7 @@ def test_regions_are_offered_in_alphabetical_order(client, open_law):
 
 def test_reordering_regions_never_moves_a_stored_value():
     """Display order is presentation; the values are in the counters and exports."""
-    from app.models import Region
+    from app.models.demographics import Region
 
     assert {r.value for r in Region} == {
         "Île-de-France",

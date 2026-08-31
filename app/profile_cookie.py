@@ -135,9 +135,16 @@ class ProfileStore:
         self.laws.pop(str(law_id), None)
         self.laws[str(law_id)] = profile
 
-        value = _fit(self.laws)
-        if value is None:
+        fitted = _fit(self.laws)
+        if fitted is None:
+            # Not even a single law fits, which the categories this application
+            # defines cannot produce. Nothing is written and the browser keeps
+            # whatever it already had.
             return
+        # Reassigned, not just read: `_fit` may have dropped the oldest laws to
+        # make the cookie fit, and the store has to say the same thing the cookie
+        # does for the rest of this request.
+        value, self.laws = fitted
         response.set_cookie(
             COOKIE_NAME,
             value,
@@ -153,13 +160,20 @@ def load(request: Request) -> ProfileStore:
     return ProfileStore(_load(request))
 
 
-def _fit(store: dict[str, dict[str, str]]) -> str | None:
-    """Serialise, dropping the oldest laws until the cookie is a sane size."""
+def _fit(store: dict[str, dict[str, str]]) -> tuple[str, dict[str, dict[str, str]]] | None:
+    """Serialise, dropping the oldest laws until the cookie is a sane size.
+
+    Returns the cookie value **and the entries it actually carries**. Both,
+    because trimming happens here and nowhere else: returning the string alone
+    left the caller holding a store that listed laws the browser had just been
+    told to forget, and the two would have disagreed for the rest of the request.
+    """
     serializer = _serializer()
     entries = list(store.items())[-_MAX_LAWS:]
     while entries:
-        value = serializer.dumps(dict(entries))
+        kept = dict(entries)
+        value = serializer.dumps(kept)
         if len(value.encode("utf-8")) <= _MAX_COOKIE_BYTES:
-            return value
+            return value, kept
         entries = entries[1:]
     return None

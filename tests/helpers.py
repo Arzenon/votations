@@ -75,6 +75,9 @@ def cast_ballot(
     cookie the browser would send back.
     """
     vote, previous_choice = votes_crud.cast_vote(db, law, token, choice)
+    # As the route does, and in the same order: the published breakdown moves
+    # forward before this ballot's own contribution is folded in.
+    demo_crud.refresh_snapshot(db, law)
     demo_crud.record(
         db,
         vote=vote,

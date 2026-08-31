@@ -8,8 +8,11 @@ Two responsibilities:
    by an upsert, and the vote row is locked by :func:`app.crud.votes.cast_vote`
    for the whole ballot, so two simultaneous ballots from one browser cannot both
    believe they are the first.
-2. ``breakdown`` — build a demographic × choice table for display/export, applying
-   whole-table suppression so small cells can never be read or differenced out.
+2. ``all_breakdowns`` — build a demographic × choice table for display/export,
+   applying whole-table suppression so small cells can never be read or
+   differenced out, and — while the vote is open — reading a *snapshot* of the
+   counters rather than the counters themselves. ``refresh_snapshot`` is what
+   moves that snapshot forward; see it for what the two together defend against.
 
 Nothing here commits. The ballot is one transaction, opened by ``cast_vote`` and
 closed by the route: a vote and the counters it moves are written together or
@@ -19,14 +22,16 @@ neither is.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.crud import results
 from app.crud.results import Tally
+from app.db import as_utc, utcnow
 from app.models import (
     DIMENSION_AGE,
     DIMENSION_LABELS,
@@ -38,6 +43,7 @@ from app.models import (
     VALID_CATEGORIES,
     DemographicTally,
     InseeReference,
+    Law,
     Vote,
     VoteChoice,
 )
@@ -181,7 +187,14 @@ class Breakdown:
     label: str
     shown: bool
     threshold: int
-    reason: str = ""  # "" | "empty" | "below_threshold"
+    #: "" | "empty" | "below_threshold" | "pending".
+    #:
+    #: « pending » is the one that is not about the data: the votation is open and
+    #: has not yet reached its first published snapshot, so there may well be
+    #: figures — they are simply not publishable yet. Telling it apart from
+    #: « empty » matters, because the page would otherwise say « aucune donnée
+    #: renseignée » about a law people have been filling the fields in on.
+    reason: str = ""
     rows: list[BreakdownRow] = field(default_factory=list)
     dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
@@ -235,7 +248,19 @@ def _build(
         return Breakdown(dimension, label, shown=False, threshold=k, reason="below_threshold")
 
     dimension_total = sum(populated)
-    ordered = [c for c in DIMENSION_ORDER.get(dimension, sorted(cells)) if c in cells]
+    # Categories that hold nothing are dropped, not drawn as a row of zeros.
+    #
+    # A cell row is created the moment somebody votes in that category, and its
+    # `published_count` starts at zero — so a category nobody had used before
+    # appeared on the page as « 65+ · 0 · 0 · 0 » the instant one person chose it.
+    # That is the leak the snapshot exists to close, wearing a different hat: the
+    # *arrival* of a row says as much as a number moving in it. Filtering on the
+    # published total closes both, and a row of zeros was never worth drawing.
+    ordered = [
+        c
+        for c in DIMENSION_ORDER.get(dimension, sorted(cells))
+        if c in cells and sum(cells[c].values()) > 0
+    ]
     out_rows: list[BreakdownRow] = []
     for category in ordered:
         counts = cells[category]
@@ -264,14 +289,85 @@ def _build(
     )
 
 
-def _cells_by_dimension(db: Session, law_id: int) -> dict[str, dict[str, dict[str, int]]]:
-    """Every counter for a law, in one query, as {dimension: {category: {choice: n}}}."""
+#: The shortest interval between two moves of a law's published breakdown.
+#:
+#: Not the guarantee — that is the volume rule below, and this is what keeps its
+#: cost down: the check that enforces it counts rows, and this is what stops that
+#: count happening on every single ballot. An hour is short enough that a busy
+#: votation's figures stay recognisably current and long enough that the count
+#: runs once per law per hour whatever the traffic.
+_SNAPSHOT_INTERVAL = timedelta(hours=1)
+
+
+def refresh_snapshot(db: Session, law: Law) -> bool:
+    """Move this law's published breakdown forward if it is due. True if it moved.
+
+    **What this exists to prevent.** The counters this module keeps are marginal
+    and never joint, and :func:`_build` withholds a whole dimension unless every
+    populated cell clears ``MIN_CELL_COUNT``. Both of those protect one reading of
+    the results page. A *sequence* of readings defeats them completely: the page
+    is public and unthrottled, so two fetches thirty seconds apart could be
+    subtracted, and the difference was a single ballot — naming that voter's
+    choice together with their age bracket, their sex and their région, which is
+    precisely the joint cell the schema refuses to store. No knowledge of when
+    anybody voted was needed; polling in a loop enumerated them one at a time.
+
+    **The rule.** What the page publishes while the vote is open is
+    ``published_count``, and it may only move when both hold:
+
+    * at least :data:`_SNAPSHOT_INTERVAL` has passed since it last moved, and
+    * at least ``MIN_BUCKET_VOLUME`` **profiled** votes have arrived since then.
+
+    The second is the one that does the work, and it counts profiled votes rather
+    than votes on purpose. A window of fifty ballots containing a single filled-in
+    profile would otherwise hand that one person's categories over intact — the
+    step has to be large in the quantity it actually discloses.
+
+    A closed votation is left alone: its counters have stopped moving, so there is
+    no sequence to difference and :func:`all_breakdowns` publishes them live.
+
+    Called from the ballot transaction, before this voter's own contribution is
+    folded in, so nobody can trigger a step and read themselves in it. Commits
+    nothing — the caller owns the transaction, as everywhere else here.
+    """
+    if not law.is_open():
+        return False
+
+    now = utcnow()
+    last = law.demographics_snapshot_at
+    if last is not None and now - as_utc(last) < _SNAPSHOT_INTERVAL:
+        return False
+
+    profiled = results.count_profiled(db, law.id)
+    if profiled - law.demographics_snapshot_profiles < get_settings().min_bucket_volume:
+        return False
+
+    db.execute(
+        update(DemographicTally)
+        .where(DemographicTally.law_id == law.id)
+        .values(published_count=DemographicTally.count)
+    )
+    law.demographics_snapshot_at = now
+    law.demographics_snapshot_profiles = profiled
+    return True
+
+
+def _cells_by_dimension(
+    db: Session, law_id: int, *, live: bool
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Every counter for a law, in one query, as {dimension: {category: {choice: n}}}.
+
+    ``live`` picks the column: the counters themselves once the vote has closed
+    and nothing can move any more, the published snapshot while it is open. See
+    :func:`refresh_snapshot`.
+    """
+    counter = DemographicTally.count if live else DemographicTally.published_count
     rows = db.execute(
         select(
             DemographicTally.dimension,
             DemographicTally.category,
             DemographicTally.choice,
-            DemographicTally.count,
+            counter,
         ).where(DemographicTally.law_id == law_id)
     ).all()
     out: dict[str, dict[str, dict[str, int]]] = {}
@@ -281,10 +377,27 @@ def _cells_by_dimension(db: Session, law_id: int) -> dict[str, dict[str, dict[st
     return out
 
 
-def all_breakdowns(db: Session, law_id: int, *, min_cell: int | None = None) -> list[Breakdown]:
-    """Every dimension's breakdown — two queries in total, not two per dimension."""
+def all_breakdowns(db: Session, law: Law, *, min_cell: int | None = None) -> list[Breakdown]:
+    """Every dimension's breakdown — two queries in total, not two per dimension.
+
+    Takes the law rather than its id because *which* numbers may be published is
+    a fact about the votation, not about the counters: an open one publishes the
+    snapshot, a closed one the live totals. See :func:`refresh_snapshot`.
+    """
     k = min_cell if min_cell is not None else get_settings().min_cell_count
-    by_dimension = _cells_by_dimension(db, law_id)
+    live = not law.is_open()
+    if not live and law.demographics_snapshot_at is None:
+        # Open, and no snapshot taken yet. Every dimension is withheld — but as
+        # "not published yet", never as "nothing to show": people may well have
+        # been filling the optional fields in all along.
+        return [
+            Breakdown(
+                dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason="pending"
+            )
+            for dim in DIMENSIONS
+        ]
+
+    by_dimension = _cells_by_dimension(db, law.id, live=live)
     references = all_references(db)
     out = []
     for dimension in DIMENSIONS:

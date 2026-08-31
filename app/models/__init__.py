@@ -8,10 +8,13 @@ else. Four things are deliberately absent:
 * `SEARCH_VECTOR_SQL`, the unqualified form of the search expression that only
   the CREATE INDEX in `law.py` uses — callers want the qualified
   `SEARCH_VECTOR_QUERY_SQL`, and offering both invites picking the wrong one;
-* `AgeBracket` and `Sexe`. Nothing outside `models/` names them: the categories
-  reach the rest of the application through `DIMENSION_ORDER` and
-  `VALID_CATEGORIES`, both derived from the enums, which is what lets a dimension
-  be added in one line. `Region` stays because it *is* named elsewhere.
+* the three category enums — `AgeBracket`, `Sexe` and `Region`. Nothing outside
+  `models/` names them: the categories reach the rest of the application through
+  `DIMENSION_ORDER` and `VALID_CATEGORIES`, both derived from the enums, which is
+  what lets a dimension be added in one line. `Region` was re-exported here until
+  its last caller went away; a test still names it, and reaches for it where it
+  lives, which is the honest import for something the application itself does not
+  use.
 
 Re-exporting a name nobody imports is not free: it reads as a supported way in,
 and the next person adds a fourth enum here rather than to `DIMENSION_ENUMS`,
@@ -28,7 +31,6 @@ from app.models.demographics import (
     INSEE_REFERENCE,
     VALID_CATEGORIES,
     DemographicTally,
-    Region,
 )
 from app.models.imported_law import (
     DRAFT_FAILED,
@@ -80,7 +82,6 @@ __all__ = [
     "InseeReference",
     "Law",
     "LawRevision",
-    "Region",
     "Vote",
     "VoteChoice",
 ]

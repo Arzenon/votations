@@ -235,3 +235,39 @@ def test_the_export_and_the_curve_agree_on_the_boundary(client, open_law, db_ses
     curve_days = {b.label for b in results_crud.evolution(db_session, open_law.id)}
     rows = list(csv.DictReader(io.StringIO(client.get(f"/loi/{open_law.slug}/export.csv").text)))
     assert {row["created_at"] for row in rows} == curve_days == {"2026-05-03", "2026-05-04"}
+
+
+# --- Streaming is batched, not one message per vote ---------------------------
+
+
+def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open_law):
+    """Every yield costs an anyio thread hop on the pool that serves the site.
+
+    Starlette wraps a sync generator in `iterate_in_threadpool`, which runs each
+    `next()` through `anyio.to_thread` — the same default limiter the lifespan
+    pins to `db_max_threads` — and then sends one ASGI message per piece. One
+    yield per vote made a large votation cost a hundred thousand of each.
+    """
+    import anyio
+
+    from app.routes.public.exports import _CHUNK_CHARS, csv_response
+
+    _seed(db_session, open_law, n=4000)
+
+    # `body_iterator` is what Starlette actually sends from, one ASGI message per
+    # item — already wrapped in `iterate_in_threadpool`, which is the cost being
+    # measured. Draining it is therefore the honest way to count the pieces.
+    chunks: list[str] = []
+
+    async def drain() -> None:
+        async for chunk in csv_response(db_session, open_law).body_iterator:
+            chunks.append(chunk)
+
+    anyio.run(drain)
+
+    rows = "".join(chunks).strip().splitlines()
+    assert len(rows) == 4001, "header + every vote, whatever the chunking"
+    assert len(chunks) < 100, f"{len(chunks)} chunks for 4000 votes — batching is gone"
+    assert max(len(c) for c in chunks) <= _CHUNK_CHARS + 200, (
+        "a chunk grew past the buffer — the point was to bound memory too"
+    )

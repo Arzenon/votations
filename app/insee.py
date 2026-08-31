@@ -1,10 +1,15 @@
 """Fetch national reference shares from the open INSEE Melodi API.
 
-Produces the ``sexe`` and ``region`` reference distributions from the
-``DS_ESTIMATION_POPULATION`` dataset (population au 1ᵉʳ janvier, by sex and by
-region). The dataset's age dimension only carries coarse groups (25-59, ≥60, …),
-which cannot be mapped to the app's brackets, so **age is intentionally not
-fetched** and keeps its curated fallback.
+Produces all three reference distributions — ``age``, ``sexe`` and ``region`` —
+from the ``DS_ESTIMATION_POPULATION`` dataset (population au 1ᵉʳ janvier),
+normalised to percentages.
+
+Age is the one that takes work. The dataset publishes quinquennal groups, not
+this application's brackets, so they are summed into ours by
+:data:`AGE_BRACKET_COMPOSITION` — an exact union in every case but one: 18-24
+straddles the 15-19 group, of which two fifths are taken (see the note there).
+Every bracket is then normalised over the adult total, because the reference the
+results page shows is a share of the population that may vote, not of everybody.
 
 Design notes:
 - The HTTP getter is injectable so the parsing/mapping is unit-testable offline.

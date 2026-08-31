@@ -227,13 +227,22 @@ def cast_vote(
 
     # A fresh cookie is a fresh voter, so without this a script can add votes as
     # fast as it can open connections. Counters are held in memory only.
+    #
+    # Checked and *recorded* in two steps, on either side of reading the choice,
+    # which is the same split the administration's guard uses and for a related
+    # reason. Recording first charged a ballot with nothing chosen against an
+    # allowance that is shared by everyone on one connection — an address is not
+    # a person here, so the cost of a mis-click landed on strangers. Checking
+    # first still refuses an address already over the limit, so a flood is
+    # answered before any of the work below; only a request that really is a
+    # ballot spends allowance.
     settings = get_settings()
-    if ratelimit.too_many(
-        request,
+    throttle = ratelimit.Throttle(
         limit=settings.vote_rate_limit,
         window_seconds=settings.vote_rate_window_seconds,
         bucket="vote",
-    ):
+    )
+    if ratelimit.over_limit(request, **throttle):
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE)
         return too_many_votes(request)
@@ -244,6 +253,14 @@ def cast_vote(
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=NO_CHOICE_NOTICE)
         return RedirectResponse(_back_to(law), status_code=303)
+
+    # This one is a ballot. A vote on a votation that closed a moment ago still
+    # counts against the limit below: it is an attempt to write, and telling the
+    # two apart is exactly what an attacker would arrange.
+    if ratelimit.too_many(request, **throttle):
+        if htmx:
+            return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE)
+        return too_many_votes(request)
 
     carrier = Response()  # collects the cookies the helpers below set
     voter_token = auth.get_voter_token(request, carrier)
@@ -259,6 +276,13 @@ def cast_vote(
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE)
         return RedirectResponse(_back_to(law), status_code=303)
+
+    # Move the *published* breakdown forward first, if it is due — before this
+    # ballot's own contribution is folded in below, so that nobody can trigger a
+    # step and read themselves inside it. See `demo_crud.refresh_snapshot` for
+    # what the snapshot defends against; on the overwhelming majority of ballots
+    # this is two in-memory comparisons and no query at all.
+    demo_crud.refresh_snapshot(db, law)
 
     # Optional, anonymous: folded once into aggregate counters (no per-voter row).
     # The categories a voter already contributed come back from their own device,
@@ -311,9 +335,10 @@ def results_page(
     # Four separate COUNT(*)s used to answer the same question per render.
     tally = results_crud.tally(db, law.id)
     evolution = results_crud.evolution(db, law.id, total=tally.total)
-    breakdowns = demo_crud.all_breakdowns(db, law.id)
+    breakdowns = demo_crud.all_breakdowns(db, law)
     status = law.status()
     history = laws_crud.revisions(db, law.id, page=revisions)
+    settings = get_settings()
     return templates.TemplateResponse(
         request,
         "results.html",
@@ -327,7 +352,14 @@ def results_page(
             # The suppression threshold is the same for every dimension; passing
             # it explicitly means the template does not have to reach into
             # `breakdowns[0]` and take the list being non-empty on faith.
-            "min_cell_count": get_settings().min_cell_count,
+            "min_cell_count": settings.min_cell_count,
+            # When the breakdowns above were last allowed to move, and by how
+            # little they may move at a time. Only while the vote is open: a
+            # closed one publishes its live counters, and dating them would
+            # suggest a lag that is not there. The page has to say this — a
+            # figure that is deliberately behind is only honest if it is labelled.
+            "breakdowns_as_of": law.demographics_snapshot_at if status == STATUS_OPEN else None,
+            "min_bucket_volume": settings.min_bucket_volume,
             "provision": demo_crud.provision_rate(db, law.id, tally=tally),
             "export_note": results_crud.export_note(db, law.id, total=tally.total),
             "revisions": history.rows,

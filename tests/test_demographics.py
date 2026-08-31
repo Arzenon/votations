@@ -1,18 +1,19 @@
 """Aggregate demographics: one-time recording, no PII, and cell suppression."""
 
 from app.crud import demographics as demo_crud
+from app.db import utcnow
 from app.models import DemographicTally, Vote, VoteChoice
 from tests.helpers import cast_ballot
 
 
-def _dimension(db, law_id, dimension, **kwargs):
+def _dimension(db, law, dimension, **kwargs):
     """One dimension's breakdown, via the function the application actually calls.
 
     `all_breakdowns` is the only entry point the app uses; a single-dimension
     variant existed solely for these tests and loaded every dimension anyway.
     """
     return next(
-        bd for bd in demo_crud.all_breakdowns(db, law_id, **kwargs) if bd.dimension == dimension
+        bd for bd in demo_crud.all_breakdowns(db, law, **kwargs) if bd.dimension == dimension
     )
 
 
@@ -61,19 +62,27 @@ def test_invalid_values_ignored(open_law, db_session):
     assert vote.demographics_recorded is False
 
 
-def _seed_cells(db, law_id, dimension, data):
-    """data: {category: {choice: count}}"""
+def _seed_cells(db, law, dimension, data):
+    """data: {category: {choice: count}} — as a law whose snapshot is published.
+
+    Both counters are written, and the law is dated, because that is the state
+    these tests are about: what the *suppression rule* does with figures the
+    votation has already published. Whether a figure may be published at all is
+    the snapshot rule, tested separately in test_privacy.
+    """
     for category, choices in data.items():
         for choice, count in choices.items():
             db.add(
                 DemographicTally(
-                    law_id=law_id,
+                    law_id=law.id,
                     dimension=dimension,
                     category=category,
                     choice=choice,
                     count=count,
+                    published_count=count,
                 )
             )
+    law.demographics_snapshot_at = utcnow()
     db.commit()
 
 
@@ -81,14 +90,14 @@ def test_breakdown_hidden_below_threshold(open_law, db_session):
     # One tiny cell (2) is below the default threshold (10) → whole table hidden.
     _seed_cells(
         db_session,
-        open_law.id,
+        open_law,
         "age",
         {
             "35-49": {"for": 40, "against": 30, "abstain": 12},
             "25-34": {"for": 15, "against": 2, "abstain": 11},  # the "2" trips suppression
         },
     )
-    bd = _dimension(db_session, open_law.id, "age")
+    bd = _dimension(db_session, open_law, "age")
     assert bd.shown is False
     assert bd.reason == "below_threshold"
 
@@ -96,14 +105,14 @@ def test_breakdown_hidden_below_threshold(open_law, db_session):
 def test_breakdown_shown_above_threshold(open_law, db_session):
     _seed_cells(
         db_session,
-        open_law.id,
+        open_law,
         "age",
         {
             "35-49": {"for": 40, "against": 30, "abstain": 12},
             "50-64": {"for": 22, "against": 18, "abstain": 10},
         },
     )
-    bd = _dimension(db_session, open_law.id, "age")
+    bd = _dimension(db_session, open_law, "age")
     assert bd.shown is True
     # Canonical ordering: 35-49 before 50-64.
     assert [r.category for r in bd.rows] == ["35-49", "50-64"]
@@ -138,14 +147,14 @@ def test_provision_rate(open_law, db_session):
 def test_breakdown_includes_share_and_reference(open_law, db_session):
     _seed_cells(
         db_session,
-        open_law.id,
+        open_law,
         "sexe",
         {
             "femme": {"for": 30, "against": 20, "abstain": 10},  # 60
             "homme": {"for": 25, "against": 10, "abstain": 10},  # 45
         },
     )
-    bd = _dimension(db_session, open_law.id, "sexe")
+    bd = _dimension(db_session, open_law, "sexe")
     assert bd.shown is True
     assert bd.dimension_total == 105
     femme = bd.rows[0]
@@ -156,14 +165,14 @@ def test_breakdown_includes_share_and_reference(open_law, db_session):
 def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session):
     _seed_cells(
         db_session,
-        open_law.id,
+        open_law,
         "sexe",
         {
             "femme": {"for": 30, "against": 20, "abstain": 11},
             "homme": {"for": 25, "against": 19, "abstain": 14},
         },
     )
-    _seed_cells(db_session, open_law.id, "age", {"18-24": {"for": 1, "against": 0, "abstain": 0}})
+    _seed_cells(db_session, open_law, "age", {"18-24": {"for": 1, "against": 0, "abstain": 0}})
 
     data = client.get(f"/loi/{open_law.slug}/export.json").json()
     dims = {d["dimension"] for d in data["demographics"]}

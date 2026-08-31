@@ -102,7 +102,8 @@ app/
   charts.py          La courbe d'évolution, dessinée en SVG côté serveur
   drafting.py        Le brouillon IA, exécuté en tâche de fond
   models/            Law, Vote, ImportedLaw (aucune donnée personnelle stockée)
-  crud/              laws, votes, results (agrégats simples + export anonyme), imports
+  crud/              laws, votes, results, demographics (compteurs agrégés,
+                     suppression des petites cases), imports
   auth/              Couche d'authentification enfichable (voir ci-dessous)
   routes/            public/ (pages, lois, exports), admin/, auth
   opendata.py        Plomberie commune aux quatre sources de données ouvertes

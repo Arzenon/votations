@@ -18,10 +18,28 @@ import time
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TypedDict
 
 from fastapi import Request
 
 from app.config import get_settings
+
+
+class Throttle(TypedDict):
+    """One bucket's settings, so a caller can name them once and use them twice.
+
+    Both callers that check before recording — the administration guard and the
+    vote route — have to pass *exactly* the same three values to
+    :func:`over_limit` and to :func:`too_many`, or the check and the record would
+    land in different buckets and neither would do its job. A plain dict reads
+    back as ``dict[str, object]``, which cannot be unpacked into their typed
+    parameters; this can.
+    """
+
+    limit: int
+    window_seconds: int
+    bucket: str
+
 
 # "bucket|address" -> timestamps of recent hits, oldest first.
 _hits: dict[str, deque[float]] = {}

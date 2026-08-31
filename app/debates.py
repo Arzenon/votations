@@ -52,6 +52,11 @@ from app.opendata import Getter, as_list, getter
 OPENDATA_URL = "https://www.assemblee-nationale.fr/dyn/opendata/{uid}.json"
 SEANCE_URL = "https://www.assemblee-nationale.fr/dyn/{legislature}/comptes-rendus/seance/{uid}"
 
+#: Used when a compte rendu does not state its own legislature, or states
+#: something that is not one. Matches the legislature the shipped
+#: `AN_DOSSIERS_URL` points at; both move together, once per legislature.
+DEFAULT_LEGISLATURE = "17"
+
 # Agenda-item sections where members argue for or against the text as a whole.
 # Everything else — amendment-by-amendment discussion, points of order, voting
 # mechanics — is high volume and low argumentative content.
@@ -482,7 +487,15 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
             record = document(cr_ref)
         except DebatesFetchError:
             continue
-        legislature = (record.get("metadonnees") or {}).get("legislature") or "17"
+        # Checked before it is put in a URL, for the same reason `_get_json`
+        # checks the identifier it is given: this value is read out of a fetched
+        # document and ends up as the `source` href of a published argument, on
+        # the one page whose promise is that the quotes can be checked. A
+        # legislature is a small number; anything else falls back to the current
+        # one rather than being interpolated into a path.
+        legislature = str((record.get("metadonnees") or {}).get("legislature") or "")
+        if not legislature.isdigit():
+            legislature = DEFAULT_LEGISLATURE
         url = SEANCE_URL.format(legislature=legislature, uid=cr_ref)
         out.extend(speeches_from_record(record, subject=subject, url=url))
     return out

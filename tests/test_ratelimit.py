@@ -339,3 +339,45 @@ def test_a_refusal_does_not_blame_the_reader(client, open_law, monkeypatch):
     refused = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "against"})
 
     assert "partagent" in refused.text or escape("n'y êtes") in refused.text
+
+
+# --- A refused ballot is not always a ballot ---------------------------------
+
+
+def test_an_empty_ballot_does_not_spend_the_allowance(client, open_law):
+    """The limit is keyed on a connection, and a connection is shared.
+
+    Recording a hit before reading the choice charged a mis-click against an
+    allowance that belongs to everyone behind the same address — on a platform
+    whose own refusal page says « vous n'y êtes peut-être pour rien ».
+    """
+    settings = get_settings()
+    for _ in range(settings.vote_rate_limit + 5):
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": ""})
+
+    # Far past the limit in requests, none of them a ballot: a real vote still works.
+    response = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    assert response.status_code in (200, 303)
+    assert "Trop de votes" not in response.text
+
+
+def test_a_flood_of_real_ballots_is_still_refused(client, open_law):
+    """The counterpart: checking before recording must not disarm the limiter."""
+    settings = get_settings()
+    for _ in range(settings.vote_rate_limit):
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+        client.cookies.clear()
+
+    refused = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    assert refused.status_code == 429
+
+
+def test_a_vote_on_a_law_that_just_closed_still_counts(client, closed_law, open_law):
+    """It is an attempt to write, and telling the two apart is what an attacker would arrange."""
+    settings = get_settings()
+    for _ in range(settings.vote_rate_limit):
+        client.post(f"/loi/{closed_law.slug}/vote", data={"choice": "for"})
+        client.cookies.clear()
+
+    refused = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    assert refused.status_code == 429

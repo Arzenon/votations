@@ -9,19 +9,27 @@ from __future__ import annotations
 from app.ai import LawDraft, SelectedArguments
 from app.config import get_settings
 from app.labels import french_date
-from app.models import DRAFT_FAILED, DRAFT_IDLE, DRAFT_PENDING, DRAFT_READY
+from app.models import (
+    DRAFT_FAILED,
+    DRAFT_IDLE,
+    DRAFT_PENDING,
+    DRAFT_READY,
+    ImportedLaw,
+    Law,
+    LawRevision,
+)
 from app.routes.admin.forms import day_value, dt_local
 
 
-def official_ref(item) -> str:
+def official_ref(item: ImportedLaw) -> str:
     """The canonical citation, e.g. 'LOI n° 2026-532 du 24 juin 2026'."""
     return f"LOI n° {item.law_code} du {french_date(item.promulgated_on)}"
 
 
 def form_values(
     *,
-    law=None,
-    prefill=None,
+    law: Law | None = None,
+    prefill: ImportedLaw | None = None,
     draft: LawDraft | None = None,
     arguments: SelectedArguments | None = None,
     typed: dict | None = None,
@@ -79,7 +87,7 @@ def form_values(
     return base
 
 
-def draft_state_context(item) -> dict:
+def draft_state_context(item: ImportedLaw | None) -> dict:
     """What ``admin/_draft_state.html`` needs — for both pages that show it.
 
     The three booleans are decided here rather than by comparing ``draft_status``
@@ -108,9 +116,11 @@ def draft_state_context(item) -> dict:
     }
 
 
-def cached_draft(item):
+def cached_draft(
+    item: ImportedLaw | None,
+) -> tuple[LawDraft | None, SelectedArguments | None, list[str], str]:
     """Rehydrate a stored draft. Returns (draft, arguments, notes, eli_url)."""
-    cached = getattr(item, "draft", None) if item else None
+    cached = item.draft if item is not None else None
     if not cached:
         return None, None, [], ""
     return (
@@ -129,14 +139,14 @@ def cached_draft(item):
 
 def law_form_context(
     *,
-    law=None,
-    prefill=None,
+    law: Law | None = None,
+    prefill: ImportedLaw | None = None,
     draft: LawDraft | None = None,
     arguments: SelectedArguments | None = None,
     notes: list[str] | None = None,
     eli_url: str = "",
     typed: dict | None = None,
-    revisions: list | None = None,
+    revisions: list[LawRevision] | None = None,
     revision_total: int = 0,
 ) -> dict:
     """Everything ``admin/law_form.html`` needs, from one place."""

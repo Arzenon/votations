@@ -92,6 +92,12 @@ _NOT_CARRIED = frozenset(
         # state that a law had not been touched since a date that precedes its
         # own insertion, which is the one thing the column is read for.
         "updated_at",
+        # Bookkeeping for the published demographic breakdown, which is derived
+        # from the votes — and the votes are the dump's job, not this file's. A
+        # restored law starts with no snapshot, which is exactly right: there is
+        # nothing published about a votation whose ballots did not travel.
+        "demographics_snapshot_at",
+        "demographics_snapshot_profiles",
     }
 )
 

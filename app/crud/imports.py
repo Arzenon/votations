@@ -355,9 +355,11 @@ def release_interrupted_drafts(db: Session) -> int:
     """Fail every draft still marked as running. Returns how many were released.
 
     ``en_cours`` means "a thread in *this* process is working on it", and no
-    thread survives the process. A redeploy — `shutdown_drafting` cancels what is
-    queued — or a crash therefore left rows claiming a run that nobody was
-    performing, and every exit from that state was closed: the banner polls for
+    thread survives the process. A redeploy — `shutdown_drafting` refuses what is
+    queued and abandons what is already inside a download or a model call, which
+    is the deliberate trade that lets the container stop at once — or a crash
+    therefore leaves rows claiming a run that nobody is performing. Every exit
+    from that state is closed from the outside: the banner polls for
     an outcome that will never be written, « masquer » only clears a *failed*
     draft, and « Régénérer » refuses to reschedule a row it believes is already
     running. The row was stuck for good, on the one screen whose whole job is to

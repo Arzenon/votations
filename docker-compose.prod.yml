@@ -10,6 +10,14 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # No `read_only` here, unlike the services built from our own image: Postgres
+    # writes to /var/run/postgresql and to its own temporary files, and freezing
+    # a database's filesystem to harden a container it does not need hardening
+    # for would be trading a working stack for a checkbox. Same for `caddy`,
+    # which manages its certificate store, and for `db-backup`, which shells out
+    # to pg_dump.
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: votations
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}
@@ -67,6 +75,30 @@ services:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
        "--proxy-headers", "--forwarded-allow-ips", "${TRUSTED_PROXY_CIDR:-172.16.0.0/12}",
        "--no-access-log"]
+    # The image already runs as a non-root user and installs nothing at
+    # runtime; these two say so to the kernel as well.
+    #
+    # `no_new_privileges` stops any setuid binary in the image from raising
+    # privilege, which nothing here needs. `read_only` freezes the image's own
+    # filesystem — safe because this container writes nowhere but /tmp:
+    # PYTHONDONTWRITEBYTECODE keeps __pycache__ out, both archive readers work
+    # in memory (io.BytesIO), and the only files the app writes at all are the
+    # content snapshots, which belong to a different service and land in a
+    # mounted volume. Volumes and tmpfs stay writable under `read_only`, which
+    # is what makes it usable here at all.
+    #
+    # /tmp is given as tmpfs rather than left absent: Starlette spools a large
+    # multipart body to a temporary file, and the administration posts forms.
+    #
+    # If a container ever fails to start with « Read-only file system », that is
+    # this line and not a mystery: find what it wanted to write, and either give
+    # that path a tmpfs beside /tmp or drop `read_only` here. Nothing else in the
+    # stack depends on it. `no-new-privileges` is unconditional and should stay.
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     deploy:
       resources:
         limits:
@@ -83,6 +115,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - app
     environment:
@@ -115,6 +149,14 @@ services:
       INSEE_REFRESH_INTERVAL: "2592000"   # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/insee_cron.sh"]
+    # Same as `app`: nothing is written outside /tmp — the heartbeat the
+    # healthcheck reads, and (for content-export) HOME. The snapshots
+    # themselves go to the bind mount, which stays writable.
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     # A shell loop that has stopped succeeding still looks "running". The
     # heartbeat is touched only after a successful refresh, so its age is what
     # actually says whether the job works. Generous window: the cadence is 30 days.
@@ -150,6 +192,14 @@ services:
       AN_REFRESH_INTERVAL: "86400"        # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/assemblee_cron.sh"]
+    # Same as `app`: nothing is written outside /tmp — the heartbeat the
+    # healthcheck reads, and (for content-export) HOME. The snapshots
+    # themselves go to the bind mount, which stays writable.
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     # Without this the import stops in silence when the source moves. The
     # dashboard warns too, but only somebody who logs in sees that.
     healthcheck:
@@ -196,6 +246,14 @@ services:
       # That uid has no entry in the image's passwd, so give it a home it can write.
       HOME: /tmp
     entrypoint: ["./docker/content_export.sh"]
+    # Same as `app`: nothing is written outside /tmp — the heartbeat the
+    # healthcheck reads, and (for content-export) HOME. The snapshots
+    # themselves go to the bind mount, which stays writable.
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     volumes:
       - ./exports:/exports
     healthcheck:
@@ -214,6 +272,8 @@ services:
   db-backup:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       db:
         condition: service_healthy

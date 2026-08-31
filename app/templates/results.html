@@ -100,6 +100,21 @@
       n'est affichée que si chacune de ses cases atteint le seuil d'anonymat
       (≥ {{ min_cell_count }} votes) ; sinon, l'ensemble est masqué.
     </p>
+    {# A figure that is deliberately behind is only honest if it says so. The
+       threshold above protects a single reading of this page; this paragraph
+       explains what protects a series of them — without it a reader comparing
+       two visits would take the lag for a bug rather than for the rule it is. #}
+    {% if breakdowns_as_of %}
+    <p class="meta">
+      Tant que le vote est ouvert, ces répartitions sont <strong>arrêtées au
+      {{ breakdowns_as_of | french_datetime }}</strong> et n'avancent que par
+      paliers d'au moins {{ min_bucket_volume }} profils renseignés. Les publier
+      en direct reviendrait à livrer le profil de chaque votant·e un par un : il
+      suffirait de comparer la page à deux instants pour lire, d'un seul vote, le
+      choix, l'âge, le sexe et la région de la personne qui vient de voter. Le
+      décompte total, lui, reste en direct.
+    </p>
+    {% endif %}
     <p class="meta">
       <strong>{{ provision.percentage }}%</strong> des votant·e·s ont partagé au
       moins une information de profil ({{ provision.with_profile }} sur
@@ -133,6 +148,13 @@
     </div>
     {% elif bd.reason == "below_threshold" %}
     <p class="meta">Pas assez de votant·e·s.</p>
+    {% elif bd.reason == "pending" %}
+    {# Not « aucune donnée » : people may have been filling these fields in since
+       the votation opened. Nothing is published until the first palier. #}
+    <p class="meta">
+      Pas encore publiée : la première répartition paraîtra dès que
+      {{ min_bucket_volume }} personnes auront renseigné un profil.
+    </p>
     {% else %}
     <p class="meta">Aucune donnée renseignée pour cette répartition.</p>
     {% endif %}

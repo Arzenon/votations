@@ -88,3 +88,67 @@ def test_a_pending_draft_is_never_cleared_by_opening_the_form(client, db_session
     assert "en cours de génération" in page.text
     db_session.refresh(item)
     assert item.draft_status == "en_cours"
+
+
+# --- Shutting down must not wait for a draft ---------------------------------
+
+
+def test_a_running_draft_never_holds_the_process_open():
+    """The whole of CORR-1, and the reason the pool is not a ThreadPoolExecutor.
+
+    Its workers are ordinary threads, and `concurrent.futures.thread` joins every
+    one of them at interpreter exit — so `shutdown(wait=False,
+    cancel_futures=True)` returned instantly and the process then sat there for
+    as long as the draft had left. Docker gives up after ten seconds, which made
+    a redeploy during a draft end in SIGKILL.
+    """
+    import threading
+
+    from app.drafting import _DraftPool
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_draft():
+        started.set()
+        release.wait(timeout=30)
+
+    pool = _DraftPool(workers=1)
+    pool.submit(slow_draft)
+    assert started.wait(timeout=5), "the job should be running"
+
+    worker = next(t for t in threading.enumerate() if t.name == "draft" and t.is_alive())
+    assert worker.daemon is True, "a non-daemon worker is joined at exit — CORR-1 is back"
+    release.set()
+
+
+def test_a_queued_draft_is_not_started_once_the_service_is_stopping(monkeypatch):
+    """`cancel_futures` used to be what dropped these; now the flag is."""
+    from app import drafting
+
+    monkeypatch.setattr(drafting, "_stopping", drafting.threading.Event())
+    drafting._stopping.set()
+
+    ran = []
+    pool = drafting._DraftPool(workers=1)
+    pool.submit(ran.append, "should not run")
+    drafting.time.sleep(0.2)
+    assert ran == []
+
+
+def test_a_draft_between_steps_stops_with_a_readable_reason(monkeypatch):
+    """A cooperative stop still records *why*, rather than vanishing."""
+    import pytest
+
+    from app import drafting
+    from app.opendata import DeadlineExceeded
+
+    monkeypatch.setattr(drafting, "_stopping", drafting.threading.Event())
+    deadline = drafting._Deadline.start(600)
+    deadline.check("texte officiel")  # healthy: nothing raised
+
+    drafting._stopping.set()
+    with pytest.raises(DeadlineExceeded) as caught:
+        deadline.check("texte officiel")
+    assert "s'est arrêté" in str(caught.value)
+    assert "texte officiel" in str(caught.value)

@@ -125,8 +125,21 @@ def get_by_id(db: Session, law_id: int) -> Law | None:
 
 
 def _published(stmt: Select) -> Select:
-    """Restrict to what the public may see: published, and not withdrawn."""
-    return stmt.where(Law.published.is_(True), Law.archived_at.is_(None))
+    """Restrict to what the public may see: published, and not withdrawn.
+
+    **The bare column, not ``.is_(True)``, and that is not a style preference.**
+    Postgres decides whether a partial index applies by *proving* the query's
+    WHERE implies the index's predicate, and it cannot prove that ``published IS
+    true`` implies ``published``. So the explicit form silently disqualified
+    `ix_laws_home` — the index built for exactly this clause — and every public
+    listing went back to reading the whole table and sorting it: 26.8 ms against
+    0.3 ms on the home page's « ouvertes » band at 50 000 laws.
+
+    The two spellings are identical SQL as far as results go, which is what makes
+    this worth a comment: tidying it back would cost a hundredfold and change
+    nothing anybody could see until the corpus was large.
+    """
+    return stmt.where(Law.published, Law.archived_at.is_(None))
 
 
 #: How the public listings are ordered, and the only place that decision is made.

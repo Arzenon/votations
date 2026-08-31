@@ -106,6 +106,28 @@ def count_votes(db: Session, law_id: int) -> int:
     return db.scalar(select(func.count()).select_from(Vote).where(Vote.law_id == law_id)) or 0
 
 
+def count_profiled(db: Session, law_id: int) -> int:
+    """How many of this law's votes came with an optional profile.
+
+    The same number :class:`Tally` carries as ``with_profile``, asked on its own
+    because the one caller that needs it here is the ballot path — see
+    :func:`app.crud.demographics.refresh_snapshot`, which uses it to decide
+    whether the published breakdown may move — and that path has no use for the
+    per-choice grouping ``tally`` does on the way.
+
+    Answered from ``ix_votes_law_choice`` alone: ``law_id`` leads the key and
+    ``demographics_recorded`` rides in the index's own leaves.
+    """
+    return (
+        db.scalar(
+            select(func.count())
+            .select_from(Vote)
+            .where(Vote.law_id == law_id, Vote.demographics_recorded.is_(True))
+        )
+        or 0
+    )
+
+
 @dataclass
 class EvolutionBucket:
     label: str

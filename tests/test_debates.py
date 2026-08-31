@@ -5,7 +5,13 @@ from datetime import date
 
 import pytest
 
-from app.debates import DebatesFetchError, Speech, fetch_speeches, speeches_from_record
+from app.debates import (
+    DEFAULT_LEGISLATURE,
+    DebatesFetchError,
+    Speech,
+    fetch_speeches,
+    speeches_from_record,
+)
 
 LONG = (
     "Cette proposition de loi répond à un besoin ancien et documenté. "
@@ -475,3 +481,33 @@ def test_an_ordinary_identifier_still_goes_through():
     fetch_speeches([{"reunion_ref": "RUANR5L17S2026PO861108N4", "odj_ref": "x"}], get=get)
     assert asked, "a real identifier must still be fetched"
     assert "RUANR5L17S2026PO861108N4" in asked[0]
+
+
+def _with_legislature(value):
+    """The two-bill record, restated as coming from a given legislature."""
+    record = json.loads(json.dumps(TWO_BILLS))
+    record.setdefault("metadonnees", {})["legislature"] = value
+    return _getter({"RUANR5L17S2026IDS30539": REUNION, "CRSANR5L17S2026O1N195": record})
+
+
+def test_a_legislature_that_is_not_one_never_reaches_the_source_url():
+    """The sitting identifier is checked before it goes in a URL; so is this one.
+
+    `legislature` is read out of a fetched document and lands in the `source`
+    href of a published argument — the one field on the page whose whole promise
+    is that a reader can follow it and check the quote.
+    """
+    out = fetch_speeches(SEANCES, get=_with_legislature("../../ailleurs"))
+    assert out, "the speeches themselves must still be found"
+    for speech in out:
+        assert speech.url.startswith(
+            f"https://www.assemblee-nationale.fr/dyn/{DEFAULT_LEGISLATURE}/"
+        )
+        assert ".." not in speech.url
+
+
+def test_an_ordinary_legislature_is_still_used():
+    """The check refuses what is not a legislature; it does not pin the value."""
+    out = fetch_speeches(SEANCES, get=_with_legislature("18"))
+    assert out
+    assert all("/dyn/18/" in s.url for s in out)

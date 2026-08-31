@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -486,3 +487,166 @@ def test_two_vote_changes_at_once_move_the_profile_once(sessionmaker_for):
             assert cells.get(("age", "25-34", "for"), 0) == 0
         finally:
             check.close()
+
+
+# --- The published breakdown is a snapshot, not the live counters -------------
+#
+# The counters are marginal and never joint, and `MIN_CELL_COUNT` withholds a
+# whole dimension unless every populated cell clears it. Both protect a single
+# reading of the results page; neither protects a sequence of them. These tests
+# hold the rule that does.
+
+
+#: Every published breakdown cell on a results page: (category, pour, contre, abstention).
+#: The tally above them is live by design, so comparing whole pages would only
+#: ever prove that — this is the part the snapshot rule is about.
+_CELLS = re.compile(
+    r'<th scope="row">([^<]+)</th>\s*<td>(\d+) \([\d.]+%\)</td>\s*'
+    r"<td>(\d+) \([\d.]+%\)</td>\s*<td>(\d+) \([\d.]+%\)</td>"
+)
+
+
+def _published_cells(client, law):
+    return _CELLS.findall(client.get(f"/loi/{law.slug}/resultats").text)
+
+
+def _profiled_ballots(db, law, n, *, choice=VoteChoice.FOR, start=0, **profile):
+    """``n`` ballots that each carry a profile, cast the way the route casts them."""
+    for i in range(start, start + n):
+        cast_ballot(db, law, f"snap-{i}", choice, **profile)
+
+
+def _first_snapshot(db, law, **profile):
+    """Cast just enough profiled ballots to publish this law's first snapshot.
+
+    One more than MIN_BUCKET_VOLUME, and the extra one is not an accident: the
+    snapshot is taken at the *top* of a ballot, before that ballot's own profile
+    is counted, so the voter who triggers a step is never inside it. The ballot
+    that crosses the threshold therefore publishes the ones before it.
+    """
+    volume = get_settings().min_bucket_volume
+    _profiled_ballots(db, law, volume + 1, **profile)
+    assert law.demographics_snapshot_at is not None, "expected a first snapshot by now"
+    return volume
+
+
+def test_one_ballot_never_moves_the_published_breakdown(open_law, db_session, client):
+    """The whole of SEC-1: two readings of a public page, differenced.
+
+    Before the snapshot existed, subtracting two fetches thirty seconds apart
+    yielded a single ballot — and named that voter's choice together with their
+    age, sex and région at once, which is exactly the joint cell the schema
+    refuses to store.
+    """
+    # All in one category, so the cells clear the suppression threshold and the
+    # table is actually shown.
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49", sexe="femme")
+
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "35-49" in page, "the seeded breakdown should be published by now"
+    assert "arrêtées au" in page, "a lagged figure has to say that it is lagged"
+    before = _CELLS.findall(page)
+    assert before, "nothing to difference — the test would prove nothing"
+
+    # One more voter, with a profile nobody else in this votation has.
+    cast_ballot(
+        db_session, open_law, "the-target", VoteChoice.AGAINST, age_bracket="65+", sexe="autre"
+    )
+
+    assert _published_cells(client, open_law) == before, (
+        "one ballot moved the published breakdown — SEC-1 is back"
+    )
+    # And the headline tally *is* live, deliberately: it is one bit about one
+    # voter, and being checkable is the point of this platform.
+    assert demo_crud.provision_rate(db_session, open_law.id).total_votes == volume + 2
+
+
+def test_nothing_is_published_before_the_first_snapshot(open_law, db_session):
+    """« pas encore publiée », never « aucune donnée » — the two are not the same."""
+    _profiled_ballots(db_session, open_law, 3, age_bracket="35-49")
+
+    breakdowns = demo_crud.all_breakdowns(db_session, open_law)
+    assert all(not bd.shown for bd in breakdowns)
+    assert {bd.reason for bd in breakdowns} == {"pending"}
+
+
+def test_a_closed_votation_publishes_its_live_counters(open_law, db_session):
+    """Nothing can move once voting has closed, so there is nothing to difference."""
+    _profiled_ballots(db_session, open_law, 12, age_bracket="35-49", sexe="femme")
+    # Not published yet: too few profiles for a snapshot while it was open.
+    assert demo_crud.all_breakdowns(db_session, open_law)[0].reason == "pending"
+
+    open_law.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    db_session.commit()
+
+    age = next(bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "age")
+    assert age.shown is True
+    assert age.rows[0].counts["for"] == 12
+
+
+def test_the_snapshot_steps_by_profiles_not_by_votes(open_law, db_session):
+    """A window of many votes carrying one profile would hand that one over."""
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
+
+    # Far more than MIN_BUCKET_VOLUME further ballots — but only one of them
+    # carries a profile, so the step must not be allowed.
+    open_law.demographics_snapshot_at = datetime.now(UTC) - timedelta(days=1)
+    db_session.commit()
+    for i in range(volume * 2):
+        cast_ballot(db_session, open_law, f"bare-{i}", VoteChoice.FOR)
+    cast_ballot(db_session, open_law, "lone-profile", VoteChoice.AGAINST, age_bracket="65+")
+
+    assert demo_crud.refresh_snapshot(db_session, open_law) is False
+
+
+def test_the_snapshot_does_move_once_enough_profiles_arrive(open_law, db_session):
+    """The counterpart: the lag is a step, not a freeze."""
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
+
+    # The hourly gate is what stops the count running on every ballot; wind it
+    # back so this test is about the volume rule and not about the clock.
+    open_law.demographics_snapshot_at = datetime.now(UTC) - timedelta(days=1)
+    db_session.commit()
+    _profiled_ballots(db_session, open_law, volume + 1, start=volume + 1, age_bracket="65+")
+
+    age = next(bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "age")
+    assert age.shown is True
+    assert {r.category for r in age.rows} == {"35-49", "65+"}
+
+
+def test_a_voter_never_reads_themselves_in_the_step_they_triggered(open_law, db_session):
+    """The snapshot is taken before the ballot that triggers it is counted."""
+    volume = get_settings().min_bucket_volume
+    _profiled_ballots(db_session, open_law, volume, age_bracket="35-49")
+    assert open_law.demographics_snapshot_at is None, "one profile short of a snapshot"
+
+    # This ballot crosses the threshold, so it is the one that triggers the step.
+    cast_ballot(db_session, open_law, "trigger", VoteChoice.FOR, age_bracket="65+")
+    assert open_law.demographics_snapshot_at is not None
+
+    cells = demographic_cells(db_session, open_law.id)
+    assert cells[("age", "65+", "for")] == 1, "the live counter has it"
+    published = demo_crud._cells_by_dimension(db_session, open_law.id, live=False)
+    assert published["age"]["35-49"]["for"] == volume, "the step published the others"
+    assert published["age"]["65+"]["for"] == 0, "but never the voter who triggered it"
+
+
+def test_a_trimmed_profile_cookie_leaves_the_store_saying_the_same_thing():
+    """The cookie and the object it was built from must not disagree.
+
+    `_fit` drops the oldest laws until the value fits under 4 kB. Returning only
+    the string left the caller holding a store that still listed laws the browser
+    had just been told to forget — harmless while nothing read it afterwards,
+    which is exactly the kind of quiet disagreement that stops being harmless.
+    """
+    store = profile_cookie.ProfileStore(
+        {str(i): {"age": "35-49", "sexe": "femme", "region": "Bretagne"} for i in range(200)}
+    )
+    response = SimpleNamespace(set_cookie=lambda *a, **k: None)
+    store.remember(response, 999, {"age": "18-24"})
+
+    assert len(store.laws) <= profile_cookie._MAX_LAWS
+    assert store.for_law(999) == {"age": "18-24"}, "the law just written must survive the trim"
+    # And what the object says is exactly what the cookie carries.
+    _value, kept = profile_cookie._fit(store.laws)
+    assert kept == store.laws
