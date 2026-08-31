@@ -23,7 +23,7 @@ d'hébergement, TLS, sauvegardes quotidiennes et hygiène des journaux.
 L'application refuse de démarrer en production tant que `SECRET_KEY` ou
 `ADMIN_PASSWORD` gardent leur valeur d'exemple.
 
-## Démarrage (Docker — recommandé)
+## Démarrage
 
 Tout tourne dans Docker : PostgreSQL + l'application. Au démarrage, le conteneur
 applique les migrations.
@@ -71,20 +71,6 @@ La suite construit son schéma **par les migrations**, pas par `create_all` : un
 migration manquante casse donc les tests plutôt que la mise à jour en production,
 et `tests/test_migrations.py` vérifie en plus que le schéma migré correspond aux
 modèles et que la chaîne fait l'aller-retour.
-
-## Démarrage sans Docker (optionnel)
-
-Nécessite un PostgreSQL accessible (`DATABASE_URL`). Vous pouvez lancer
-uniquement la base via `docker compose -f docker-compose.dev.yml up -d db`.
-
-```bash
-python -m venv venv && source venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env          # ajuster SECRET_KEY, identifiants admin, DB
-alembic upgrade head
-python -m scripts.seed        # quelques lois d'exemple (idempotent)
-uvicorn app.main:app --reload
-```
 
 ## Architecture
 

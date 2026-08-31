@@ -29,15 +29,6 @@ python -c "import secrets; print(secrets.token_urlsafe(24))"   # ADMIN_PASSWORD
 > `ADMIN_PASSWORD`, `POSTGRES_PASSWORD` et `SITE_DOMAIN` sont au contraire
 > propres à chaque environnement et doivent changer.
 
-Ajoutez ensuite, **dans le même `.env`**, trois variables que `docker compose`
-lit lui-même (elles ne font pas partie des réglages de l'application, d'où leur
-absence de `.env.example`) :
-
-```bash
-SITE_DOMAIN=votations.exemple.fr
-POSTGRES_PASSWORD=<généré comme ci-dessus>
-TRUSTED_PROXY_CIDR=172.16.0.0/12   # facultatif, défaut correct pour Docker
-```
 
 > **`POSTGRES_PASSWORD` finit à l'intérieur d'une URL** (`DATABASE_URL`, composée
 > dans le fichier compose). `token_urlsafe` ne produit que des lettres, des
@@ -46,20 +37,10 @@ TRUSTED_PROXY_CIDR=172.16.0.0/12   # facultatif, défaut correct pour Docker
 > endroit : la connexion échouerait avec un message qui ne parle pas du mot de
 > passe. Gardez la commande ci-dessus, ou encodez les caractères spéciaux.
 
-Sans elles, `docker compose up` s'arrête immédiatement en nommant celle qui
-manque, plutôt que de démarrer sur une valeur vide.
-
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml logs -f app
 ```
-
-L'application refuse de démarrer sur des secrets d'exemple, sur un fuseau
-inconnu, sur des identifiants non ASCII ou sur un seuil d'anonymat désactivé.
-Un démarrage qui échoue dit lequel : lisez le message plutôt que de le contourner.
-
-Les migrations sont appliquées au démarrage de `app`. Créez ensuite votre
-première loi depuis `/admin`.
 
 > **Un seul conteneur `app`.** `docker/entrypoint.sh` lance `alembic upgrade head`
 > avant de démarrer le serveur. Avec une seule instance c'est exactement ce qu'il
@@ -120,12 +101,6 @@ docker compose -f docker-compose.prod.yml exec db-backup sh /usr/local/bin/backu
 docker compose -f docker-compose.prod.yml exec db-backup \
   sh /usr/local/bin/backup.sh restore /backups/votations-AAAAMMJJ-HHMMSS.sql.gz
 ```
-
-Le script refuse d'écrire une sauvegarde vide ou tronquée, et refuse de démarrer
-un dump s'il reste moins de 500 Mo libres : une partition pleine arrête PostgreSQL,
-donc les votes en cours. Il nettoie aussi ce qu'une exécution tuée en cours de
-route a laissé — le dump non compressé est le plus gros fichier qu'il écrive, et
-il échappait au ménage des anciennes sauvegardes.
 
 > **`restore` remplace la base, littéralement.** Elle vide le schéma avant de
 > relire le fichier : un dump rejoué par-dessus un schéma existant s'arrêtait à la
