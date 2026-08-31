@@ -35,6 +35,23 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Your own `.env`, read exactly as the production stack reads it. Without it,
+    # every setting that lives *only* there — les mentions légales, le fuseau
+    # d'affichage, la résolution de l'horodatage des exports, les URL des données
+    # ouvertes — was silently absent locally while being honoured in production:
+    # you could fill `LEGAL_CONTACT_EMAIL` in, restart, and watch the page go on
+    # saying it was unset, because the file reached the container by no path at
+    # all. The project root is not bind-mounted below and `.env` is in
+    # `.dockerignore`, so it was neither mounted nor baked in.
+    #
+    # `environment` below still wins over this (Compose precedence), which is what
+    # keeps the local database, the throwaway credentials and the anonymity
+    # thresholds pinned to this file whatever your `.env` says.
+    #
+    # `required: false` so a fresh clone with no `.env` still starts.
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
       TEST_DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations_test
@@ -73,6 +90,23 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Your own `.env`, read exactly as the production stack reads it. Without it,
+    # every setting that lives *only* there — les mentions légales, le fuseau
+    # d'affichage, la résolution de l'horodatage des exports, les URL des données
+    # ouvertes — was silently absent locally while being honoured in production:
+    # you could fill `LEGAL_CONTACT_EMAIL` in, restart, and watch the page go on
+    # saying it was unset, because the file reached the container by no path at
+    # all. The project root is not bind-mounted below and `.env` is in
+    # `.dockerignore`, so it was neither mounted nor baked in.
+    #
+    # `environment` below still wins over this (Compose precedence), which is what
+    # keeps the local database, the throwaway credentials and the anonymity
+    # thresholds pinned to this file whatever your `.env` says.
+    #
+    # `required: false` so a fresh clone with no `.env` still starts.
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
       INSEE_REFRESH_INTERVAL: "2592000"   # 30 days
@@ -92,6 +126,23 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Your own `.env`, read exactly as the production stack reads it. Without it,
+    # every setting that lives *only* there — les mentions légales, le fuseau
+    # d'affichage, la résolution de l'horodatage des exports, les URL des données
+    # ouvertes — was silently absent locally while being honoured in production:
+    # you could fill `LEGAL_CONTACT_EMAIL` in, restart, and watch the page go on
+    # saying it was unset, because the file reached the container by no path at
+    # all. The project root is not bind-mounted below and `.env` is in
+    # `.dockerignore`, so it was neither mounted nor baked in.
+    #
+    # `environment` below still wins over this (Compose precedence), which is what
+    # keeps the local database, the throwaway credentials and the anonymity
+    # thresholds pinned to this file whatever your `.env` says.
+    #
+    # `required: false` so a fresh clone with no `.env` still starts.
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
       AN_REFRESH_INTERVAL: "86400"        # 24 hours
