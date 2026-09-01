@@ -15,9 +15,39 @@ import sys
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.assemblee import AssembleeFetchError, fetch_promulgated_laws
+from app.assemblee import AssembleeFetchError, PromulgatedLaw, fetch_promulgated_laws
 from app.crud import imports as imports_crud
 from app.db import SessionLocal
+from app.scrutins import ScrutinsFetchError, fetch_votes, final_vote
+
+
+def _attach_votes(records: list[PromulgatedLaw]) -> str:
+    """Fill in how the Assemblée voted. Returns a line for the run's output.
+
+    **Best effort, and deliberately so.** The counts live in a second export, and
+    a law without them is a law the site can still present - it simply says the
+    text was adopted without a public scrutin, which is true of a third of them
+    anyway. Losing the whole import because that download failed would trade
+    something valuable for something merely nice.
+    """
+    wanted = {ref for record in records for ref in record.vote_refs}
+    if not wanted:
+        return "aucun scrutin référencé"
+    try:
+        index = fetch_votes(wanted)
+    except ScrutinsFetchError as exc:
+        return f"scrutins non récupérés ({exc}) - décomptes laissés vides"
+
+    resolved = 0
+    for record in records:
+        vote = final_vote(record.vote_refs, index)
+        if vote is None:
+            continue
+        record.an_vote_for = vote.pour
+        record.an_vote_against = vote.contre
+        record.an_vote_abstain = vote.abstentions
+        resolved += 1
+    return f"{resolved} scrutin(s) rattaché(s) sur {len(records)} loi(s)"
 
 
 def main() -> int:
@@ -26,6 +56,8 @@ def main() -> int:
     except AssembleeFetchError as exc:
         print(f"Import AN ignoré — échec de récupération : {exc}", file=sys.stderr)
         return 1
+
+    votes = _attach_votes(records)
 
     db = SessionLocal()
     try:
@@ -43,7 +75,7 @@ def main() -> int:
     finally:
         db.close()
 
-    print(f"Lois promulguées : {created} nouvelle(s), {refreshed} actualisée(s)")
+    print(f"Lois promulguées : {created} nouvelle(s), {refreshed} actualisée(s) - {votes}")
     return 0
 
 

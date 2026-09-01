@@ -104,6 +104,46 @@ class Law(Base):
     arguments_for: Mapped[list] = mapped_column(JSON, default=list)
     arguments_against: Mapped[list] = mapped_column(JSON, default=list)
 
+    #: What the debate turned on, in one or two sentences. Shown in the encart at
+    #: the top of the law page, above everything else.
+    #:
+    #: **The one place this platform writes about the debate rather than quoting
+    #: it**, and the charter had to be widened on purpose to allow it. What made
+    #: that acceptable is a rule of formulation, not a rule of process: this names
+    #: the *subject* of the disagreement and never a position on it. « Le débat a
+    #: porté sur le contrôle judiciaire des techniques de renseignement » is a
+    #: fact about what was argued; « cette loi pose un problème de contrôle
+    #: judiciaire » is one side's framing, and belongs to nobody here.
+    #:
+    #: Drafted from the arguments already selected — which are verbatim, sourced
+    #: and symmetric — rather than freely from the sitting records, so a reader
+    #: can check the sentence against the quotations further down the same page.
+    #: Tracked like every other published field: an edit after publication shows
+    #: up in the public record of changes.
+    #:
+    #: Short by construction. `String` rather than `Text` so the width is declared
+    #: where the admin form reads it (see `app.routes.admin.forms._column_limits`),
+    #: and 600 characters is about three sentences — past which it has stopped
+    #: being a summary.
+    debate_summary: Mapped[str] = mapped_column(String(600), default="", server_default="")
+
+
+    #: How the Assemblée nationale settled the text, and whether the two chambers
+    #: needed help agreeing. Facts published by Parliament, not presentation: they
+    #: are copied from the staged row when the votation is created and are not
+    #: editable in the form, because an administrator correcting a parliamentary
+    #: vote count is not a thing this platform should make easy.
+    #:
+    #: Null throughout when no public scrutin was held - a third of promulgated
+    #: laws, adopted without a recorded count. The page says so rather than
+    #: leaving a gap, because « adoptée sans scrutin public » is information too.
+    #:
+    #: Only the Assemblée: the Sénat publishes its scrutins elsewhere.
+    an_vote_for: Mapped[int | None] = mapped_column(Integer, default=None)
+    an_vote_against: Mapped[int | None] = mapped_column(Integer, default=None)
+    an_vote_abstain: Mapped[int | None] = mapped_column(Integer, default=None)
+    cmp_convened: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     # Scheduling & publication.
     published: Mapped[bool] = mapped_column(Boolean, default=False)
     opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

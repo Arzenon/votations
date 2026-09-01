@@ -11,7 +11,7 @@ from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import as_utc, get_db, utcnow
-from app.models import STATUS_IMPORTED, Law
+from app.models import STATUS_IMPORTED, ImportedLaw, Law
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form, preview_form
 from app.routes.public.exports import at_capacity, csv_response
@@ -219,6 +219,25 @@ def preview_edits(
     return _preview(request, db, law)
 
 
+def _parliament_record(item: ImportedLaw | None) -> dict:
+    """How Parliament settled this text, copied from the staged row.
+
+    Not part of the form, and that is the point: these are the Assemblée's own
+    figures, and an administrator retyping a vote count is not an operation this
+    platform should offer. They are copied once, here, exactly as
+    `promulgated_on` is - and a law written by hand simply has none, which the
+    page renders as « adoptée sans scrutin public ».
+    """
+    if item is None:
+        return {}
+    return {
+        "an_vote_for": item.an_vote_for,
+        "an_vote_against": item.an_vote_against,
+        "an_vote_abstain": item.an_vote_abstain,
+        "cmp_convened": item.cmp_convened,
+    }
+
+
 @router.post("/lois")
 def create_law(
     db: Session = Depends(get_db),
@@ -247,7 +266,7 @@ def create_law(
             ),
         )
 
-    law = laws_crud.create(db, **form.columns())
+    law = laws_crud.create(db, **form.columns(), **_parliament_record(item))
     if item is not None:
         imports_crud.set_status(db, item, status=STATUS_IMPORTED, law_id=law.id)
     return RedirectResponse("/admin", status_code=303)

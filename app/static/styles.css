@@ -508,3 +508,60 @@ table.revisions td { vertical-align: top; }
     --area-opacity: 0.22;
   }
 }
+
+/* --- Reading a law ---------------------------------------------------------
+   The law page is the only long-form page on the site, and it was rendered at
+   the same width as everything else: 880px, which at 16px is about 106
+   characters a line against the 45-75 that reads comfortably. The legal pages
+   had already been capped at 44rem for exactly this reason; this is that value,
+   applied where people actually read.
+
+   Scoped to `main` so the header, the disclaimer band and the footer keep the
+   site's own width - only the article narrows. */
+body.reading main.container { max-width: 44rem; }
+
+/* More air between paragraphs and inside them. A block of six paragraphs set
+   solid is the "gros pavé" the first reader complained about, and half of that
+   complaint is leading rather than length. */
+.block.prose p { line-height: 1.7; margin: 0 0 1.05em; }
+.block.prose p:last-child { margin-bottom: 0; }
+
+/* One paragraph per public concerné, with the public set apart.
+
+   Bold on the label and never on the substance: « Pour les employeurs » tells a
+   reader which paragraph is theirs, which is navigation. Emphasising a measure
+   inside the text would be telling them what matters, which is the one thing
+   this platform does not do. See `app.templating.audience_split`. */
+.block.prose .audience { margin-top: 1.2em; }
+.block.prose .audience:first-of-type { margin-top: 0; }
+
+/* The encart: what a hesitating reader needs before anything else - the
+   paragraph the summary was written to open with, and what the debate turned
+   on. Given the weight the rest of the page does not have. */
+.encart {
+  background: var(--accent-soft);
+  border-left: 4px solid var(--accent-solid);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  margin: 1.25rem 0 1.5rem;
+}
+.encart-lede { margin: 0; font-size: 1.12rem; line-height: 1.6; }
+.encart-debat { margin: 0.9rem 0 0; line-height: 1.6; }
+.encart-etiquette {
+  display: block; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.15rem;
+}
+
+/* On a phone the card chrome eats a tenth of the line. Nothing structural, but
+   it is the cheapest width there is to reclaim. */
+@media (max-width: 640px) {
+  .block { padding: 0.9rem 0.95rem; }
+  .block h2 { font-size: 1.25rem; }
+  .encart { padding: 0.9rem 1rem; }
+  .encart-lede { font-size: 1.08rem; }
+}
+
+/* How Parliament settled the text. Set apart from the summary above it: one is
+   what the law says, the other is what happened to it. */
+.encart-scrutin { margin: 0.75rem 0 0; font-size: 0.95rem; color: var(--muted); }
+.encart-scrutin strong { color: var(--ink); }

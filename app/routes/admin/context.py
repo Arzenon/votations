@@ -50,6 +50,7 @@ def form_values(
             "practical_changes": law.practical_changes,
             "arguments_for": law.arguments_for,
             "arguments_against": law.arguments_against,
+            "debate_summary": law.debate_summary,
             "promulgated_on": day_value(law.promulgated_on),
             "opens_at": dt_local(law.opens_at),
             "closes_at": dt_local(law.closes_at),
@@ -66,6 +67,7 @@ def form_values(
         if arguments is not None:
             base["arguments_for"] = arguments.pour
             base["arguments_against"] = arguments.contre
+            base["debate_summary"] = arguments.sujet_debat
     else:
         base = {
             "title": prefill.title if prefill else "",
@@ -76,6 +78,7 @@ def form_values(
             "practical_changes": draft.practical_changes if draft else "",
             "arguments_for": arguments.pour if arguments else [],
             "arguments_against": arguments.contre if arguments else [],
+            "debate_summary": arguments.sujet_debat if arguments else "",
             # The staged row already knows it; nobody should retype what the
             # daily import fetched from the Assemblée nationale.
             "promulgated_on": day_value(prefill.promulgated_on) if prefill else "",
@@ -131,6 +134,7 @@ def cached_draft(
         SelectedArguments(
             pour=cached.get("arguments_for") or [],
             contre=cached.get("arguments_against") or [],
+            sujet_debat=cached.get("debate_summary") or "",
         ),
         list(cached.get("notes") or []),
         cached.get("eli_url") or "",

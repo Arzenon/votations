@@ -8,7 +8,7 @@ tables a screen reader can navigate.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from markupsafe import escape
 
@@ -117,9 +117,16 @@ def test_a_multi_paragraph_summary_renders_as_paragraphs(client, db_session):
     db_session.add(law)
     db_session.commit()
     body = client.get("/loi/paras").text
+    # The opening paragraph is lifted into the encart - it is written to stand
+    # alone and was indistinguishable from the detail underneath it. The rest
+    # stays in the block, and between the two nothing is lost or repeated.
+    encart = body.split('class="encart"')[1].split("</aside>")[0]
     section = body.split("<h2>Ce que dit la loi</h2>")[1].split("</section>")[0]
-    assert section.count("<p>") == 3
-    assert "Deuxième paragraphe." in section
+
+    assert "Premier paragraphe." in encart
+    assert "Premier paragraphe." not in section, "lifted, not copied"
+    assert section.count("<p>") == 2
+    assert "Deuxième paragraphe." in section and "Troisième." in section
 
 
 # --- Accessibilité ------------------------------------------------------------
@@ -271,3 +278,147 @@ def test_no_contact_no_broken_offer(client, open_law, monkeypatch):
     page = _flat(client.get(f"/loi/{open_law.slug}").text)
     assert "mailto:" not in page
     assert "Qui a écrit cette présentation" in page, "the note itself must remain"
+
+
+# --- L'encart et les étiquettes de public --------------------------------------
+
+
+def test_the_opening_paragraph_is_lifted_only_when_something_remains(client, db_session):
+    """A one-paragraph summary must not leave « Ce que dit la loi » empty.
+
+    Lifting it would move the block's entire content into a box above a heading
+    that then introduces nothing.
+    """
+    law = Law(
+        slug="para-unique",
+        title="Loi en un temps",
+        published=True,
+        summary_text="Tout tient en un paragraphe.",
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    body = client.get("/loi/para-unique").text
+    section = body.split("<h2>Ce que dit la loi</h2>")[1].split("</section>")[0]
+    assert "Tout tient en un paragraphe." in section
+    assert 'class="encart"' not in body, "rien à mettre en encart, donc pas d'encart"
+
+
+def test_the_debate_sentence_is_shown_and_declared(client, db_session):
+    """The one sentence the platform writes about the debate rather than quoting.
+
+    It appears at the top, and the provenance note has to say it exists — a
+    reader must be able to tell it apart from the quotations, which are the
+    source it is answerable to.
+    """
+    law = Law(
+        slug="loi-debattue",
+        title="Loi débattue",
+        published=True,
+        summary_text="Un résumé.",
+        debate_summary="Le débat a porté sur le contrôle judiciaire des techniques.",
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    body = client.get("/loi/loi-debattue").text
+    encart = body.split('class="encart"')[1].split("</aside>")[0]
+    assert "contrôle judiciaire des techniques" in encart
+    assert "Ce qui a été débattu" in encart
+    assert "seule que cette" in body, "la note de provenance doit la déclarer"
+
+
+def test_a_law_with_no_debate_sentence_shows_no_such_block(client, db_session):
+    law = Law(
+        slug="loi-sans-debat",
+        title="Loi sans débat",
+        published=True,
+        summary_text="Premier.\n\nSecond.",
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    body = client.get("/loi/loi-sans-debat").text
+    assert "Ce qui a été débattu" not in body
+
+
+def test_the_public_each_paragraph_addresses_is_set_apart(client, db_session):
+    """Navigation, not emphasis: the label is bold, the measure never is."""
+    law = Law(
+        slug="loi-publics",
+        title="Loi à publics",
+        published=True,
+        summary_text="Un résumé.",
+        practical_changes=(
+            "Pour les employeurs : vous devez maintenir le contrat de travail.\n\n"
+            "Si vous êtes réserviste : la durée maximale passe à soixante jours."
+        ),
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    body = client.get("/loi/loi-publics").text
+    assert "<strong>Pour les employeurs</strong>" in body
+    assert "<strong>Si vous êtes réserviste</strong>" in body
+    # And nothing inside the measure itself is emphasised.
+    assert "<strong>vous devez" not in body
+    assert "<strong>soixante" not in body
+
+
+def test_how_parliament_settled_the_text_is_shown(client, db_session):
+    """269 contre 0 and 357 contre 177 do not read the same way, and the page
+    had no way of saying which of the two it was."""
+    law = Law(
+        slug="loi-scrutin",
+        title="Loi mise aux voix",
+        published=True,
+        summary_text="Un résumé.",
+        an_vote_for=283,
+        an_vote_against=156,
+        an_vote_abstain=1,
+        cmp_convened=True,
+        promulgated_on=date(2026, 6, 24),
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    encart = client.get("/loi/loi-scrutin").text.split('class="encart"')[1].split("</aside>")[0]
+
+    assert "283" in encart and "156" in encart
+    assert "1 abstention" in encart and "1 abstentions" not in encart
+    assert "commission mixte paritaire" in encart
+    # One chamber, named: the Sénat publishes its scrutins elsewhere and they are
+    # not in the export these figures come from.
+    assert "à l'Assemblée nationale" in encart
+
+
+def test_a_law_adopted_without_a_public_vote_says_so(client, db_session):
+    """A third of promulgated laws have no recorded count. That is a fact about
+    the vote, not a hole in our data, and the page must not leave a gap."""
+    law = Law(
+        slug="loi-main-levee",
+        title="Loi adoptée à main levée",
+        published=True,
+        summary_text="Un résumé.",
+        promulgated_on=date(2026, 6, 24),
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    encart = client.get("/loi/loi-main-levee").text.split('class="encart"')[1].split("</aside>")[0]
+    assert "sans scrutin public" in encart
+
+
+def test_a_hand_written_law_claims_nothing_about_parliament(client, db_session):
+    """No staged row means no promulgation date and no figures: say nothing."""
+    law = Law(
+        slug="loi-manuscrite",
+        title="Loi saisie à la main",
+        published=True,
+        summary_text="Un résumé.",
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    body = client.get("/loi/loi-manuscrite").text
+    assert "Assemblée nationale" not in body

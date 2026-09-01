@@ -597,3 +597,35 @@ def test_several_bands_are_titled_and_ordered_by_what_you_can_do(client, db_sess
     )
     # And a law sits under its own band, not merely somewhere on the page.
     assert page.index("Votations ouvertes") < page.index("/loi/ouverte") < page.index("Bientôt")
+
+
+# --- Découpe du texte d'une loi -------------------------------------------------
+
+
+def test_a_paragraph_that_is_not_addressed_to_anyone_is_left_alone():
+    """The filter has to be safe on prose that was not written in that shape."""
+    from app.templating import audience_split
+
+    assert audience_split("Pour les employeurs : vous devez déclarer.") == (
+        "Pour les employeurs",
+        "vous devez déclarer.",
+    )
+    # A sentence that happens to reach a colon is not a label.
+    assert audience_split("La règle est simple, et elle tient en peu de mots : agir.") == (
+        "",
+        "La règle est simple, et elle tient en peu de mots : agir.",
+    )
+    # Nor is something far too long to be a public.
+    trop_long = "Les personnes qui exploitent une installation classée pour la " \
+                "protection de l'environnement : elles déclarent."
+    assert audience_split(trop_long)[0] == ""
+    # Nor a paragraph with no colon at all.
+    assert audience_split("Rien de particulier ici.") == ("", "Rien de particulier ici.")
+
+
+def test_the_opening_paragraph_is_separated_from_the_rest():
+    from app.templating import summary_split
+
+    assert summary_split("Un.\n\nDeux.\n\nTrois.") == ("Un.", ["Deux.", "Trois."])
+    assert summary_split("Seul paragraphe.") == ("", ["Seul paragraphe."])
+    assert summary_split("") == ("", [])

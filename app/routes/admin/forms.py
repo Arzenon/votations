@@ -54,7 +54,7 @@ def _column_limits() -> dict[str, int]:
     reject with a 500.
     """
     limits = {}
-    for name in ("title", "official_ref", "legifrance_url"):
+    for name in ("title", "official_ref", "legifrance_url", "debate_summary"):
         column_type = Law.__table__.c[name].type
         if not isinstance(column_type, String) or column_type.length is None:
             # Turning one of these into an unbounded `Text` is a legitimate
@@ -210,6 +210,7 @@ class LawForm:
     practical_changes: str
     arguments_for: list[dict]
     arguments_against: list[dict]
+    debate_summary: str
     promulgated_on: date | None
     opens_at: datetime | None
     closes_at: datetime | None
@@ -229,6 +230,7 @@ class LawForm:
             "practical_changes": self.practical_changes,
             "arguments_for": self.arguments_for,
             "arguments_against": self.arguments_against,
+            "debate_summary": self.debate_summary,
             "promulgated_on": self.promulgated_on,
             "opens_at": self.opens_at,
             "closes_at": self.closes_at,
@@ -243,6 +245,7 @@ class LawForm:
             "practical_changes": self.practical_changes,
             "arguments_for": self.arguments_for,
             "arguments_against": self.arguments_against,
+            "debate_summary": self.debate_summary,
             "promulgated_on": day_value(self.promulgated_on),
             "opens_at": self.opens_at_raw,
             "closes_at": self.closes_at_raw,
@@ -274,6 +277,7 @@ class RawLawForm:
     practical_changes: str
     arguments_for: ArgumentRows
     arguments_against: ArgumentRows
+    debate_summary: str
     promulgated_on: str
     opens_at: str
     closes_at: str
@@ -295,6 +299,7 @@ def raw_law_form(
     arguments_against_text: list[str] = Form([]),
     arguments_against_author: list[str] = Form([]),
     arguments_against_source: list[str] = Form([]),
+    debate_summary: str = Form(""),
     promulgated_on: str = Form(""),
     opens_at: str = Form(""),
     closes_at: str = Form(""),
@@ -317,6 +322,7 @@ def raw_law_form(
             author=arguments_against_author,
             source=arguments_against_source,
         ),
+        debate_summary=debate_summary,
         promulgated_on=promulgated_on,
         opens_at=opens_at,
         closes_at=closes_at,
@@ -362,6 +368,9 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
         ),
         arguments_for=parse_arguments(raw.arguments_for, field="Arguments des partisans"),
         arguments_against=parse_arguments(raw.arguments_against, field="Arguments des opposants"),
+        debate_summary=_checked(
+            raw.debate_summary.strip(), field="debate_summary", label="Ce qui a été débattu"
+        ),
         promulgated_on=promulgated_on,
         opens_at=opens,
         closes_at=closes,
@@ -411,6 +420,7 @@ def _echoed(raw: RawLawForm, *, opens=None, closes=None) -> LawForm:
         practical_changes=raw.practical_changes[: MAX_LENGTHS["practical_changes"]],
         arguments_for=_lenient_arguments(raw.arguments_for, "Arguments des partisans"),
         arguments_against=_lenient_arguments(raw.arguments_against, "Arguments des opposants"),
+        debate_summary=raw.debate_summary.strip()[: MAX_LENGTHS["debate_summary"]],
         promulgated_on=_lenient_day(raw.promulgated_on),
         opens_at=opens,
         closes_at=closes,

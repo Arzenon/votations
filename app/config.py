@@ -167,6 +167,14 @@ class Settings(BaseSettings):
         "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/"
         "dossiers_legislatifs/Dossiers_Legislatifs.json.zip"
     )
+    # The recorded votes, published beside the dossiers and joined to them by the
+    # reference a decision act carries. Same legislature in the path as
+    # `an_dossiers_url`, and the two move together - a mismatch would silently
+    # look up this legislature's votes in the previous one's file and find none.
+    an_scrutins_url: str = (
+        "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/"
+        "scrutins/Scrutins.json.zip"
+    )
     # Ignore promulgations older than this many days. A rolling window, so the
     # import does not quietly grow a backlog the way a fixed date would. Set
     # `an_import_since` to pin an absolute ISO date instead; empty imports

@@ -43,6 +43,10 @@ _REFRESHED = (
     "legifrance_url",
     "dossier_url",
     "seances",
+    "an_vote_for",
+    "an_vote_against",
+    "an_vote_abstain",
+    "cmp_convened",
 )
 
 # Sentinel telling `set_status` to leave `law_id` exactly as it is.

@@ -140,6 +140,11 @@ cela me concerne, et qu'est-ce que je dois faire différemment ? ».
 Règles propres à ce second bloc :
 - Organise-le par **personnes concernées** (« si vous êtes locataire », « pour les \
 employeurs », « pour les communes »), jamais en suivant le plan du texte.
+- **Commence chaque paragraphe par le public concerné, suivi d'un deux-points** : \
+« Pour les employeurs : vous devez… », « Si vous êtes réserviste : la durée… ». La \
+page met cette étiquette en évidence pour qu'on puisse parcourir le bloc et y \
+trouver son cas sans le lire en entier. Garde-la courte - c'est un public, pas une \
+phrase.
 - **Un public, c'est la façon dont quelqu'un se décrit lui-même** - pas la \
 catégorie que vise l'article. Personne ne se présente comme « irrigant », \
 « betteravier », « éleveur d'ovins » ou « producteur de lait au sein d'une \
@@ -290,6 +295,15 @@ class ArgumentPick(BaseModel):
 class ArgumentSelection(BaseModel):
     pour: list[ArgumentPick]
     contre: list[ArgumentPick]
+    #: What the debate turned on, in one or two sentences. See the rule in
+    #: ARGUMENTS_SYSTEM_PROMPT: a subject, never a position.
+    #:
+    #: Optional, deliberately. The prompt asks for it in as many words, but a
+    #: response that omitted it would otherwise fail validation and take the
+    #: verified quotations down with it - and those are the part of this call
+    #: that cannot be produced any other way. A missing sentence costs an empty
+    #: encart; a missing selection costs the whole argument block.
+    sujet_debat: str = ""
 
 
 @dataclass
@@ -299,6 +313,10 @@ class SelectedArguments:
     pour: list[dict] = field(default_factory=list)
     contre: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: One or two sentences naming what the debate turned on. Unlike everything
+    #: else on this dataclass it is *written* rather than quoted, which is why the
+    #: prompt constrains its form so tightly and why a person relays it.
+    sujet_debat: str = ""
 
     @property
     def is_symmetric(self) -> bool:
@@ -340,7 +358,26 @@ arguments d'opposants ferait dire à leur auteur le contraire de son vote.
 - Cherche l'équilibre : autant de passages d'un côté que de l'autre. Si le débat \
 ne contient sincèrement aucune opposition, renvoie une liste « contre » vide - \
 c'est une information exacte, et il vaut mieux la donner que de combler.
-- N'invente jamais d'identifiant : n'utilise que ceux fournis."""
+- N'invente jamais d'identifiant : n'utilise que ceux fournis.
+
+Enfin, renvoie `sujet_debat` : **une ou deux phrases nommant ce sur quoi le débat \
+a porté**. C'est le seul texte que tu rédiges ici, et il obéit à une règle stricte.
+
+- **Nomme le sujet du désaccord, jamais une position sur ce sujet.** « Le débat a \
+porté sur le contrôle judiciaire des techniques de renseignement et sur la \
+compensation des petites entreprises » : correct. « Cette loi affaiblit le \
+contrôle judiciaire » : c'est l'argument d'un camp, et le reprendre revient à \
+prendre parti.
+- N'écris que ce qui ressort des passages que tu viens de sélectionner. Le \
+lecteur les a sous les yeux, juste en dessous : ta phrase doit pouvoir être \
+vérifiée contre eux.
+- **Si les débats ne contiennent pas d'opposition réelle**, écris-le simplement : \
+« Le texte n'a pas suscité d'opposition en séance. » C'est une information exacte \
+et souvent la plus utile.
+- Pas d'adjectif d'appréciation, pas de « vif débat », pas de « polémique ». Un \
+sujet, éventuellement deux, et rien d'autre.
+- Cette phrase-ci est de toi : n'y emploie ni tiret cadratin (—) ni tiret \
+demi-cadratin (–). Les passages cités, eux, restent recopiés à l'identique."""
 
 
 def _pool_prompt(law: LawText, speeches: list[Speech]) -> str:
@@ -431,7 +468,9 @@ def select_arguments(
     instruction = (
         f"Sélectionne au plus {per_side} passages pour chaque camp, en recopiant "
         "chaque passage mot pour mot. « Au plus » : n'atteins ce nombre que si les "
-        "débats fournissent autant de passages qui exposent réellement un motif."
+        "débats fournissent autant de passages qui exposent réellement un motif. "
+        "Renvoie aussi `sujet_debat` : une ou deux phrases nommant ce sur quoi le "
+        "débat a porté, sans prendre parti."
     )
     messages: list[MessageParam] = [
         {"role": "user", "content": f"{_pool_prompt(law, pool)}\n\n{instruction}"}
@@ -457,7 +496,7 @@ def select_arguments(
         raise AiDraftError("réponse illisible du modèle")
 
     by_id = {s.speech_id: s for s in pool}
-    result = SelectedArguments(notes=notes)
+    result = SelectedArguments(notes=notes, sujet_debat=(selection.sujet_debat or "").strip())
     sides = (("pour", selection.pour), ("contre", selection.contre))
     from_joint = 0
     for side, picks in sides:

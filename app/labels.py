@@ -51,6 +51,7 @@ FIELD_LABELS = {
     "practical_changes": "Ce que ça change en pratique",
     "arguments_for": "Arguments des partisans",
     "arguments_against": "Arguments des opposants",
+    "debate_summary": "Ce qui a été débattu",
     "opens_at": "Ouverture du vote",
     "closes_at": "Clôture du vote",
     "published": "Publication",

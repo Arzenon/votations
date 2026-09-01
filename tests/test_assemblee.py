@@ -290,3 +290,69 @@ def test_a_dossier_larger_than_the_cap_is_not_read(db_session):
     # No promulgation acte anywhere, so the honest answer is an empty list rather
     # than an error — the point is that it got there without inflating the member.
     assert assemblee.fetch_promulgated_laws(get=lambda url: blob) == []
+
+
+# --- Scrutins et commission mixte paritaire ------------------------------------
+
+
+def _dossier_with(actes):
+    """A promulgated dossier carrying the acts given."""
+    return {
+        "dossierParlementaire": {
+            "uid": "DLR5L17N00001",
+            "legislature": "17",
+            "titreDossier": {"titre": "Loi éprouvée"},
+            "procedureParlementaire": {"libelle": "Projet de loi ordinaire"},
+            "actesLegislatifs": {"acteLegislatif": actes},
+        }
+    }
+
+
+_PROM = {
+    "codeActe": "PROM-PUB",
+    "codeLoi": "2026-1",
+    "dateActe": "2026-06-24T00:00:00.000+02:00",
+    "infoJO": {"dateJO": "2026-06-25T00:00:00.000+02:00", "referenceNOR": "ABCD2600001L"},
+}
+
+
+def _built(actes):
+    from app.assemblee import _build, _find_promulgation
+
+    dossier = _dossier_with([_PROM, *actes])["dossierParlementaire"]
+    return _build(dossier, _find_promulgation(dossier))
+
+
+def test_only_decision_acts_contribute_a_vote_reference():
+    """A motion vote has the opposite polarity and must never be collected.
+
+    « pour 190 » on a motion de rejet préalable means a hundred and ninety votes
+    to throw the text out. Reading that as an adoption figure would print the
+    exact opposite of what happened, on the one number a reader cannot check.
+    """
+    law = _built(
+        [
+            {"codeActe": "AN1-DEBATS-DEC", "voteRefs": {"voteRef": "VT-DEC"}},
+            {"codeActe": "ANNLEC-MOTION-VOTE", "voteRefs": {"voteRef": "VT-MOTION"}},
+        ]
+    )
+    assert law is not None
+    assert law.vote_refs == ["VT-DEC"]
+
+
+def test_vote_references_come_back_in_reading_order():
+    """The last adoption is the one that settles a law, so order is load-bearing."""
+    law = _built(
+        [
+            {"codeActe": "AN1-DEBATS-DEC", "voteRefs": {"voteRef": "VT-1"}},
+            {"codeActe": "AN2-DEBATS-DEC", "voteRefs": {"voteRef": "VT-2"}},
+            {"codeActe": "CMP-DEBATS-AN-DEC", "voteRefs": {"voteRef": "VT-3"}},
+        ]
+    )
+    assert law is not None
+    assert law.vote_refs == ["VT-1", "VT-2", "VT-3"]
+
+
+def test_a_commission_mixte_paritaire_is_noticed():
+    assert _built([{"codeActe": "CMP"}]).cmp_convened is True
+    assert _built([{"codeActe": "AN1-DEBATS-DEC"}]).cmp_convened is False

@@ -16,6 +16,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -93,6 +94,14 @@ class ImportedLaw(Base):
     # Sittings where the text was debated: [{"reunion_ref", "odj_ref", "date"}].
     # The join key to the comptes rendus, for sourcing attributed arguments.
     seances: Mapped[list] = mapped_column(JSON, default=list)
+
+    #: How the Assemblée settled it, and whether a commission mixte paritaire was
+    #: convened. Refreshed by the daily job like the other factual columns, and
+    #: copied onto the votation when an administrator creates one.
+    an_vote_for: Mapped[int | None] = mapped_column(Integer, default=None)
+    an_vote_against: Mapped[int | None] = mapped_column(Integer, default=None)
+    an_vote_abstain: Mapped[int | None] = mapped_column(Integer, default=None)
+    cmp_convened: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     # Review state, owned by the admin and never overwritten by the import job.
     # Indexed: every admin page counts the rows still awaiting a decision.

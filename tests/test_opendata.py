@@ -90,3 +90,51 @@ def test_every_source_declares_a_ceiling():
     for error, (ceiling, typical) in ceilings.items():
         assert ceiling > typical, f"{error.__name__}: ceiling below a normal response"
         assert ceiling <= 256 * 1024 * 1024, f"{error.__name__}: ceiling too high to bound anything"
+
+
+# --- Choisir le bon scrutin ----------------------------------------------------
+
+
+def _scrutin(uid, sort="adopté", objet="l'ensemble du projet de loi.", pour=300, contre=100):
+    from app.scrutins import Scrutin
+
+    return Scrutin(uid=uid, sort=sort, objet=objet, pour=pour, contre=contre, abstentions=5)
+
+
+def test_the_last_adoption_is_the_one_that_settles_the_law():
+    """A law read three times has three recorded votes; only the final one counts."""
+    from app.scrutins import final_vote
+
+    index = {
+        "a": _scrutin("a", pour=100, contre=200),
+        "b": _scrutin("b", pour=357, contre=177),
+    }
+    assert final_vote(["a", "b"], index).pour == 357
+
+
+def test_a_vote_that_did_not_adopt_the_text_is_ignored():
+    from app.scrutins import final_vote
+
+    index = {"a": _scrutin("a"), "b": _scrutin("b", sort="rejeté")}
+    chosen = final_vote(["a", "b"], index)
+    assert chosen is not None and chosen.uid == "a", "le rejet ultérieur ne remplace pas"
+
+
+def test_a_vote_on_part_of_a_text_is_not_a_vote_on_the_text():
+    """Three lois de finances carry one, and one of them reads « l'ensemble de… ».
+
+    The Assemblée rejected « la première partie » in first reading and the law was
+    adopted later in commission mixte paritaire, so a check for « l'ensemble »
+    passes it straight through.
+    """
+    from app.scrutins import final_vote
+
+    partielle = _scrutin("p", objet="l'ensemble de la première partie du projet de loi de finances")
+    assert final_vote(["p"], {"p": partielle}) is None
+
+
+def test_a_law_with_no_recorded_vote_resolves_to_nothing():
+    from app.scrutins import final_vote
+
+    assert final_vote([], {}) is None
+    assert final_vote(["inconnu"], {}) is None

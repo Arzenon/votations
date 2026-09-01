@@ -164,7 +164,77 @@ def practical_split(value: str | None) -> tuple[list[str], list[str]]:
     return blocks[:VISIBLE_AUDIENCES], blocks[VISIBLE_AUDIENCES:]
 
 
+def summary_split(value: str | None) -> tuple[str, list[str]]:
+    """« Ce que dit la loi », as (the opening paragraph, the rest).
+
+    The opening paragraph is written to stand on its own — the drafting prompt
+    requires it in as many words — and was rendered like every other paragraph,
+    so the one sentence a hesitating reader most needs looked exactly like the
+    detail underneath it. The page lifts it into an encart instead.
+
+    **The first paragraph is only lifted when there is something left behind.**
+    A law summarised in a single paragraph would otherwise leave « Ce que dit la
+    loi » empty, with its whole content moved into a box above a heading that now
+    introduces nothing. In that case the block keeps it and the encart carries
+    only the debate.
+    """
+    blocks = paragraphs(value)
+    if len(blocks) < 2:
+        return "", blocks
+    return blocks[0], blocks[1:]
+
+
+#: Longest an audience label may be before it stops being one.
+#:
+#: « Pour les employeurs » is a label. « La règle est simple » is a sentence that
+#: happens to reach a colon, and bolding it would emphasise a statement rather
+#: than mark a section — which is the whole distinction this filter rests on.
+#: Real labels run to twenty or thirty characters; the bound is what keeps a
+#: mis-drafted paragraph from being silently promoted.
+MAX_AUDIENCE_CHARS = 45
+
+#: Punctuation a label does not contain. A label is a short noun phrase; anything
+#: carrying sentence punctuation — a comma included — is prose that happened to
+#: arrive at a colon.
+#:
+#: The comma is here because of a test that caught it: « La règle est simple, et
+#: elle tient en peu de mots : … » is short enough and was being promoted. It
+#: costs the occasional real label — « Pour les communes, les départements et les
+#: régions » renders plain — and that is the right way round. A false positive
+#: puts bold on the substance of a law, which is the one thing this platform must
+#: not do; a false negative renders a paragraph exactly as it did last week.
+_NOT_IN_A_LABEL = ".?!;,"
+
+
+def audience_split(paragraph: str) -> tuple[str, str]:
+    """One paragraph of « Ce que ça change en pratique », as (label, rest).
+
+    The block is already organised by *personnes concernées* — one paragraph per
+    audience, most numerous first, each opening with who it is addressed to. The
+    prompt has asked for that from the start. The page rendered it as six
+    identical grey paragraphs, so a reader looking for themselves had to read the
+    first line of every one.
+
+    Emphasising the label is navigation, not editorial. That distinction is the
+    reason this filter exists at all and the reason it stops here: marking *what
+    matters* inside a law's substance would be choosing for the reader, on a
+    platform whose first rule is that it does not. « **Pour les employeurs** »
+    says « this one is about you » and nothing whatsoever about the measure.
+
+    Returns ``("", paragraph)`` when the paragraph does not open with a label, so
+    a block drafted in another shape renders exactly as it does today.
+    """
+    head, colon, rest = paragraph.partition(" : ")
+    if not colon or len(head) > MAX_AUDIENCE_CHARS or not rest.strip():
+        return "", paragraph
+    if any(mark in head for mark in _NOT_IN_A_LABEL):
+        return "", paragraph
+    return head, rest
+
+
 templates.env.filters["paragraphs"] = paragraphs
+templates.env.filters["summary_split"] = summary_split
+templates.env.filters["audience_split"] = audience_split
 templates.env.filters["practical_split"] = practical_split
 templates.env.filters["law_status"] = law_status
 templates.env.filters["home_band"] = home_band

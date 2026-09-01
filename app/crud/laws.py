@@ -44,6 +44,7 @@ TRACKED_FIELDS = (
     "practical_changes",
     "arguments_for",
     "arguments_against",
+    "debate_summary",
     "promulgated_on",
     "opens_at",
     "closes_at",

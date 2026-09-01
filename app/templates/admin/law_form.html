@@ -129,6 +129,15 @@
     <textarea name="practical_changes" rows="10">{{ values.practical_changes }}</textarea>
   </label>
 
+  {# Written by the AI from the arguments selected below, then relaid by a human
+     like every other block. It names the *subject* of the disagreement and never
+     a position on it - « le débat a porté sur… », jamais « cette loi pose un
+     problème de… ». C'est la seule phrase du site que la plateforme rédige à
+     propos du débat plutôt que de le citer : à relire avec ça en tête. #}
+  <label>Ce qui a été débattu <span class="hint">(une ou deux phrases, affichées en haut de la page)</span>
+    <textarea name="debate_summary" rows="3">{{ values.debate_summary }}</textarea>
+  </label>
+
   {# Two identical editors, so the markup is written once. The charter asks for
      symmetry between the two sides; here that is literal. #}
   {% for side, legend in (('for', 'Arguments des partisans'), ('against', 'Arguments des opposants')) %}

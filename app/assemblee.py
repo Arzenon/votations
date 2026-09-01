@@ -38,6 +38,22 @@ DOSSIER_PREFIX = "json/dossierParlementaire/"
 # A sibling "PROM" act exists but its dateActe is always null.
 PROMULGATION_ACTE = "PROM-PUB"
 
+# A decision act: the chamber settling what it does with the text. Their vote
+# references are the ones worth reading a count from.
+#
+# **Matched on the suffix, and that is the guard that matters.** The same dossier
+# also carries `…-MOTION-VOTE` acts - the vote on a motion de rejet préalable -
+# whose polarity is inverted: « pour 190 » there means a hundred and ninety votes
+# to throw the text out. Collecting those and reading them as adoption figures
+# would print the exact opposite of what happened, on the one number a reader has
+# no way of checking. Over this legislature there are eleven of them.
+DECISION_SUFFIX = "-DEC"
+
+# The act recording that a commission mixte paritaire was convened. It means the
+# two chambers did not agree on their own, which is a fact about how contested a
+# text was and one the dossier already carries - no second download.
+CMP_ACTE = "CMP"
+
 # Acts recording a sitting where the text was discussed. Each carries the sitting
 # (reunionRef) and the agenda item within it (odjRef) — together they identify
 # which part of which compte rendu concerns this law.
@@ -75,6 +91,18 @@ class PromulgatedLaw:
     # [{"reunion_ref": ..., "odj_ref": ...}] — the sittings where the text was
     # debated, in chronological order. Empty for a text adopted without debate.
     seances: list[dict] = field(default_factory=list)
+    # Every recorded vote this dossier's decision acts refer to, oldest first
+    # across all readings. Not stored: it is what `app.scrutins.final_vote` reads
+    # to pick the one that adopted the text, and only the counts are kept.
+    vote_refs: list[str] = field(default_factory=list)
+    # Whether the two chambers needed a commission mixte paritaire.
+    cmp_convened: bool = False
+    # The Assemblée's final vote on the whole text, once resolved against the
+    # scrutins export. None throughout when no public scrutin was held - which is
+    # a third of promulgated laws, and a state the page states rather than hides.
+    an_vote_for: int | None = None
+    an_vote_against: int | None = None
+    an_vote_abstain: int | None = None
 
 
 # A generous timeout: the archive is ~10 MB and served from a public portal.
@@ -118,6 +146,34 @@ def _seances(dossier: dict) -> list[dict]:
     return out
 
 
+def _vote_refs(dossier: dict) -> list[str]:
+    """Every vote a decision act refers to, oldest first, across all readings.
+
+    Order is the order the export lists the acts in, which is chronological, and
+    it is what lets `app.scrutins.final_vote` take the *last* adoption: a law read
+    three times has three recorded votes and only the final one settles it.
+
+    Only `…-DEC` acts. The dossier also carries `…-MOTION-VOTE`, whose figures are
+    a vote on a motion de rejet and therefore inverted - see `DECISION_SUFFIX`.
+    """
+    refs: list[str] = []
+    for acte in _iter_actes((dossier.get("actesLegislatifs") or {}).get("acteLegislatif")):
+        if not (acte.get("codeActe") or "").endswith(DECISION_SUFFIX):
+            continue
+        for ref in as_list((acte.get("voteRefs") or {}).get("voteRef")):
+            if isinstance(ref, str) and ref:
+                refs.append(ref)
+    return refs
+
+
+def _went_to_cmp(dossier: dict) -> bool:
+    """Whether a commission mixte paritaire was convened on this text."""
+    return any(
+        (acte.get("codeActe") or "") == CMP_ACTE
+        for acte in _iter_actes((dossier.get("actesLegislatifs") or {}).get("acteLegislatif"))
+    )
+
+
 def _find_promulgation(dossier: dict) -> dict | None:
     actes = dossier.get("actesLegislatifs") or {}
     for acte in _iter_actes(actes.get("acteLegislatif")):
@@ -159,6 +215,8 @@ def _build(dossier: dict, acte: dict) -> PromulgatedLaw | None:
         legifrance_url=info_jo.get("urlLegifrance"),
         dossier_url=AN_DOSSIER_URL_TEMPLATE.format(legislature=legislature, uid=uid),
         seances=_seances(dossier),
+        vote_refs=_vote_refs(dossier),
+        cmp_convened=_went_to_cmp(dossier),
     )
 
 

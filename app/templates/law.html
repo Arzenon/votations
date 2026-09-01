@@ -2,7 +2,17 @@
 {% block title %}{{ law.title }} - Votations Françaises{% endblock %}
 {% block description %}{{ (law.summary_text or law.title)[:180] }}{% endblock %}
 {% block scripts %}<script src="{{ asset_url('htmx.min.js') }}" defer></script>{% endblock %}
+{# A reading column, not the full 880px the rest of the site uses: the prose of
+   a law ran to ~106 characters a line on a desktop, against the 45-75 that reads
+   comfortably. Scoped to `main`, so the header and footer keep the site's width
+   and only the article narrows. #}
+{% block body_class %}reading{% endblock %}
 {% block content %}
+{% macro audience_paragraph(para) -%}
+  {%- set label, rest = para | audience_split -%}
+  {%- if label %}<p class="audience"><strong>{{ label }}</strong> : {{ rest }}</p>
+  {%- else %}<p>{{ para }}</p>{% endif -%}
+{%- endmacro %}
 <article class="law">
   <p class="breadcrumb"><a href="/">← Toutes les votations</a></p>
   <span class="status status-{{ status }}">{{ status | law_status }}</span>
@@ -15,12 +25,64 @@
   </p>
   {% endif %}
 
-  <section class="block">
+  {# The encart: the one paragraph written to stand alone, and what the debate
+     turned on. Neither is new material — the first is the opening of « Ce que dit
+     la loi », lifted rather than copied (see `summary_split`), and the second is
+     a subject named from the arguments quoted further down, which a reader can
+     check against them without leaving the page.
+
+     It exists because both were invisible. The opening paragraph looked like
+     every other paragraph, and the debate had no summary at all: a reader had to
+     scroll past two blocks of prose to discover there was even a disagreement. #}
+  {% set lede, reste = law.summary_text | summary_split %}
+  {# `promulgated_on` is the predicate for saying anything about Parliament: it
+     means this text went through it. A law written by hand has none, and the
+     encart then says nothing about a vote it knows nothing about. Named here so
+     the gate and the branch inside cannot disagree - they did, and a law adopted
+     without a public scrutin got no encart at all while the branch that would
+     have said so sat unreachable inside it. #}
+  {% set parlement = law.promulgated_on is not none %}
+  {% if lede or law.debate_summary or parlement %}
+  <aside class="encart" aria-label="L'essentiel">
+    {% if lede %}<p class="encart-lede">{{ lede }}</p>{% endif %}
+    {# How Parliament settled it. Facts, published by the Assemblée, and the only
+       thing on this page that says whether the text was contested without anybody
+       having to characterise it: 269 voix contre 0 and 357 contre 177 do not read
+       the same way.
+
+       « à l'Assemblée nationale » is not decoration - the Sénat publishes its
+       scrutins elsewhere and they are not in the export this comes from. And a
+       law with no recorded count says so rather than showing nothing: a third of
+       promulgated laws are adopted without a public scrutin, and that is a fact
+       about the vote, not a hole in our data. #}
+    {% if parlement and law.an_vote_for is not none %}
+    <p class="encart-scrutin">
+      Adoptée à l'Assemblée nationale par <strong>{{ law.an_vote_for }} voix
+      contre {{ law.an_vote_against }}</strong>{% if law.an_vote_abstain %},
+      {{ law.an_vote_abstain }} abstention{{ "s" if law.an_vote_abstain > 1 }}{% endif %}{% if law.cmp_convened %},
+      après commission mixte paritaire{% endif %}.
+    </p>
+    {% elif parlement %}
+    <p class="encart-scrutin">
+      Adoptée à l'Assemblée nationale sans scrutin public{% if law.cmp_convened %},
+      après commission mixte paritaire{% endif %}.
+    </p>
+    {% endif %}
+    {% if law.debate_summary %}
+    <p class="encart-debat">
+      <span class="encart-etiquette">Ce qui a été débattu</span>
+      {{ law.debate_summary }}
+    </p>
+    {% endif %}
+  </aside>
+  {% endif %}
+
+  <section class="block prose">
     <h2>Ce que dit la loi</h2>
-    {% for para in law.summary_text | paragraphs %}<p>{{ para }}</p>{% else %}<p>-</p>{% endfor %}
+    {% for para in reste %}<p>{{ para }}</p>{% else %}<p>-</p>{% endfor %}
   </section>
 
-  <section class="block">
+  <section class="block prose">
     <h2>Ce que ça change en pratique</h2>
     {# Most-concerned-first, so the publics above the fold are the ones that speak
        to the most readers. A loi de programmation militaire or une loi agricole
@@ -28,12 +90,17 @@
        them goes unmentioned — so the block is not shortened, it is folded. The
        count is in the summary because a reader must be able to see that something
        is there before deciding not to read it. See `app.templating.practical_split`. #}
+    {# Each paragraph opens with the public it addresses; the label is set apart
+       so the block can be scanned rather than read. Navigation, never emphasis on
+       the substance - see `app.templating.audience_split`, which returns an empty
+       label for any paragraph not written in that shape, so nothing here depends
+       on the drafting having cooperated. #}
     {% set shown, folded = law.practical_changes | practical_split %}
-    {% for para in shown %}<p>{{ para }}</p>{% else %}<p>-</p>{% endfor %}
+    {% for para in shown %}{{ audience_paragraph(para) }}{% else %}<p>-</p>{% endfor %}
     {% if folded %}
     <details class="more-audiences">
       <summary>{{ folded | length }} autres publics concernés</summary>
-      {% for para in folded %}<p>{{ para }}</p>{% endfor %}
+      {% for para in folded %}{{ audience_paragraph(para) }}{% endfor %}
     </details>
     {% endif %}
   </section>
@@ -118,6 +185,16 @@
       <strong>cités mot pour mot</strong> des comptes rendus des séances
       publiques, avec le nom de leur auteur et un lien vers le compte rendu.
     </p>
+    {% if law.debate_summary %}
+    <p>
+      La phrase « Ce qui a été débattu », en haut de page, est la seule que cette
+      plateforme rédige à propos du débat plutôt que de le citer. Elle est écrite
+      à partir des passages ci-dessus et relue comme le reste, et elle ne nomme
+      que <strong>le sujet</strong> du désaccord, jamais une position sur ce
+      sujet. Les citations en dessous restent la source : si la phrase et elles
+      ne concordent pas, ce sont elles qui font foi.
+    </p>
+    {% endif %}
     <p class="wish">
       <strong>Ce travail devrait être celui de nos député·e·s.</strong> Exposer
       une loi de façon neutre et compréhensible à celles et ceux qu'elle engage
