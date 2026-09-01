@@ -546,7 +546,7 @@ def test_one_ballot_never_moves_the_published_breakdown(open_law, db_session, cl
     assert "35-49" in page, "the seeded breakdown should be published by now"
     assert "arrêtées au" in page, "a lagged figure has to say that it is lagged"
     before = _CELLS.findall(page)
-    assert before, "nothing to difference — the test would prove nothing"
+    assert before, "nothing to difference - the test would prove nothing"
 
     # One more voter, with a profile nobody else in this votation has.
     cast_ballot(
@@ -554,7 +554,7 @@ def test_one_ballot_never_moves_the_published_breakdown(open_law, db_session, cl
     )
 
     assert _published_cells(client, open_law) == before, (
-        "one ballot moved the published breakdown — SEC-1 is back"
+        "one ballot moved the published breakdown - SEC-1 is back"
     )
     # And the headline tally *is* live, deliberately: it is one bit about one
     # voter, and being checkable is the point of this platform.

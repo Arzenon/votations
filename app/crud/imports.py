@@ -114,7 +114,7 @@ def sync(
         oversized = _too_long(row)
         if oversized is not None:
             log.warning(
-                "dossier %s ignoré : %s — loi à saisir à la main si elle doit être soumise au vote",
+                "dossier %s ignoré : %s - loi à saisir à la main si elle doit être soumise au vote",
                 record.dossier_uid,
                 oversized,
             )

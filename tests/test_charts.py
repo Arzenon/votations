@@ -226,5 +226,13 @@ def test_the_day_by_day_table_is_dated_in_french(client, open_law, monkeypatch):
     # cut in — not the server's idea of today.
     today = datetime.now(UTC).astimezone(display_zone()).date()
 
-    assert french_date(today) in page, "le tableau doit dater ses lignes en français"
-    assert today.isoformat() not in page, "la forme ISO ne doit pas atteindre la page"
+    assert f'<th scope="row">{french_date(today)}</th>' in page, (
+        "le tableau doit dater ses lignes en français"
+    )
+    # Scoped to the row header, not to the document: the page legitimately
+    # carries ISO dates elsewhere — `temporalCoverage` in the structured data is
+    # one, and schema.org wants exactly that form there. What must not be ISO is
+    # the cell a reader looks at.
+    assert f'<th scope="row">{today.isoformat()}' not in page, (
+        "la forme ISO ne doit pas être ce que le tableau affiche"
+    )

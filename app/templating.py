@@ -49,7 +49,31 @@ def _auth_context(request: Request) -> dict:
     return {"auth": get_auth_provider()}
 
 
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR), context_processors=[_auth_context])
+def _page_context(request: Request) -> dict:
+    """Where this page lives, absolutely — for the tags that cannot be relative.
+
+    ``site_origin`` is the scheme and host this request arrived on, which is the
+    only place that is known: the domain is not configuration, and a fork or a
+    second instance must describe itself rather than inherit these values. It is
+    correct behind the proxy because uvicorn is run with ``--proxy-headers`` and
+    Caddy sets ``X-Forwarded-Proto`` — checked against production, where every
+    absolute URL the site emits is ``https://``.
+
+    ``canonical_url`` is that origin plus the path, **deliberately without the
+    query string**. Every parameter this site accepts either narrows a listing
+    (``?q=``, ``?page=``) or turns a page of a sub-table (``?revisions=``), and
+    none of them produces a page worth ranking separately from the one it varies:
+    left alone, `/loi/x/resultats` would offer a search engine one near-identical
+    URL per page of its modification history. A page that genuinely needs another
+    answer overrides the ``canonical`` block.
+    """
+    origin = str(request.base_url).rstrip("/")
+    return {"site_origin": origin, "canonical_url": f"{origin}{request.url.path}"}
+
+
+templates = Jinja2Templates(
+    directory=str(TEMPLATES_DIR), context_processors=[_auth_context, _page_context]
+)
 
 # Starlette builds the environment without saying, so Jinja's own default applies
 # and every render stats every template it touches to see whether it has changed.

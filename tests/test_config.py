@@ -130,25 +130,32 @@ def test_production_refuses_a_defeated_anonymity_threshold():
 #
 # The file used to document all forty-odd settings, which made it a reference
 # nobody read to the end: the five values that actually have to be filled in were
-# buried among pool sizes and refresh cadences. It now carries only the settings
-# with no safe default, and both halves of that are asserted below — a missing
-# essential is a value somebody forgets to set, and an extra one is how the file
+# buried among pool sizes and refresh cadences. It now carries only what an
+# operator has to decide, and both halves of that are asserted below — a missing
+# entry is a value somebody forgets to set, and an extra one is how the file
 # grows back into a wall of text.
+#
+# What is asserted is the *current* deployment, not an older one. Four settings
+# that used to be listed here — the environment, the cookie flag, the database
+# URL and the proxy hop count — moved into `docker-compose.prod.yml`'s own
+# `environment:` block, which overrides `.env` on purpose; and two variables that
+# are not application settings at all moved into `.env`, because compose reads
+# them to name the Postgres password and the domain Caddy certifies. The three
+# sets below are that arrangement written down.
 
 ENV_EXAMPLE = Path(__file__).resolve().parent.parent / ".env.example"
+PROD_COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.prod.yml"
 
-# The settings an operator must decide on. Adding one here without adding it to
-# `.env.example` fails the test, and vice versa — that is the point.
+# `.env` carries two different kinds of thing, and this file knew about only one
+# of them — which is how it came to disagree with a deployment that had moved on.
+
+# Settings of `Settings` an operator must decide on. Adding one here without
+# adding it to `.env.example` fails the test, and vice versa — that is the point.
 ESSENTIAL = {
     # No safe default: the app refuses to boot on the shipped values.
-    "environment",
     "secret_key",
     "admin_username",
     "admin_password",
-    "cookie_secure",
-    # Depends on where and how it runs.
-    "database_url",
-    "trusted_proxy_hops",
     # Govern what the platform publishes about its voters.
     "min_bucket_volume",
     "min_cell_count",
@@ -162,6 +169,35 @@ ESSENTIAL = {
     "anthropic_api_key",
 }
 
+# And the variables `.env` carries that are **not** application settings at all:
+# `docker compose` reads them itself, to name the Postgres password and the
+# domain Caddy obtains a certificate for. They belong in the example because
+# `up` refuses to start without them, and nowhere near `Settings` because the
+# app has never heard of them.
+DEPLOYMENT_ONLY = {
+    "site_domain",
+    "postgres_password",
+}
+
+# Settings the *stack* imposes, and which must therefore stay out of the example.
+#
+# `docker-compose.prod.yml` sets these in its `environment:` block, which wins
+# over `env_file` — deliberately: they are properties of that deployment rather
+# than preferences, and the compose file says so. Documenting them in `.env`
+# would invite an operator to set `COOKIE_SECURE=false` there and watch it change
+# nothing, which is a worse failure than not mentioning them. All four also have
+# a working default in `Settings`, so the rule below already covers them; this
+# names them so that the day the stack stops imposing one, something says so.
+IMPOSED_BY_THE_STACK = {
+    "ENVIRONMENT",
+    "COOKIE_SECURE",
+    "DATABASE_URL",
+    "TRUSTED_PROXY_HOPS",
+}
+
+#: Everything `.env.example` is expected to carry.
+EXPECTED = ESSENTIAL | DEPLOYMENT_ONLY
+
 
 def _documented() -> set[str]:
     text = ENV_EXAMPLE.read_text(encoding="utf-8")
@@ -174,8 +210,21 @@ def test_every_essential_setting_really_exists():
     assert not unknown, f"listés comme essentiels mais absents de Settings : {sorted(unknown)}"
 
 
-def test_the_example_documents_every_essential_setting():
-    missing = ESSENTIAL - _documented()
+def test_the_deployment_variables_are_not_application_settings():
+    """The other direction, and the one that keeps the split honest.
+
+    A real setting parked in `DEPLOYMENT_ONLY` would escape every rule above: not
+    checked against `Settings`, not required to have a default, silently exempt.
+    """
+    disguised = DEPLOYMENT_ONLY & set(Settings.model_fields)
+    assert not disguised, (
+        "ce sont des réglages de l'application : ils relèvent d'ESSENTIAL, "
+        f"pas de DEPLOYMENT_ONLY — {sorted(disguised)}"
+    )
+
+
+def test_the_example_documents_everything_it_should():
+    missing = EXPECTED - _documented()
     assert not missing, f"à documenter dans .env.example : {sorted(missing)}"
 
 
@@ -185,11 +234,33 @@ def test_the_example_documents_nothing_else():
     This is the half that keeps the file short. Without it, every new setting
     gets added "for completeness" and the file drifts back to being unreadable.
     """
-    extra = _documented() - ESSENTIAL
+    extra = _documented() - EXPECTED
     assert not extra, (
         "ces réglages ont une valeur par défaut qui marche : documentez-les dans "
         f"app/config.py plutôt que dans .env.example — {sorted(extra)}"
     )
+
+
+def test_the_settings_the_stack_imposes_stay_out_of_the_example():
+    """Why four settings with no safe default are nevertheless absent from `.env`.
+
+    They are absent *because* the production compose file sets them itself. That
+    is a fact about another file, so it is read rather than assumed: if one of
+    them is ever dropped from `environment:`, an operator has to be told about it
+    in `.env.example`, and this is what will say so.
+    """
+    compose = PROD_COMPOSE.read_text(encoding="utf-8")
+    for name in sorted(IMPOSED_BY_THE_STACK):
+        assert re.search(rf"^\s+{name}:", compose, re.MULTILINE), (
+            f"{name} n'est plus imposé par docker-compose.prod.yml : il redevient "
+            "un choix d'opérateur, à documenter dans .env.example et à lister "
+            "dans ESSENTIAL"
+        )
+        assert name.lower() not in _documented(), (
+            f"{name} est imposé par docker-compose.prod.yml, dont le bloc "
+            "`environment` l'emporte sur `.env` : le documenter ici laisse croire "
+            "qu'on peut le changer là"
+        )
 
 
 def test_the_example_file_carries_no_real_secret():

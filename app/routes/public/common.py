@@ -100,7 +100,7 @@ _RETRY_AFTER = {"Retry-After": "60"}
 # something that is not true, on the one page where being fair matters most.
 _SHARED_CONNECTION = (
     "Cette limite s'applique à une connexion internet, et beaucoup de personnes "
-    "en partagent une — c'est le cas de la plupart des connexions mobiles. Il est "
+    "en partagent une - c'est le cas de la plupart des connexions mobiles. Il est "
     "donc possible que vous n'y soyez pour rien."
 )
 

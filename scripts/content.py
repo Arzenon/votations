@@ -205,7 +205,7 @@ def export(directory: Path, keep_days: int) -> Path:
         raise ExportDirectoryError(
             f"{directory} n'est pas accessible en écriture ({exc}). Sur un montage "
             "lié, vérifiez que le dossier existe côté hôte et que le conteneur "
-            "tourne sous le même utilisateur — voir EXPORT_UID dans DEPLOY.md."
+            "tourne sous le même utilisateur - voir EXPORT_UID dans DEPLOY.md."
         ) from exc
     db = SessionLocal()
     try:

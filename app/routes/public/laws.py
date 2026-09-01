@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
-from app import profile_cookie, ratelimit
+from app import profile_cookie, ratelimit, seo
 from app.auth.base import AuthProvider, get_auth_provider
 from app.charts import build_evolution_chart
 from app.config import get_settings
@@ -78,7 +78,7 @@ CLOSED_NOTICE = "Cette votation vient de se clore : votre vote n'a pas pu être 
 NO_CHOICE_NOTICE = "Choisissez « Pour », « Contre » ou « Abstention » avant de valider."
 TOO_MANY_NOTICE = (
     "Beaucoup de votes ont été envoyés depuis votre connexion ces dernières "
-    "minutes — une connexion internet est souvent partagée entre plusieurs "
+    "minutes - une connexion internet est souvent partagée entre plusieurs "
     "personnes, vous n'y êtes peut-être pour rien. Réessayez dans une minute."
 )
 
@@ -155,6 +155,7 @@ def law_page_context(
     db: Session,
     law: Law,
     *,
+    origin: str,
     status: str,
     existing_choice: str | None = None,
     demographics_locked: bool = False,
@@ -185,6 +186,15 @@ def law_page_context(
         # presentation may be wrong, so it has to say where to report it. Empty
         # when no contact is configured, and the offer simply disappears.
         "contact_email": get_settings().legal_contact_email,
+        # The law as the thing it is, for a search engine — see `app.seo`. Built
+        # here rather than in the route so the administration's preview carries
+        # it too: this builder exists precisely so the preview is the page and
+        # not an approximation of it, and a block emitted on one and not the
+        # other is how that stops being true.
+        "jsonld": seo.graph(
+            seo.legislation(origin, law),
+            seo.breadcrumb(origin, [("Accueil", "/"), (law.title, f"/loi/{law.slug}")]),
+        ),
         **_demographic_form_context(),
     }
 
@@ -211,6 +221,7 @@ def law_page(
         law_page_context(
             db,
             law,
+            origin=str(request.base_url).rstrip("/"),
             status=law.status(),
             existing_choice=existing.choice if existing else None,
             demographics_locked=bool(existing and existing.demographics_recorded),
@@ -360,6 +371,7 @@ def results_page(
     breakdowns = demo_crud.all_breakdowns(db, law)
     history = laws_crud.revisions(db, law.id, page=revisions)
     settings = get_settings()
+    origin = str(request.base_url).rstrip("/")
     return templates.TemplateResponse(
         request,
         "results.html",
@@ -367,6 +379,26 @@ def results_page(
             "law": law,
             "status": status,
             "voting_open": status == STATUS_OPEN,
+            # The open data, declared as a dataset — which is what makes these
+            # figures findable by somebody looking for the figures rather than
+            # for the law. The law is in the graph too, because the dataset says
+            # it is `about` it and a reference only resolves inside the document
+            # that carries it — but as `legislation_ref`, which names it and
+            # stops there: this page shows a votation's figures, not the law's
+            # presentation, and markup must not assert what a page does not
+            # display. See `app.seo.legislation_ref` for what that cost.
+            "jsonld": seo.graph(
+                seo.legislation_ref(origin, law),
+                seo.votation_dataset(origin, law),
+                seo.breadcrumb(
+                    origin,
+                    [
+                        ("Accueil", "/"),
+                        (law.title, f"/loi/{law.slug}"),
+                        ("Résultats", f"/loi/{law.slug}/resultats"),
+                    ],
+                ),
+            ),
             "tally": tally,
             "evolution": evolution,
             "chart": build_evolution_chart(evolution),

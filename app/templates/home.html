@@ -1,4 +1,9 @@
 {% extends "base.html" %}
+{# The one page whose title was the site's name and nothing else, which ranks for
+   people who already know the name - and this site is not yet known to anybody.
+   The tagline carries the words somebody actually types; fifty-three characters,
+   inside what a result displays before it truncates. #}
+{% block title %}Votations Françaises - Donnez votre avis sur les lois{% endblock %}
 {% block content %}
 <h1>Donnez votre avis sur les lois</h1>
 <p class="lede">{{ TAGLINE }}</p>

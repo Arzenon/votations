@@ -234,7 +234,7 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
                     RecursionError,
                     zipfile.BadZipFile,
                 ):
-                    log.warning("dossier ignoré : %s — structure inattendue", info.filename)
+                    log.warning("dossier ignoré : %s - structure inattendue", info.filename)
                     continue
                 if law is None:
                     continue

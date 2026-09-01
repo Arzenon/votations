@@ -346,7 +346,7 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
     closes = parse_dt(raw.closes_at)
     if opens and closes and closes <= opens:
         raise InvalidFormValue(
-            "la clôture du vote doit être postérieure à son ouverture — telle "
+            "la clôture du vote doit être postérieure à son ouverture - telle "
             "qu'elle est saisie, la votation ne serait jamais ouverte"
         )
 

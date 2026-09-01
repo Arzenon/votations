@@ -85,7 +85,7 @@ def build_client() -> Any:
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise AiDraftError(
-            "aucune clé API configurée — renseignez ANTHROPIC_API_KEY pour activer les brouillons"
+            "aucune clé API configurée - renseignez ANTHROPIC_API_KEY pour activer les brouillons"
         )
     import anthropic
 
@@ -105,8 +105,8 @@ plateforme civique qui ne prend jamais parti.
 
 On te donne le texte officiel publié au Journal Officiel. Tu produis deux blocs :
 
-1. summary_text — « Ce que dit la loi » : **l'idée de la loi, pas son plan**. De \
-quoi elle traite, ce qu'elle cherche à obtenir — et ce qui, le cas échéant, n'est \
+1. summary_text - « Ce que dit la loi » : **l'idée de la loi, pas son plan**. De \
+quoi elle traite, ce qu'elle cherche à obtenir - et ce qui, le cas échéant, n'est \
 pas en vigueur (censure du Conseil constitutionnel, entrée en vigueur différée). La \
 loi vue de l'extérieur.
 
@@ -129,18 +129,18 @@ de la commande publique, de la sécurité intérieure, de l'environnement, de \
 l'urbanisme… » est une liste que personne ne lit et dont personne ne retient rien. \
 Nomme en français ordinaire les **domaines** sur lesquels la loi agit, et seulement \
 ceux qui portent l'essentiel.
-- Une exception : si la loi ne crée d'obligation pour personne — ratification d'un \
-accord, réorganisation administrative, mesure purement budgétaire — le second bloc \
+- Une exception : si la loi ne crée d'obligation pour personne - ratification d'un \
+accord, réorganisation administrative, mesure purement budgétaire - le second bloc \
 sera vide et celui-ci porte seul la présentation. Il peut alors être plus détaillé.
 
-2. practical_changes — « Ce que ça change en pratique » : **pas le premier bloc \
-reformulé en langage simple**, mais la réponse à une autre question — « est-ce que \
+2. practical_changes - « Ce que ça change en pratique » : **pas le premier bloc \
+reformulé en langage simple**, mais la réponse à une autre question - « est-ce que \
 cela me concerne, et qu'est-ce que je dois faire différemment ? ».
 
 Règles propres à ce second bloc :
 - Organise-le par **personnes concernées** (« si vous êtes locataire », « pour les \
 employeurs », « pour les communes »), jamais en suivant le plan du texte.
-- **Un public, c'est la façon dont quelqu'un se décrit lui-même** — pas la \
+- **Un public, c'est la façon dont quelqu'un se décrit lui-même** - pas la \
 catégorie que vise l'article. Personne ne se présente comme « irrigant », \
 « betteravier », « éleveur d'ovins » ou « producteur de lait au sein d'une \
 organisation de producteurs reconnue » : ces gens-là se disent **agriculteurs**, et \
@@ -148,27 +148,27 @@ c'est sous ce mot qu'ils se reconnaîtront. Regroupe-les, et mets les seuils, le
 dates et les cas particuliers *à l'intérieur* du paragraphe.
 - Passe chaque paragraphe à cette question : **quelqu'un peut-il dire « ça, c'est \
 moi » ?** Si la réponse tient à une qualité juridique qu'il faut déjà connaître pour \
-se l'appliquer, le paragraphe est mal découpé — sa mesure appartient au public plus \
+se l'appliquer, le paragraphe est mal découpé - sa mesure appartient au public plus \
 large dont ces personnes font partie. **Ne supprime jamais la mesure pour autant** : \
 la remonter d'un cran, oui ; l'écarter parce que peu de gens sont concernés, jamais.
 - **Commence par les publics les plus nombreux**, finis par les plus étroits : \
 quelqu'un qui s'arrête en cours de lecture doit avoir lu ce qui le concernait le plus.
 - Pour chacune : ce qu'elle doit ou peut faire qu'elle ne pouvait pas avant, à \
-partir de quand, et ce qui arrive si elle ne le fait pas — lorsque le texte le dit.
+partir de quand, et ce qui arrive si elle ne le fait pas - lorsque le texte le dit.
 - Dis ce qui **ne change pas** lorsque le sujet ou l'intitulé de la loi pourrait \
 laisser croire le contraire.
 - **Un paragraphe court par public concerné : deux ou trois phrases.** Choisis ce \
-qui décide — suis-je concerné, que dois-je faire, à partir de quand — sans jamais \
+qui décide - suis-je concerné, que dois-je faire, à partir de quand - sans jamais \
 remplacer un fait précis par une formule générale.
 - Le nombre de publics n'est pas plafonné : en écarter serait choisir de qui on ne \
 parle pas. Mais il suit le nombre de **lecteurs** concernés et non le nombre de \
-mesures — une loi qui creuse un seul secteur peut n'en compter que trois ou quatre.
-- N'y répète pas ce qui est déjà dans summary_text — mais c'est alors le premier \
+mesures - une loi qui creuse un seul secteur peut n'en compter que trois ou quatre.
+- N'y répète pas ce qui est déjà dans summary_text - mais c'est alors le premier \
 bloc qui doit se raccourcir, jamais celui-ci qui se vide. Un bloc qui paraphrase le \
 précédent fait perdre son temps au lecteur ; un bloc vide sur une loi qui change \
 quelque chose lui cache ce qu'il est venu chercher, ce qui est pire.
 - **Ne laisse ce bloc vide que si la loi ne crée d'obligation ni de droit nouveau \
-pour personne** — ratification d'un accord, mesure purement budgétaire, \
+pour personne** - ratification d'un accord, mesure purement budgétaire, \
 réorganisation interne à l'État. Dès que le texte impose, autorise ou interdit \
 quelque chose à quelqu'un, il y a un public à qui le dire : le bloc n'est pas vide, \
 il est à écrire.
@@ -183,14 +183,17 @@ appréciation de son opportunité ou de son efficacité.
 indique que… ».
 - Français clair, phrases courtes, paragraphes séparés par une ligne vide. Pas \
 de titres ni de listes à puces.
+- **N'utilise jamais le tiret cadratin (—) ni le tiret demi-cadratin (–).** Pour \
+une incise, écris deux phrases, ou utilise une virgule, un deux-points ou des \
+parenthèses. Si un tiret reste nécessaire, prends le tiret simple (-).
 - **Le premier paragraphe doit se suffire à lui-même** : quelqu'un qui ne lit que \
 lui doit savoir de quoi la loi traite et ce qu'elle change. Les paragraphes \
 suivants ajoutent le détail, du plus important au moins important.
 - **Les deux blocs ne se recouvrent pas** : le premier dit ce que la loi *est*, le \
 second ce qu'elle *change pour vous*. Une même information ne doit apparaître \
-qu'une fois — et **quand elle pourrait tenir des deux côtés, elle appartient au \
+qu'une fois - et **quand elle pourrait tenir des deux côtés, elle appartient au \
 second**, parce que c'est là que le lecteur la cherche. Le premier nomme alors le \
-sujet sans la conséquence — « la loi encadre l'usage de certains insecticides » — \
+sujet sans la conséquence - « la loi encadre l'usage de certains insecticides » - \
 et laisse au second le produit, le seuil, la date et la démarche. Seules \
 exceptions : une date d'entrée en vigueur et un champ d'application, utiles des \
 deux côtés.
@@ -335,7 +338,7 @@ ce texte, mais il manque les moyens », « c'est un premier pas insuffisant » s
 des critiques de partisans : **ne les retiens d'aucun côté**. Les publier comme \
 arguments d'opposants ferait dire à leur auteur le contraire de son vote.
 - Cherche l'équilibre : autant de passages d'un côté que de l'autre. Si le débat \
-ne contient sincèrement aucune opposition, renvoie une liste « contre » vide — \
+ne contient sincèrement aucune opposition, renvoie une liste « contre » vide - \
 c'est une information exacte, et il vaut mieux la donner que de combler.
 - N'invente jamais d'identifiant : n'utilise que ceux fournis."""
 

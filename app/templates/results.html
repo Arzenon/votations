@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Résultats — {{ law.title }}{% endblock %}
+{# The site's name at the end, as on every other page here. It is the first
+   thing a result truncates when the law's title is long, which is the right
+   thing to lose: the words before it are what somebody searched for. #}
+{% block title %}Résultats - {{ law.title }} - Votations Françaises{% endblock %}
 {% block description %}Résultats de la votation citoyenne sur « {{ law.title }} » : pourcentages, évolution dans le temps et données brutes anonymisées.{% endblock %}
 {% block content %}
 <article class="law">
   <p class="breadcrumb"><a href="/loi/{{ law.slug }}">← Retour à la loi</a></p>
-  <h1>Résultats — {{ law.title }}</h1>
+  <h1>Résultats - {{ law.title }}</h1>
   <span class="status status-{{ status }}">{{ status | law_status }}</span>
 
   {% if voting_open %}
@@ -144,7 +147,7 @@
             <td>{{ row.counts['against'] }} ({{ row.percentages['against'] }}%)</td>
             <td>{{ row.counts['abstain'] }} ({{ row.percentages['abstain'] }}%)</td>
             <td>{{ row.share }}%</td>
-            <td>{% if row.reference is not none %}{{ row.reference }}%{% else %}—{% endif %}</td>
+            <td>{% if row.reference is not none %}{{ row.reference }}%{% else %}-{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -188,8 +191,8 @@
           <tr>
             <th scope="row">{{ rev.changed_at | french_datetime }}</th>
             <td>{{ rev.field | field_label }}</td>
-            <td class="revision-value">{{ rev.old_value or '—' }}</td>
-            <td class="revision-value">{{ rev.new_value or '—' }}</td>
+            <td class="revision-value">{{ rev.old_value or '-' }}</td>
+            <td class="revision-value">{{ rev.new_value or '-' }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -221,7 +224,7 @@
 
   <section class="block">
     <h2>Données ouvertes</h2>
-    <p>Les données brutes anonymisées (loi, choix, horodatage — aucun identifiant) sont téléchargeables :</p>
+    <p>Les données brutes anonymisées (loi, choix, horodatage - aucun identifiant) sont téléchargeables :</p>
     <p class="downloads">
       <a href="/loi/{{ law.slug }}/export.csv">Télécharger en CSV</a>
       <a href="/loi/{{ law.slug }}/export.json">Télécharger en JSON</a>

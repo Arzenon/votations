@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Authentification — Votations Françaises{% endblock %}
+{% block title %}Authentification - Votations Françaises{% endblock %}
 {% block content %}
 <h1>Authentification</h1>
 
@@ -33,7 +33,7 @@
   <a class="button" href="{{ auth.login_url() }}">{{ auth.login_label }}</a>
   {% else %}
   <button class="button" type="button" disabled aria-disabled="true">
-    {{ auth.login_label }} — bientôt disponible
+    {{ auth.login_label }} - bientôt disponible
   </button>
   {% endif %}
 </section>

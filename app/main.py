@@ -208,13 +208,53 @@ def _release_interrupted_drafts() -> None:
         released = imports_crud.release_interrupted_drafts(db)
         if released:
             log.warning(
-                "%s brouillon(s) interrompu(s) par un arrêt précédent — repassés en échec",
+                "%s brouillon(s) interrompu(s) par un arrêt précédent - repassés en échec",
                 released,
             )
     except Exception:
         log.exception("impossible de libérer les brouillons interrompus")
     finally:
         db.close()
+
+
+class HeadAsGet:
+    """Answer HEAD wherever GET is answered, by reading it as the GET it is.
+
+    Starlette adds HEAD beside GET on its own; FastAPI, which builds its routes
+    itself, does not — so *every* URL on this site refused a HEAD request,
+    `/robots.txt` and the sitemap included. That is the request link checkers,
+    uptime probes and several crawlers make first, precisely because it is the
+    cheap way to ask whether a URL is alive, and all of them were being told the
+    method was not allowed.
+
+    **Here rather than on the routes**, and the two attempts are worth recording.
+    Adding ``"HEAD"`` to each route's ``methods`` is the obvious fix and has two
+    costs: since FastAPI 0.140 an included router is a single opaque node in the
+    parent's list, so reaching the forty routes that arrive through
+    ``include_router`` means walking a private attribute; and FastAPI derives one
+    ``operationId`` per *route*, not per method, so every route answering both
+    then warns about a duplicate every time the schema is built. A middleware has
+    neither problem and is shorter.
+
+    **The scope is copied, never mutated.** The server keeps its own reference to
+    the scope it built and reads the method back from it to decide that a HEAD
+    response carries no body. Rewriting in place would make it send one, which is
+    a protocol violation; handing the application a copy leaves the server's own
+    view of the request intact.
+
+    The cost is that the application sees ``GET``. Nothing here distinguishes
+    them — `require_same_origin` already treats HEAD as the read it is — and the
+    body the handler produces is discarded by the server, exactly as it would be
+    for a route that declared the method itself.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope.get("method") == "HEAD":
+            scope = {**scope, "method": "GET"}
+        await self.app(scope, receive, send)
 
 
 def create_app() -> FastAPI:
@@ -232,7 +272,7 @@ def create_app() -> FastAPI:
         # settable from inside the loop, hence the lifespan hook.
         anyio.to_thread.current_default_thread_limiter().total_tokens = settings.db_max_threads
         log.info(
-            "démarrage — environnement=%s, threads=%s, pool=%s",
+            "démarrage - environnement=%s, threads=%s, pool=%s",
             settings.environment,
             settings.db_max_threads,
             settings.db_pool_size,
@@ -257,6 +297,8 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(SecurityHeaders, headers=default_headers(settings))
+    # Outermost, so the rewrite happens before anything tries to match a route.
+    app.add_middleware(HeadAsGet)
 
     app.mount("/static", CachedStaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(public.router)

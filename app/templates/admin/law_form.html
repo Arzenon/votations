@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block body_class %}admin-wide{% endblock %}
-{% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} — Administration{% endblock %}
+{% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} - Administration{% endblock %}
 {% block scripts %}
 <script src="{{ asset_url('htmx.min.js') }}" defer></script>
 {# Administration only. The public pages stay usable with JavaScript off; this
@@ -60,7 +60,7 @@
   <strong>Les blocs ci-dessous affichent le brouillon IA</strong>, pas le texte
   enregistré. Le titre, les dates et la publication n'ont pas été touchés.
   <strong>Rien n'est enregistré</strong> tant que vous n'avez pas cliqué sur
-  « Enregistrer » — pour renoncer, revenez à
+  « Enregistrer » - pour renoncer, revenez à
   <a href="/admin/lois/{{ law.id }}">la version enregistrée</a>.
 </p>
 {% endif %}
@@ -75,7 +75,7 @@
 {% if prefill %}
 <p class="sources">
   <strong>LOI n° {{ prefill.law_code }}</strong>
-  — promulguée le {{ prefill.promulgated_on | french_date }}
+  - promulguée le {{ prefill.promulgated_on | french_date }}
   {% if prefill.jo_number %}· JO n° {{ prefill.jo_number }}{% endif %}
   <br>
   <a href="{{ prefill.dossier_url | safe_href }}" rel="noopener noreferrer" target="_blank">Dossier Assemblée nationale</a>
@@ -227,8 +227,8 @@
         <tr>
           <td>{{ rev.changed_at | french_datetime }}</td>
           <td>{{ rev.field | field_label }}</td>
-          <td class="revision-value">{{ rev.old_value or '—' }}</td>
-          <td class="revision-value">{{ rev.new_value or '—' }}</td>
+          <td class="revision-value">{{ rev.old_value or '-' }}</td>
+          <td class="revision-value">{{ rev.new_value or '-' }}</td>
         </tr>
         {% endfor %}
       </tbody>

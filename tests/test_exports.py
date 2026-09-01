@@ -269,5 +269,5 @@ def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open
     assert len(rows) == 4001, "header + every vote, whatever the chunking"
     assert len(chunks) < 100, f"{len(chunks)} chunks for 4000 votes — batching is gone"
     assert max(len(c) for c in chunks) <= _CHUNK_CHARS + 200, (
-        "a chunk grew past the buffer — the point was to bound memory too"
+        "a chunk grew past the buffer - the point was to bound memory too"
     )

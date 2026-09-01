@@ -118,7 +118,7 @@ def test_a_running_draft_never_holds_the_process_open():
     assert started.wait(timeout=5), "the job should be running"
 
     worker = next(t for t in threading.enumerate() if t.name == "draft" and t.is_alive())
-    assert worker.daemon is True, "a non-daemon worker is joined at exit — CORR-1 is back"
+    assert worker.daemon is True, "a non-daemon worker is joined at exit - CORR-1 is back"
     release.set()
 
 

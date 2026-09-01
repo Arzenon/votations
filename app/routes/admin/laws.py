@@ -159,7 +159,13 @@ def _preview(request: Request, db: Session, law: Law) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "law.html",
-        law_page_context(db, law, status=law.scheduled_status(), preview=True),
+        law_page_context(
+            db,
+            law,
+            origin=str(request.base_url).rstrip("/"),
+            status=law.scheduled_status(),
+            preview=True,
+        ),
     )
 
 

@@ -386,7 +386,7 @@ def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
         return (
             "L'horodatage est omis : cette votation compte moins de "
             f"{settings.min_bucket_volume} votes, seuil en dessous duquel la "
-            "répartition dans le temps n'est pas publiée — la publier ici "
+            "répartition dans le temps n'est pas publiée - la publier ici "
             "reviendrait à contourner ce seuil."
         )
     if settings.export_time_resolution == "exact":

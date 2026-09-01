@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ law.title }} — Votations Françaises{% endblock %}
+{% block title %}{{ law.title }} - Votations Françaises{% endblock %}
 {% block description %}{{ (law.summary_text or law.title)[:180] }}{% endblock %}
 {% block scripts %}<script src="{{ asset_url('htmx.min.js') }}" defer></script>{% endblock %}
 {% block content %}
@@ -11,13 +11,13 @@
   <p class="official-ref">
     Référence : {{ law.official_ref }}
     {% set officiel = law.legifrance_url | safe_href %}
-    {% if officiel %}— <a href="{{ officiel }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)<span class="visually-hidden"> (nouvel onglet)</span></a>{% endif %}
+    {% if officiel %}- <a href="{{ officiel }}" rel="noopener noreferrer" target="_blank">Texte officiel (Légifrance)<span class="visually-hidden"> (nouvel onglet)</span></a>{% endif %}
   </p>
   {% endif %}
 
   <section class="block">
     <h2>Ce que dit la loi</h2>
-    {% for para in law.summary_text | paragraphs %}<p>{{ para }}</p>{% else %}<p>—</p>{% endfor %}
+    {% for para in law.summary_text | paragraphs %}<p>{{ para }}</p>{% else %}<p>-</p>{% endfor %}
   </section>
 
   <section class="block">
@@ -29,7 +29,7 @@
        count is in the summary because a reader must be able to see that something
        is there before deciding not to read it. See `app.templating.practical_split`. #}
     {% set shown, folded = law.practical_changes | practical_split %}
-    {% for para in shown %}<p>{{ para }}</p>{% else %}<p>—</p>{% endfor %}
+    {% for para in shown %}<p>{{ para }}</p>{% else %}<p>-</p>{% endfor %}
     {% if folded %}
     <details class="more-audiences">
       <summary>{{ folded | length }} autres publics concernés</summary>
@@ -50,13 +50,13 @@
           {% if arg.author or source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
+            {% if source %}- <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
           </p>
           {% endif %}
         </li>
         {% endfor %}
       </ul>
-      {% else %}<p>—</p>{% endif %}
+      {% else %}<p>-</p>{% endif %}
     </section>
 
     <section class="block arguments-against">
@@ -70,13 +70,13 @@
           {% if arg.author or source %}
           <p class="attribution">
             {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if source %}— <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
+            {% if source %}- <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
           </p>
           {% endif %}
         </li>
         {% endfor %}
       </ul>
-      {% else %}<p>—</p>{% endif %}
+      {% else %}<p>-</p>{% endif %}
     </section>
   </div>
 

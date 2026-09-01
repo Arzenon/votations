@@ -12,12 +12,13 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
+from app import seo
 from app.config import get_settings
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import get_db
 from app.routes.public.common import PUBLIC_PAGE_CACHE, PUBLIC_PAGE_MAX_AGE
-from app.templating import templates
+from app.templating import TAGLINE, templates
 
 router = APIRouter()
 
@@ -47,10 +48,15 @@ def home(request: Request, db: Session = Depends(get_db)):
         [law.id for _, laws in bands for law in laws],
         max_age=PUBLIC_PAGE_MAX_AGE,
     )
+    origin = str(request.base_url).rstrip("/")
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"bands": bands, "tallies": tallies},
+        {
+            "bands": bands,
+            "tallies": tallies,
+            "jsonld": seo.graph(seo.website(origin, description=TAGLINE)),
+        },
         headers=PUBLIC_PAGE_CACHE,
     )
 
@@ -128,7 +134,12 @@ def sitemap(request: Request, db: Session = Depends(get_db)):
     law can never appear here — a sitemap that lists a 404 is worse than none.
     """
     base = str(request.base_url).rstrip("/")
-    static_pages = ["/", "/recherche", "/connexion", "/vie-privee", "/mentions-legales"]
+    # `/recherche` is deliberately absent: it carries `noindex` (see the template
+    # for why), and a sitemap is a list of pages one is *asking* to have indexed.
+    # Listing a page there and refusing it on the page itself is a contradiction
+    # search engines report as an error, on the one file whose job is to be a
+    # plain statement of what this site holds.
+    static_pages = ["/", "/connexion", "/vie-privee", "/mentions-legales"]
     # (location, last modified). The static pages have no date; annotated because
     # otherwise the element type is read off the first comprehension alone, and
     # the law entries below stop type-checking against it.

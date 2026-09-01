@@ -28,7 +28,7 @@ def test_the_migrated_schema_matches_the_models(engine):
         )
         differences = compare_metadata(context, Base.metadata)
     assert differences == [], (
-        "les modèles et les migrations divergent — générez une révision :\n  "
+        "les modèles et les migrations divergent - générez une révision :\n  "
         "alembic revision --autogenerate -m '…'\n"
         f"{differences}"
     )

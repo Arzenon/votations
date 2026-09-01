@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block body_class %}admin-wide{% endblock %}
-{% block title %}Administration — Votations Françaises{% endblock %}
+{% block title %}Administration - Votations Françaises{% endblock %}
 {% block content %}
 <h1>Administration</h1>
 <p>
@@ -52,7 +52,7 @@
       <td><span class="status status-{{ state }}">{{ state | law_status }}</span></td>
       {# The form takes and shows Paris time; `strftime` on the stored instant
              showed UTC, so a vote entered to close at 20 h read back as 18 h here. #}
-      <td>{% if law.closes_at %}{{ law.closes_at | french_datetime }}{% else %}—{% endif %}</td>
+      <td>{% if law.closes_at %}{{ law.closes_at | french_datetime }}{% else %}-{% endif %}</td>
       <td>
         {{ tallies[law.id].total }}
         (P {{ tallies[law.id].counts['for'] }} /
