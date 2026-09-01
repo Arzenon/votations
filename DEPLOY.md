@@ -147,8 +147,7 @@ docker compose -f docker-compose.prod.yml exec content-export \
   python -m scripts.content export
 
 # le recharger, ici ou ailleurs
-docker compose -f docker-compose.prod.yml exec app \
-  python -m scripts.content import /exports/votations-contenu-AAAAMMJJ-HHMMSS.json
+docker compose -f docker-compose.prod.yml exec app python -m scripts.content import /exports/votations-contenu-AAAAMMJJ-HHMMSS.json
 ```
 
 > **`EXPORT_UID`.** Le conteneur tourne sous votre compte plutôt que sous
