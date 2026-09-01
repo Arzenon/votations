@@ -179,6 +179,85 @@ def test_comparing_an_accented_password_does_not_raise():
     assert _matches("clé-très-sûre", "clé-très-sûre") is True
 
 
+def test_a_post_with_no_origin_is_allowed_in_development(client, open_law):
+    """`curl` and this very test client send neither header, and must keep working."""
+    assert not get_settings().is_production, "the suite runs in development"
+    r = client.post(
+        f"/loi/{open_law.slug}/vote", data={"choice": "for"}, follow_redirects=False
+    )
+    assert r.status_code == 303
+
+
+def test_production_refuses_a_post_that_states_no_origin(client, open_law):
+    """Where the site faces the internet, "neither header" is not good enough.
+
+    Every browser has sent `Origin` on a cross-site form post for years — but the
+    whole job of this check is not to depend on somebody else's default staying
+    what it is, and the administration is guarded by HTTP Basic, which a browser
+    attaches to a cross-site request whether we like it or not.
+    """
+    settings = get_settings()
+    previous = settings.environment
+    settings.environment = "production"
+    try:
+        r = client.post(
+            f"/loi/{open_law.slug}/vote", data={"choice": "for"}, follow_redirects=False
+        )
+        assert r.status_code == 403
+        # And a request that *does* state this site still goes through.
+        ok = client.post(
+            f"/loi/{open_law.slug}/vote",
+            data={"choice": "for"},
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+        assert ok.status_code == 303
+    finally:
+        settings.environment = previous
+
+
+def test_a_get_never_needs_an_origin_even_in_production(client, open_law):
+    """The check is about state changes; reading is not one."""
+    settings = get_settings()
+    previous = settings.environment
+    settings.environment = "production"
+    try:
+        assert client.get(f"/loi/{open_law.slug}").status_code == 200
+    finally:
+        settings.environment = previous
+
+
+# --- What a database error is allowed to say ---------------------------------
+
+
+def test_a_database_error_never_carries_its_bound_parameters():
+    """On the vote route those parameters include the voter token.
+
+    `app.main`'s last-resort handler logs the exception, and SQLAlchemy renders
+    `[parameters: …]` into the text of a `StatementError` — so an IntegrityError
+    on a ballot used to write a voter's identifier next to the instant of their
+    vote, in the logs, on a site whose privacy page states that pairing is never
+    recorded and whose `app.logging_config` says never to log a token.
+    """
+    from sqlalchemy.exc import DataError
+
+    from app.db import get_engine
+
+    assert get_engine().hide_parameters, "the engine must not render parameters"
+
+    rendered = str(
+        DataError(
+            "INSERT INTO votes (law_id, voter_token) VALUES (%(law_id)s, %(voter_token)s)",
+            {"law_id": 1, "voter_token": "empreinte-du-jeton"},
+            Exception("value too long"),
+            hide_parameters=get_engine().hide_parameters,
+        )
+    )
+    assert "empreinte-du-jeton" not in rendered
+    # The statement itself is still there: this hides values, not diagnostics.
+    assert "INSERT INTO votes" in rendered
+
+
 # --- Security headers --------------------------------------------------------
 
 

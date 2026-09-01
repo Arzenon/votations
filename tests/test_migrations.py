@@ -53,6 +53,60 @@ def test_the_unused_voter_token_index_is_gone(engine):
     assert "ix_votes_voter_token" not in indexes
 
 
+def test_the_profiled_votes_index_is_partial(engine):
+    """It exists to be small, and a full index on `law_id` would not be.
+
+    `refresh_snapshot` counts a law's profiled votes on every ballot until the
+    law takes its first snapshot — which needs MIN_BUCKET_VOLUME profiled votes
+    and, the profile being optional, may never happen. Answering that from an
+    index over *every* vote on the law is a full scan on the busiest write in the
+    application; this index holds only the rows it counts.
+
+    Read from `pg_indexes` rather than from the reflected metadata, because what
+    matters is the predicate Postgres actually stored — that is the thing the
+    planner has to prove the query implies.
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as connection:
+        definition = connection.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_votes_law_profiled'")
+        ).scalar()
+
+    assert definition, "l'index partiel des votes profilés est absent"
+    assert "WHERE demographics_recorded" in definition, definition
+
+
+def test_counting_profiled_votes_can_use_that_index(engine):
+    """The predicate and the query have to be spelled the same way.
+
+    Postgres applies a partial index only where it can *prove* the WHERE implies
+    the index predicate, and it cannot prove that of `IS true` — the same lesson
+    `ix_laws_home` and `laws._published` already carry, and the reason Alembic
+    cannot catch this one: it compares an index on its columns and its
+    uniqueness, never on its `where`.
+    """
+    from sqlalchemy import func, select
+    from sqlalchemy.dialects import postgresql
+
+    from app.models import Vote
+
+    compiled = str(
+        select(func.count())
+        .select_from(Vote)
+        .where(Vote.law_id == 1, Vote.demographics_recorded)
+        .compile(dialect=postgresql.dialect())
+    )
+    assert "votes.demographics_recorded" in compiled
+    assert "is true" not in compiled.lower(), compiled
+
+
+def test_a_dossier_cannot_claim_two_votations(engine):
+    """`create_law` refuses it, and `scripts.content` had no way to know that."""
+    names = {c["name"] for c in inspect(engine).get_unique_constraints("imported_laws")}
+    assert "uq_imported_law_law_id" in names
+
+
 def test_the_chain_downgrades_and_upgrades_again(engine):
     """A migration you cannot undo is a migration you cannot deploy carefully."""
     config = alembic_config(TEST_DATABASE_URL)

@@ -121,17 +121,46 @@ def _observations(payload: dict) -> list[dict]:
     return obs
 
 
+def _dimension(o: object, name: str) -> str:
+    """One observation's value for a dimension, or "" when it does not carry it.
+
+    Every reach into a fetched document goes through this or :func:`_value`.
+    Indexing straight — ``o["dimensions"]["SEX"]`` — made this module's contract
+    (« Any failure raises InseeFetchError ») false for the failure most likely to
+    actually happen: the day INSEE changes the shape of a response. The caller
+    then got a `KeyError` traceback rather than the one-line message
+    `scripts/refresh_insee` is written to print, on a job whose whole design is
+    to fail quietly and leave the cached values alone.
+    """
+    dimensions = o.get("dimensions") if isinstance(o, dict) else None
+    value = dimensions.get(name) if isinstance(dimensions, dict) else None
+    return "" if value is None else str(value)
+
+
+def _year(o: dict) -> int:
+    """One observation's TIME_PERIOD as a number."""
+    raw = _dimension(o, "TIME_PERIOD")
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise InseeFetchError(f"TIME_PERIOD illisible : « {raw} »") from exc
+
+
 def _latest(obs: list[dict], pick: Callable[[dict], bool]) -> tuple[int, list[dict]]:
     """Return the most recent TIME_PERIOD and the matching observations."""
     filtered = [o for o in obs if pick(o)]
     if not filtered:
         raise InseeFetchError("no matching observations")
-    year = max(int(o["dimensions"]["TIME_PERIOD"]) for o in filtered)
-    return year, [o for o in filtered if int(o["dimensions"]["TIME_PERIOD"]) == year]
+    year = max(_year(o) for o in filtered)
+    return year, [o for o in filtered if _year(o) == year]
 
 
 def _value(o: dict) -> float:
-    return float(o["measures"]["OBS_VALUE_NIVEAU"]["value"])
+    """One observation's measured value. Guarded like :func:`_year`, and why."""
+    try:
+        return float(o["measures"]["OBS_VALUE_NIVEAU"]["value"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise InseeFetchError(f"observation sans valeur exploitable : {exc}") from exc
 
 
 def _discover_prefix(get: Getter) -> str:
@@ -157,8 +186,8 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
     fr = _observations(
         _payload(get, _data_url(f"{prefix}-FRANCE-F", AGE="_T", EP_MEASURE="POP_JAN_1ST"))
     )
-    sex_year, sex_obs = _latest(fr, lambda o: o["dimensions"]["SEX"] in ("F", "M"))
-    by_sex = {o["dimensions"]["SEX"]: _value(o) for o in sex_obs}
+    sex_year, sex_obs = _latest(fr, lambda o: _dimension(o, "SEX") in ("F", "M"))
+    by_sex = {_dimension(o, "SEX"): _value(o) for o in sex_obs}
     total_sex = by_sex.get("F", 0) + by_sex.get("M", 0)
     if total_sex <= 0:
         raise InseeFetchError("sex totals missing")
@@ -181,13 +210,18 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
         url = _data_url(f"{prefix}-REG-{code}", AGE="_T", SEX="_T", EP_MEASURE="POP_JAN_1ST")
         try:
             year, obs = _latest(_observations(_payload(get, url)), lambda o: True)
+            # Inside the guard, not after it: a région whose observation carries
+            # no readable value is exactly as missing as one the API did not
+            # answer for, and the comment below has always said what to do
+            # about that.
+            population = _value(obs[0])
         except InseeFetchError:
             continue  # a missing région must not abort the whole refresh
         region_year = max(region_year, year)
         if code in OVERSEAS_CODES:
-            overseas += _value(obs[0])
+            overseas += population
         else:
-            region_pop[REGION_CODE_TO_LABEL[code]] = _value(obs[0])
+            region_pop[REGION_CODE_TO_LABEL[code]] = population
     if overseas:
         region_pop[OVERSEAS_LABEL] = overseas
     if not region_pop:
@@ -204,8 +238,11 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
 
 def _age_reference(obs: list[dict]) -> tuple[int, dict[str, float]]:
     """Aggregate quinquennal counts into the app's adult brackets, normalised."""
-    year, rows = _latest(obs, lambda o: o["dimensions"]["AGE"] != "_T")
-    by_age = {o["dimensions"]["AGE"]: _value(o) for o in rows}
+    # Not `!= "_T"`: an observation carrying no AGE at all would pass that, and
+    # `_dimension` answers "" for it. The total row and the missing row are both
+    # things this must not aggregate.
+    year, rows = _latest(obs, lambda o: _dimension(o, "AGE") not in ("_T", ""))
+    by_age = {_dimension(o, "AGE"): _value(o) for o in rows}
     brackets = {
         label: sum(by_age.get(code, 0.0) * w for code, w in comp)
         for label, comp in AGE_BRACKET_COMPOSITION.items()

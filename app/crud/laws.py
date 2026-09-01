@@ -489,10 +489,17 @@ def archive(db: Session, law: Law) -> Law:
 
     The votes stay. This is reversible, which is the whole point: deleting used to
     cascade away published open data behind a single click.
+
+    Archiving twice does nothing the second time. The route answers a repeated
+    POST with the same redirect rather than an error, precisely because the
+    operation is idempotent — and it was not: the second call moved
+    ``archived_at`` to the moment of the resubmission, so a browser's « back then
+    submit again » silently rewrote the date the archive page displays.
     """
-    law.archived_at = utcnow()
-    db.commit()
-    db.refresh(law)
+    if law.archived_at is None:
+        law.archived_at = utcnow()
+        db.commit()
+        db.refresh(law)
     return law
 
 

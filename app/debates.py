@@ -160,7 +160,13 @@ def _get_json(get: Getter, uid: str) -> dict:
         raise DebatesFetchError(f"identifiant de séance inattendu : {uid!r}")
     try:
         return json.loads(get(OPENDATA_URL.format(uid=uid)))
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # `RecursionError`, because it is not a `ValueError`: a document nested
+        # deeply enough exhausts the stack inside `json.loads` rather than failing
+        # to parse, and `_collect` below would do the same walking it. Uncaught it
+        # escaped as something no caller expects from a fetch — the sitting loop
+        # skips a `DebatesFetchError` and carries on, which is the right answer
+        # for a record that cannot be read, whatever the reason.
         raise DebatesFetchError(f"réponse illisible pour {uid} : {exc}") from exc
 
 

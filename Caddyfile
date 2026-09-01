@@ -26,46 +26,18 @@
 	}
 }
 
-{$SITE_DOMAIN} {
-	encode zstd gzip
-
-	# Refuse oversized bodies at the edge. Every form on the site posts a few
-	# kilobytes at most, so anything larger is a mistake or an attempt.
-	request_body {
-		max_size 256KB
-	}
-
-	# The liveness probe is for the container, not for the internet. Docker runs
-	# it against localhost:8000 inside the app container, so it never comes
-	# through here — which makes refusing it at the edge free. It carries no
-	# personal data, but it does answer "is the database up?" to anybody who
-	# asks, and that is a question the public has no reason to be able to ask.
-	respond /sante 404
-
-	# The app is not published outside the compose network: this is the only door.
-	reverse_proxy app:8000 {
-		# Overwrite rather than append, so the header the app reads holds the
-		# peer address and nothing the caller wrote. The vote rate limit is keyed
-		# on exactly that.
-		#
-		# Caddy already does this on its own: with no `trusted_proxies` declared
-		# it treats every peer as untrusted and *replaces* an incoming
-		# X-Forwarded-For instead of appending to it (verified against 2.10 —
-		# declaring the peer trusted is what switches it back to appending). So
-		# this line is redundant today, and Caddy says so with a warning on every
-		# start. It is kept because "redundant today" is a statement about
-		# somebody else's default, on the one value that decides whose votes get
-		# rate-limited; the app's own `TRUSTED_PROXY_HOPS` reads the chain from
-		# the right for the same reason, and neither guarantee should be the only
-		# one.
-		#
-		# X-Real-IP is set for the same reason and read by nothing here — the app
-		# uses X-Forwarded-For alone. It is conventional enough that a future
-		# component would expect it, and wrong enough to leave forgeable.
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Real-IP {remote_host}
-	}
-
+# Everything that must hold on *every* hostname this stack answers on, defined
+# once and imported by each site block below.
+#
+# It exists because the `www.` block had neither the headers nor the log filter.
+# That block only issues a
+# redirect, so the missing CSP costs nothing — but the missing HSTS does: a
+# visitor whose first ever request is to `www.` is not pinned to HTTPS until the
+# apex answers, and the missing log filter means that if the access log is ever
+# turned up on that vhost it records `remote_ip` while the apex is careful not
+# to. Two properties of the deployment that were true of one hostname and not
+# the other, for no reason anybody chose.
+(commun) {
 	header {
 		# The site embeds nothing and is embedded nowhere.
 		X-Content-Type-Options nosniff
@@ -109,6 +81,51 @@
 		}
 	}
 }
+
+{$SITE_DOMAIN} {
+	import commun
+
+	encode zstd gzip
+
+	# Refuse oversized bodies at the edge. Every form on the site posts a few
+	# kilobytes at most, so anything larger is a mistake or an attempt.
+	request_body {
+		max_size 256KB
+	}
+
+	# The liveness probe is for the container, not for the internet. Docker runs
+	# it against localhost:8000 inside the app container, so it never comes
+	# through here — which makes refusing it at the edge free. It carries no
+	# personal data, but it does answer "is the database up?" to anybody who
+	# asks, and that is a question the public has no reason to be able to ask.
+	respond /sante 404
+
+	# The app is not published outside the compose network: this is the only door.
+	reverse_proxy app:8000 {
+		# Overwrite rather than append, so the header the app reads holds the
+		# peer address and nothing the caller wrote. The vote rate limit is keyed
+		# on exactly that.
+		#
+		# Caddy already does this on its own: with no `trusted_proxies` declared
+		# it treats every peer as untrusted and *replaces* an incoming
+		# X-Forwarded-For instead of appending to it (verified against 2.10 —
+		# declaring the peer trusted is what switches it back to appending). So
+		# this line is redundant today, and Caddy says so with a warning on every
+		# start. It is kept because "redundant today" is a statement about
+		# somebody else's default, on the one value that decides whose votes get
+		# rate-limited; the app's own `TRUSTED_PROXY_HOPS` reads the chain from
+		# the right for the same reason, and neither guarantee should be the only
+		# one.
+		#
+		# X-Real-IP is set for the same reason and read by nothing here — the app
+		# uses X-Forwarded-For alone. It is conventional enough that a future
+		# component would expect it, and wrong enough to leave forgeable.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+
 www.{$SITE_DOMAIN} {
+	import commun
 	redir https://{$SITE_DOMAIN}{uri} permanent
 }

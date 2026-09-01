@@ -79,11 +79,19 @@ class LawText:
         return f"{self.title}\n\n{body}".strip()
 
 
-# Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page. The
-# ceiling is generous against that — a JO day is not going to grow tenfold — and
-# is there so a truncated read is a message and a retry rather than the host's
-# memory. The per-member cap above still applies once the archive is open.
-MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
+# Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page. Four
+# times the largest real one, so a truncated read is a message and a retry rather
+# than the host's memory. The per-member cap above still applies once the archive
+# is open.
+#
+# Sized against the container, not only against the source. A download costs
+# roughly twice this at its peak (see `app.opendata.fetch`) and the archive is
+# then copied again into a `BytesIO` here, so one draft can hold ~3× — and drafts
+# run *inside the app container*, `draft_workers` of them at once, in the 1 GB the
+# compose file grants the process that also serves the site. At 128 MB, which is
+# what this used to be, two concurrent drafts could have taken the whole site down
+# with them; the guard was set above the level at which it kills what it protects.
+MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 
 #: Per-operation socket timeout. Generous, because the archives are large and the
 #: portal is not fast; it is not a bound on how long a download may take in

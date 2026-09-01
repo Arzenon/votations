@@ -32,9 +32,15 @@ def _unauthorised() -> HTTPException:
 
 
 def _too_many() -> HTTPException:
+    # `Retry-After`, as on the two public refusals (see
+    # `app.routes.public.common`): a 429 without it invites an immediate retry,
+    # which is the one thing neither side wants — least of all here, where every
+    # retry inside the window extends nothing but does keep the guessing streak
+    # alive for whoever shares this address.
     return HTTPException(
         status_code=429,
         detail="Trop de tentatives de connexion. Réessayez dans quelques minutes.",
+        headers={"Retry-After": "60"},
     )
 
 

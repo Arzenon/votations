@@ -181,20 +181,38 @@ class BreakdownRow:
     reference: float | None = None
 
 
+#: Why a breakdown is withheld. Named, because the results page branches on all
+#: three and was doing it by writing the strings out again — a copy of a value
+#: whose only definition was here, that no rename would have followed and whose
+#: drifting would have shown up as the page quietly taking the last branch.
+REASON_NONE = ""
+REASON_EMPTY = "empty"
+REASON_BELOW_THRESHOLD = "below_threshold"
+REASON_PENDING = "pending"
+
+
 @dataclass
 class Breakdown:
     dimension: str
     label: str
     shown: bool
     threshold: int
-    #: "" | "empty" | "below_threshold" | "pending".
+    #: One of the REASON_* values above.
     #:
     #: « pending » is the one that is not about the data: the votation is open and
     #: has not yet reached its first published snapshot, so there may well be
     #: figures — they are simply not publishable yet. Telling it apart from
     #: « empty » matters, because the page would otherwise say « aucune donnée
     #: renseignée » about a law people have been filling the fields in on.
-    reason: str = ""
+    reason: str = REASON_NONE
+
+    @property
+    def is_below_threshold(self) -> bool:
+        return self.reason == REASON_BELOW_THRESHOLD
+
+    @property
+    def is_pending(self) -> bool:
+        return self.reason == REASON_PENDING
     rows: list[BreakdownRow] = field(default_factory=list)
     dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
@@ -243,9 +261,9 @@ def _build(
     label = DIMENSION_LABELS.get(dimension, dimension)
     populated = [n for cat in cells.values() for n in cat.values() if n > 0]
     if not populated:
-        return Breakdown(dimension, label, shown=False, threshold=k, reason="empty")
+        return Breakdown(dimension, label, shown=False, threshold=k, reason=REASON_EMPTY)
     if min(populated) < k:
-        return Breakdown(dimension, label, shown=False, threshold=k, reason="below_threshold")
+        return Breakdown(dimension, label, shown=False, threshold=k, reason=REASON_BELOW_THRESHOLD)
 
     dimension_total = sum(populated)
     # Categories that hold nothing are dropped, not drawn as a row of zeros.
@@ -392,7 +410,7 @@ def all_breakdowns(db: Session, law: Law, *, min_cell: int | None = None) -> lis
         # been filling the optional fields in all along.
         return [
             Breakdown(
-                dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason="pending"
+                dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason=REASON_PENDING
             )
             for dim in DIMENSIONS
         ]

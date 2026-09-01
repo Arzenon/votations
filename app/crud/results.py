@@ -11,6 +11,8 @@ that already knows it counts once instead of four times.
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -45,8 +47,16 @@ def _bucketed(unit: str, zone: str):
     return func.timezone(zone, func.date_trunc(unit, local))  # → timestamptz
 
 
-@dataclass
+@dataclass(frozen=True)
 class Tally:
+    """A law's headline figures. Frozen because it is shared.
+
+    :data:`_TALLIES` hands the same instance to every reader inside its window,
+    so a caller that mutated one would be rewriting a number for everybody. The
+    two dicts inside it are still mutable — Python offers no cheap way not to be
+    — and are likewise nobody's to change.
+    """
+
     total: int
     counts: dict[str, int]
     percentages: dict[str, float]
@@ -65,13 +75,121 @@ _COUNT_COLUMNS = (
 )
 
 
+# --- A short-lived memo of the figures a whole page is made of ---------------
+#
+# Every aggregate here is a scan of one law's votes. That is one query, which is
+# what the suite checks — and an *unbounded* one, which is what it cannot. The
+# home page asks for the participation of every law it lists, up to fifty per
+# band across three bands: one query, and every vote ever cast on a hundred and
+# fifty votations walked to draw a hundred and fifty cards. Nothing in the
+# shipped stack caches on the application's behalf (Caddy does not, by default),
+# so the busiest page of the site paid that per visitor.
+#
+# **The window is never longer than what the page already promises its reader.**
+# `Cache-Control: public, max-age=60` on the home page is a statement that the
+# figures on it may be a minute old; serving them from here inside that same
+# minute tells nobody anything new. That is the whole justification, and it is
+# why the durations live beside the headers in `app.routes.public.common` rather
+# than here — the two must be the same number or this stops being honest.
+#
+# Which is also why the results page of an **open** votation is deliberately not
+# memoised, even though it declares thirty seconds. That header is aimed at one
+# reader's own browser, and its thirty seconds were chosen so that somebody who
+# has just voted still sees their ballot; a memo shared by everyone would take
+# that away from them. A closed votation cannot move at all, so there it is free.
+#
+# A ballot drops the law it was cast on (see `forget`), so under the single
+# container the compose file runs these figures are not merely fresh-ish but
+# exact, and a busy site re-counts one law rather than a hundred and fifty. The
+# window is the backstop for everything that is not a ballot — an archived law,
+# an admin edit, a second replica — not the mechanism.
+
+
+class _Memo[T]:
+    """Process-local, per-law, time-bounded. Not a cache in front of the truth.
+
+    Small on purpose: no eviction policy worth the name, just an expiry check and
+    a ceiling past which everything goes. It holds a handful of integers per law
+    and the corpus is hundreds of rows, so the ceiling exists to bound a mistake
+    rather than to manage a working set.
+
+    **What it hands back is shared, and therefore read-only.** Every reader
+    inside the window gets the same object, so mutating one would rewrite a
+    figure for everybody. :class:`Tally` is frozen to say so; the vote curve is a
+    plain list, and the only thing that consumes it — `app.charts` — copies each
+    bucket's counts before touching them.
+    """
+
+    def __init__(self, max_entries: int = 4096) -> None:
+        self._entries: dict[int, tuple[float, T]] = {}
+        self._lock = threading.Lock()
+        self._max_entries = max_entries
+
+    def get(self, law_id: int, max_age: float) -> T | None:
+        """The remembered value, if it is younger than ``max_age``."""
+        if max_age <= 0:
+            return None
+        with self._lock:
+            found = self._entries.get(law_id)
+        if found is None:
+            return None
+        stored_at, value = found
+        return value if time.monotonic() - stored_at <= max_age else None
+
+    def put(self, law_id: int, value: T) -> None:
+        with self._lock:
+            if len(self._entries) >= self._max_entries and law_id not in self._entries:
+                self._entries.clear()
+            self._entries[law_id] = (time.monotonic(), value)
+
+    def forget(self, law_id: int) -> None:
+        with self._lock:
+            self._entries.pop(law_id, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+_TALLIES: _Memo[Tally] = _Memo()
+_EVOLUTIONS: _Memo[list[EvolutionBucket]] = _Memo()
+
+
+def forget(law_id: int) -> None:
+    """Drop what is remembered about one law, because it has just changed.
+
+    Called by :func:`app.crud.votes.cast_vote`. It runs before the ballot's
+    transaction commits, so a reader arriving in the microseconds between the two
+    can still store the previous figures — and then serve them for the length of
+    the window, which is exactly the staleness the page already declares. The
+    window is what bounds this; the call is what makes it rare.
+    """
+    _TALLIES.forget(law_id)
+    _EVOLUTIONS.forget(law_id)
+
+
+def reset_cache() -> None:
+    """Forget everything (tests, and a deliberate operational reset)."""
+    _TALLIES.clear()
+    _EVOLUTIONS.clear()
+
+
 def _tally_from_counts(counts: dict[str, int], with_profile: int = 0) -> Tally:
     total = sum(counts.values())
     pct = {k: (round(100 * v / total, 1) if total else 0.0) for k, v in counts.items()}
     return Tally(total=total, counts=counts, percentages=pct, with_profile=with_profile)
 
 
-def tally(db: Session, law_id: int) -> Tally:
+def tally(db: Session, law_id: int, *, max_age: float = 0.0) -> Tally:
+    """This law's headline figures.
+
+    ``max_age`` in seconds lets a caller accept a figure it has already told its
+    reader may be that old; left at zero the count is taken now. See the note at
+    :class:`_Memo` for why only some callers pass it.
+    """
+    remembered = _TALLIES.get(law_id, max_age)
+    if remembered is not None:
+        return remembered
     rows = db.execute(
         select(Vote.choice, *_COUNT_COLUMNS).where(Vote.law_id == law_id).group_by(Vote.choice)
     ).all()
@@ -80,26 +198,52 @@ def tally(db: Session, law_id: int) -> Tally:
     for choice, n, with_profile in rows:
         counts[choice] = n
         profiled += with_profile
-    return _tally_from_counts(counts, profiled)
+    result = _tally_from_counts(counts, profiled)
+    _TALLIES.put(law_id, result)
+    return result
 
 
-def tallies_for(db: Session, law_ids: list[int]) -> dict[int, Tally]:
-    """Tallies for many laws in one query — the admin dashboard lists them all."""
+def tallies_for(db: Session, law_ids: list[int], *, max_age: float = 0.0) -> dict[int, Tally]:
+    """Tallies for many laws — the home page and the admin listings.
+
+    One query for the laws that have to be counted, and none at all when every
+    one of them is already remembered. That second half is what makes the memo
+    worth having on the home page: a ballot forgets the single law it was cast
+    on, so a busy site re-counts *that* law and reads the other hundred and
+    forty-nine from memory, rather than either walking all of them or serving all
+    of them stale until the window turns over.
+    """
     if not law_ids:
         return {}
+
+    out: dict[int, Tally] = {}
+    wanted: list[int] = []
+    for law_id in law_ids:
+        remembered = _TALLIES.get(law_id, max_age)
+        if remembered is None:
+            wanted.append(law_id)
+        else:
+            out[law_id] = remembered
+    if not wanted:
+        return out
+
     rows = db.execute(
         select(Vote.law_id, Vote.choice, *_COUNT_COLUMNS)
-        .where(Vote.law_id.in_(law_ids))
+        .where(Vote.law_id.in_(wanted))
         .group_by(Vote.law_id, Vote.choice)
     ).all()
     counts: dict[int, dict[str, int]] = {
-        law_id: {c.value: 0 for c in VoteChoice} for law_id in law_ids
+        law_id: {c.value: 0 for c in VoteChoice} for law_id in wanted
     }
-    profiled: dict[int, int] = dict.fromkeys(law_ids, 0)
+    profiled: dict[int, int] = dict.fromkeys(wanted, 0)
     for law_id, choice, n, with_profile in rows:
         counts[law_id][choice] = n
         profiled[law_id] += with_profile
-    return {law_id: _tally_from_counts(c, profiled[law_id]) for law_id, c in counts.items()}
+    for law_id, c in counts.items():
+        counted = _tally_from_counts(c, profiled[law_id])
+        _TALLIES.put(law_id, counted)
+        out[law_id] = counted
+    return out
 
 
 def count_votes(db: Session, law_id: int) -> int:
@@ -115,14 +259,24 @@ def count_profiled(db: Session, law_id: int) -> int:
     whether the published breakdown may move — and that path has no use for the
     per-choice grouping ``tally`` does on the way.
 
-    Answered from ``ix_votes_law_choice`` alone: ``law_id`` leads the key and
-    ``demographics_recorded`` rides in the index's own leaves.
+    Answered from ``ix_votes_law_profiled``, the partial index that holds the
+    profiled votes and nothing else, so this costs what it counts rather than
+    what the law has received. ``ix_votes_law_choice`` could answer it too, from
+    its included column — by walking every vote on the law, which on this path is
+    every ballot's worth of work.
+
+    **The bare column, not ``.is_(True)``**, exactly as in
+    :func:`app.crud.laws._published` and for exactly the same reason: Postgres
+    applies a partial index only where it can prove the WHERE implies the index
+    predicate, and it cannot prove that of ``demographics_recorded IS true``. The
+    two spellings return the same rows, which is what makes tidying this one back
+    a change that costs a full scan and shows nothing.
     """
     return (
         db.scalar(
             select(func.count())
             .select_from(Vote)
-            .where(Vote.law_id == law_id, Vote.demographics_recorded.is_(True))
+            .where(Vote.law_id == law_id, Vote.demographics_recorded)
         )
         or 0
     )
@@ -130,11 +284,28 @@ def count_profiled(db: Session, law_id: int) -> int:
 
 @dataclass
 class EvolutionBucket:
+    #: The calendar day, ISO. Machine-facing on purpose: `app.charts` parses it
+    #: back to lay out the axis, and it is the only form that survives being
+    #: sorted, compared and grouped. **Always ``date.isoformat()``** — nothing
+    #: else may be put here, which is what lets :attr:`day` be strict.
     label: str
     counts: dict[str, int] = field(default_factory=dict)
 
+    @property
+    def day(self) -> date:
+        """The same day, as a date the page can render in French.
 
-def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[EvolutionBucket]:
+        The results page shows these buckets in a table, and it was printing
+        ``label`` straight — three date formats within one section, one of them
+        ISO, on a site that routes every other date through `app.labels` so that
+        no machine-readable string reaches a French page.
+        """
+        return date.fromisoformat(self.label)
+
+
+def evolution(
+    db: Session, law_id: int, *, total: int | None = None, max_age: float = 0.0
+) -> list[EvolutionBucket]:
     """Daily vote counts over time (V1), one bucket per calendar day.
 
     Returns an empty list until the total reaches ``min_bucket_volume`` so that
@@ -153,11 +324,23 @@ def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[Evo
     Nothing is revealed by the filling: a day absent from the old list already
     meant "no votes", and the range still stops at the first and last day anyone
     actually voted.
+
+    ``max_age`` works exactly as it does on :func:`tally`, and is passed by the
+    same caller for the same reason: this is the results page's *second* scan of
+    the same rows, and on a closed votation neither of them can produce a
+    different answer than it did a moment ago.
     """
+    remembered = _EVOLUTIONS.get(law_id, max_age)
+    if remembered is not None:
+        return remembered
+
     settings = get_settings()
     if total is None:
         total = count_votes(db, law_id)
     if total < settings.min_bucket_volume:
+        # Remembered too: below the gate this is the answer until the gate is
+        # cleared, and clearing it means a ballot, which forgets the law.
+        _EVOLUTIONS.put(law_id, [])
         return []
 
     zone = display_zone()
@@ -173,18 +356,20 @@ def evolution(db: Session, law_id: int, *, total: int | None = None) -> list[Evo
     for moment, choice, n in rows:
         day = as_utc(moment).astimezone(zone).date()
         out.setdefault(day, {c.value: 0 for c in VoteChoice})[choice] = n
-    if not out:
-        return []
 
     # Walk calendar days rather than adding 24 hours: a DST boundary makes those
     # two different things, and the day is what the label and the export agree on.
-    return [
-        EvolutionBucket(
-            label=day.isoformat(),
-            counts=out.get(day) or {c.value: 0 for c in VoteChoice},
-        )
-        for day in _days_between(min(out), max(out))
-    ]
+    curve: list[EvolutionBucket] = []
+    if out:
+        curve = [
+            EvolutionBucket(
+                label=day.isoformat(),
+                counts=out.get(day) or {c.value: 0 for c in VoteChoice},
+            )
+            for day in _days_between(min(out), max(out))
+        ]
+    _EVOLUTIONS.put(law_id, curve)
+    return curve
 
 
 def _days_between(first: date, last: date) -> Iterator[date]:

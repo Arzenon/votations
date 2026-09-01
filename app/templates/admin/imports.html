@@ -97,7 +97,7 @@
           {% if item.law_id %}<a href="/admin/lois/{{ item.law_id }}">Voir la votation</a>{% endif %}
         {% else %}
           <a href="/admin/lois/nouvelle?import_id={{ item.id }}">Créer la votation</a>
-          {% if item.status == 'ignore' %}
+          {% if item.is_ignored %}
             <form action="/admin/imports/{{ item.id }}/restaurer" method="post">
               <button type="submit" class="link-danger">Restaurer</button>
             </form>

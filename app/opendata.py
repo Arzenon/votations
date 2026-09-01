@@ -68,6 +68,13 @@ def fetch(
     host was a container memory limit. A truncated read here is a caught error
     and a retry an hour later; an OOM is the site.
 
+    **Budget twice ``max_bytes``.** The chunks are accumulated in a list and then
+    joined, so for the length of that join both copies are live: a caller that
+    sets the cap at what the container can hold has set it at twice what the
+    container can hold. Both callers size theirs against that — see the note at
+    `app.legifrance.MAX_ARCHIVE_BYTES` — and both then hand the result to a
+    ``BytesIO``, which copies it a third time.
+
     The cap is checked as the body arrives rather than against
     ``Content-Length``, which is absent on a chunked response and is in any case
     a claim by the sender rather than a fact.

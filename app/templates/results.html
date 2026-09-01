@@ -7,7 +7,7 @@
   <h1>Résultats — {{ law.title }}</h1>
   <span class="status status-{{ status }}">{{ status | law_status }}</span>
 
-  {% if status == "open" %}
+  {% if voting_open %}
   <p class="meta">
     La votation est encore ouverte : ces chiffres sont provisoires et changeront
     jusqu'à la clôture.
@@ -78,7 +78,11 @@
           <tbody>
             {% for bucket in evolution %}
             <tr>
-              <th scope="row">{{ bucket.label }}</th>
+              {# `day`, not `label`: the label is the ISO form the chart parses
+                 back, and printing it put a third date format in this section —
+                 next to an axis in jj/mm and a history table in jj/mm/aaaa, on a
+                 site where every other date goes through `app.labels`. #}
+              <th scope="row">{{ bucket.day | french_date }}</th>
               <td>{{ bucket.counts['for'] }}</td>
               <td>{{ bucket.counts['against'] }}</td>
               <td>{{ bucket.counts['abstain'] }}</td>
@@ -146,9 +150,9 @@
         </tbody>
       </table>
     </div>
-    {% elif bd.reason == "below_threshold" %}
+    {% elif bd.is_below_threshold %}
     <p class="meta">Pas assez de votant·e·s.</p>
-    {% elif bd.reason == "pending" %}
+    {% elif bd.is_pending %}
     {# Not « aucune donnée » : people may have been filling these fields in since
        the votation opened. Nothing is published until the first palier. #}
     <p class="meta">

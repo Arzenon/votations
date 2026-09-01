@@ -128,7 +128,7 @@
 
   <section class="block vote-block">
     <h2>Voter</h2>
-    {% if status == "open" %}
+    {% if voting_open %}
       {% include "_ballot.html" %}
     {% else %}
       <h3>Résultats</h3>

@@ -13,3 +13,6 @@ dist/
 # Les instantanés de contenu, pas le dossier qui les reçoit.
 exports/*
 !exports/.gitkeep
+
+# Utilitaire personnel sans rapport avec le projet, posé ici par commodité.
+dmarc/

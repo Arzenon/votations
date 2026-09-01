@@ -285,6 +285,81 @@ def test_the_home_page_counts_every_law_s_votes_in_one_query(client, db_session,
     assert len(counted) <= 1, f"{len(counted)} requêtes de comptage : {counted}"
 
 
+# --- The memo: never staler than the page already says it may be --------------
+
+
+def test_the_home_page_does_not_recount_inside_its_own_cache_window(
+    client, db_session, count_queries
+):
+    """One query is not the same thing as a cheap one.
+
+    Counting the participation of every listed law walks every vote ever cast on
+    any of them, and nothing in the shipped stack caches on the app's behalf. The
+    page already tells its reader the figures may be a minute old; serving them
+    from memory for that same minute tells nobody anything new.
+    """
+    publish_laws(db_session, 5)
+    client.get("/")  # warms it
+
+    with count_queries() as seen:
+        client.get("/")
+    counted = [q for q in seen if "count" in q.lower() and " votes" in q.lower()]
+    assert counted == [], f"la page a recompté les votes : {counted}"
+
+
+def test_a_ballot_makes_the_home_page_count_that_law_again(client, db_session, open_law):
+    """The window is the backstop, not the mechanism.
+
+    A vote drops the law it was cast on, so the figure a reader sees is not
+    merely fresh-ish but current — and a busy site re-counts the one votation
+    being voted on rather than all of them.
+    """
+    assert "Aucun vote" in client.get("/").text
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    assert "1 vote" in client.get("/").text
+
+
+def test_an_open_votation_recounts_its_results_every_time(client, open_law, count_queries):
+    """The one page that must not be memoised, and why.
+
+    Its thirty seconds of caching are aimed at one reader's own browser and were
+    chosen so somebody who has just voted still sees their ballot. A memo shared
+    by every reader would spend that budget on somebody else's request.
+    """
+    client.get(f"/loi/{open_law.slug}/resultats")
+    with count_queries() as seen:
+        client.get(f"/loi/{open_law.slug}/resultats")
+    assert [q for q in seen if "from votes" in q.lower()], (
+        "les résultats d'une votation ouverte doivent être comptés en direct"
+    )
+
+
+def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, count_queries):
+    """Nothing about a closed votation can move, so both scans are repetition."""
+    client.get(f"/loi/{closed_law.slug}/resultats")
+    with count_queries() as seen:
+        client.get(f"/loi/{closed_law.slug}/resultats")
+    touched = [q for q in seen if "from votes" in q.lower()]
+    assert touched == [], f"une votation close a été recomptée : {touched}"
+
+
+def test_the_memo_window_is_the_one_the_page_promises():
+    """Two numbers that must be the same, in two files that cannot see each other."""
+    from app.models import STATUS_CLOSED, STATUS_OPEN
+    from app.routes.public.common import (
+        CLOSED_RESULTS_CACHE,
+        PUBLIC_PAGE_CACHE,
+        PUBLIC_PAGE_MAX_AGE,
+        results_memo_age,
+    )
+
+    assert PUBLIC_PAGE_CACHE["Cache-Control"] == f"public, max-age={PUBLIC_PAGE_MAX_AGE}"
+    assert results_memo_age(STATUS_OPEN) == 0.0
+    assert CLOSED_RESULTS_CACHE["Cache-Control"] == (
+        f"public, max-age={results_memo_age(STATUS_CLOSED):.0f}"
+    )
+
+
 # --- The public listings must stay on ix_laws_home ----------------------------
 
 

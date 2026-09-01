@@ -233,10 +233,19 @@ def background_db(db_session, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _clear_rate_limits():
-    """Rate-limit counters are process-global; no test may inherit another's."""
+def _clear_process_state():
+    """Two tables live in the process, not the database; no test inherits either.
+
+    The rate-limit counters, and the short-lived memo of the per-law figures the
+    listings read. Both are deliberately process-local — see `app.ratelimit` and
+    `app.crud.results._Memo` — which is exactly what makes them leak between
+    tests unless something clears them.
+    """
     from app import ratelimit
+    from app.crud import results
 
     ratelimit.reset()
+    results.reset_cache()
     yield
     ratelimit.reset()
+    results.reset_cache()

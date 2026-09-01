@@ -25,7 +25,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
 from app.config import get_settings
+from app.logging_config import get_logger
 from app.opendata import Getter, as_list, getter
+
+log = get_logger("assemblee")
 
 # Entries of interest inside the archive; the export also ships a `json/document/`
 # tree of bill/report notices, which carries no promulgation information.
@@ -74,11 +77,17 @@ class PromulgatedLaw:
     seances: list[dict] = field(default_factory=list)
 
 
-# A generous timeout: the archive is ~10 MB and served from a public portal. The
-# size ceiling is generous too, and exists for the same reason as the per-dossier
-# one above — the container has a 1 GB memory limit and the download used to be
-# the one step with nothing bounding it.
-MAX_EXPORT_BYTES = 256 * 1024 * 1024
+# A generous timeout: the archive is ~10 MB and served from a public portal.
+#
+# The size ceiling exists for the same reason as the per-dossier one above — the
+# download used to be the one step with nothing bounding it — and is sized against
+# the container rather than only against the source. A download peaks at roughly
+# twice this figure (see `app.opendata.fetch`), and the blob is copied again into
+# a `BytesIO` below, so the job holds ~3× the cap at its worst moment inside a
+# 1 GB limit. At 256 MB, which is what this used to be, the ceiling was set above
+# the point where the job is killed for reaching it, which makes it no ceiling at
+# all. Six times the largest real export is ample.
+MAX_EXPORT_BYTES = 64 * 1024 * 1024
 _default_getter = getter(timeout=120.0, max_bytes=MAX_EXPORT_BYTES, error=AssembleeFetchError)
 
 
@@ -198,14 +207,35 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
                     # Read the declared size, not the member: no real dossier is
                     # this large, so this is a malformed or hostile archive.
                     continue
+                # One malformed dossier must not abort the whole import — and
+                # until this covered the *reading* as well as the decoding, it
+                # did not say so. `json.loads` was inside and `_build` was not,
+                # while `_build` is where the shapes actually vary: this is a
+                # mechanical XML→JSON conversion, so a collection holding one
+                # element arrives as a bare object (which is why `as_list` exists)
+                # and a field the source writes as text can arrive as a mapping.
+                # `_parse_date` on a dict raises TypeError, `.get` on a list
+                # raises AttributeError, and either one threw away the other
+                # three thousand dossiers on its way out.
+                #
+                # `RecursionError` for the same reason one line down: `json.loads`
+                # raises it, not ValueError, on a deeply nested document.
                 try:
                     dossier = json.loads(archive.read(info))["dossierParlementaire"]
-                except (KeyError, TypeError, ValueError, zipfile.BadZipFile):
-                    continue  # one malformed dossier must not abort the whole import
-                acte = _find_promulgation(dossier)
-                if acte is None:
+                    acte = _find_promulgation(dossier)
+                    if acte is None:
+                        continue
+                    law = _build(dossier, acte)
+                except (
+                    AttributeError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    RecursionError,
+                    zipfile.BadZipFile,
+                ):
+                    log.warning("dossier ignoré : %s — structure inattendue", info.filename)
                     continue
-                law = _build(dossier, acte)
                 if law is None:
                     continue
                 if since and law.promulgated_on < since:

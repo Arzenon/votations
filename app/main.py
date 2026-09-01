@@ -156,6 +156,16 @@ class SecurityHeaders:
         await self.app(scope, receive, send_with_headers)
 
 
+# What the heading says, for the refusals a visitor can actually meet. Anything
+# not named here falls back to the generic wording — « Une erreur est survenue »
+# is the honest heading for a status nobody has thought about yet, and a wrong
+# specific one would be worse.
+_ERROR_TITLES = {
+    403: "Requête refusée",
+    429: "Trop de tentatives",
+}
+
+
 def _error_page(request: Request, *, status: int, titre: str, message: str) -> Response:
     """Render a failure as a page of this site, not as a bare JSON payload."""
     template = "not_found.html" if status == 404 else "erreur.html"
@@ -261,8 +271,17 @@ def create_app() -> FastAPI:
             return PlainTextResponse(
                 str(exc.detail), status_code=exc.status_code, headers=exc.headers
             )
-        titre = "Requête refusée" if exc.status_code == 403 else "Une erreur est survenue"
-        return _error_page(request, status=exc.status_code, titre=titre, message=str(exc.detail))
+        titre = _ERROR_TITLES.get(exc.status_code, "Une erreur est survenue")
+        response = _error_page(
+            request, status=exc.status_code, titre=titre, message=str(exc.detail)
+        )
+        # The headers the refusal itself carries — `Retry-After` on the
+        # administration's 429, in practice. They were reaching a `curl` through
+        # the branch above and being dropped for a browser, which is the caller
+        # that most needs telling how long to wait.
+        for name, value in (exc.headers or {}).items():
+            response.headers.setdefault(name, value)
+        return response
 
     @app.exception_handler(RequestValidationError)
     def invalid_request(request: Request, exc: RequestValidationError) -> Response:
@@ -326,13 +345,22 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    @app.get("/favicon.ico", include_in_schema=False)
-    def favicon() -> Response:
+    def _favicon() -> Response:
         return Response(
             FAVICON_SVG,
             media_type="image/svg+xml",
             headers={"Cache-Control": "public, max-age=86400"},
         )
+
+    # Two URLs, one image, and the pair is the point. `<link rel="icon">` in the
+    # page points at the `.svg`, which is what the mark actually is and what
+    # every browser that reads the link will fetch. `/favicon.ico` stays because
+    # a browser that ignores the link asks for that path by itself, and answering
+    # it with a 404 costs a log line and an empty tab icon — but a file named
+    # `.ico` holding SVG is a mismatch some clients (Safari, historically) refuse
+    # to render, which is exactly why it is no longer the one the page names.
+    app.get("/favicon.svg", include_in_schema=False)(_favicon)
+    app.get("/favicon.ico", include_in_schema=False)(_favicon)
 
     @app.get("/sante", response_class=PlainTextResponse, include_in_schema=False)
     def sante() -> PlainTextResponse:

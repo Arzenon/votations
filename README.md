@@ -416,6 +416,15 @@ concerné, voici la carte :
   requête inter-site ; pour le vote, `SameSite=Lax` retient bien un cookie existant
   mais n'empêche pas d'en créer un neuf — n'importe quelle page pourrait sinon
   transformer ses visiteurs en bulletins.
+
+  Un POST **sans aucun des deux en-têtes** est refusé en production et accepté
+  ailleurs. Tous les navigateurs envoient `Origin` sur un envoi de formulaire
+  inter-site depuis des années, donc « aucun des deux » décrit un script et non
+  une page — mais tout l'intérêt de ce contrôle est de ne pas reposer sur le
+  choix par défaut de quelqu'un d'autre. En développement la lecture permissive
+  est conservée : c'est ce qu'envoient `curl` et le client de test. Un script qui
+  pilote une instance en production ajoute `-H "Origin: https://<votre domaine>"`,
+  ce qui est une exigence raisonnable pour une requête qui modifie l'état.
 - **Limitation de débit** (`app/ratelimit.py`). L'adresse cliente est lue à
   `TRUSTED_PROXY_HOPS` entrées de la **fin** de `X-Forwarded-For` : les proxys
   ajoutent à la suite, donc tout ce qui est à gauche a été écrit par l'appelant.
@@ -476,6 +485,22 @@ concerné, voici la carte :
   ne le fait pas par défaut. Ces en-têtes servent donc aujourd'hui les
   rechargements d'un même lecteur, et rendent utile l'ajout d'un CDN le jour où
   le trafic le demandera.
+
+  D'où une **mémoïsation côté serveur** (`app/crud/results.py`), dont la règle
+  tient en une phrase : *jamais plus vieille que ce que la page promet déjà à son
+  lecteur*. Une requête n'est pas la même chose qu'une requête peu coûteuse —
+  celle qui compte la participation affichée sur l'accueil parcourt tous les
+  votes jamais exprimés sur les cent cinquante lois listées, à chaque visiteur.
+  L'accueil réutilise donc ce décompte pendant les soixante secondes que son
+  `Cache-Control` annonce (le même nombre, littéralement : `PUBLIC_PAGE_MAX_AGE`
+  sert aux deux), et un bulletin oublie la loi sur laquelle il a été déposé — un
+  site actif recompte *cette* votation et lit les autres en mémoire.
+
+  Les résultats d'une votation **ouverte** en sont délibérément exclus. Leurs
+  trente secondes s'adressent au navigateur d'un lecteur en particulier, et ont
+  été choisies pour que quelqu'un qui vient de voter voie son bulletin ; un cache
+  partagé dépenserait ce budget pour la requête de quelqu'un d'autre. Une votation
+  close, elle, ne bouge plus du tout.
 - **Surface exposée.** En production, `/docs`, `/redoc` et `/openapi.json` sont
   désactivés : le schéma énumère toutes les routes d'administration.
 - **Carte de partage.** `app/static/og.png` est un fichier statique, généré une
@@ -535,3 +560,12 @@ l'horodatage d'un vote. `app/logging_config.py` fournit en échange une
 journalisation applicative qui, par construction, ne consigne **jamais** une
 adresse, un cookie ou un jeton de votant — seulement des identifiants de loi,
 d'import, et des classes d'erreur.
+
+« Par construction » demandait une pièce de plus, et elle est dans `app/db.py` :
+le moteur est créé avec `hide_parameters=True`. SQLAlchemy écrit sinon
+`[parameters: {…}]` dans le texte d'une `StatementError`, et le gestionnaire
+d'erreur de dernier recours journalise l'exception — donc une erreur de base sur
+la route de vote consignait le jeton du votant à côté de l'instant de son
+bulletin, c'est-à-dire exactement l'appariement que /vie-privee affirme ne pas
+enregistrer. L'énoncé SQL, la table et le message de la base restent journalisés :
+ce réglage masque des valeurs, pas un diagnostic.

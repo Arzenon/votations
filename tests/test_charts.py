@@ -198,3 +198,33 @@ def test_the_axis_never_draws_more_labels_than_it_promises():
         assert chart.x_ticks[-1][1] == _short_date(days[-1].label), f"{n} jours"
         # And the first, or the axis starts nowhere.
         assert chart.x_ticks[0][1] == _short_date(days[0].label), f"{n} jours"
+
+
+# --- The table under the curve ------------------------------------------------
+
+
+def test_the_day_by_day_table_is_dated_in_french(client, open_law, monkeypatch):
+    """The buckets carry an ISO label because the chart parses it back.
+
+    Printing that label straight put a third date format in one section — beside
+    an axis in jj/mm and a history table in jj/mm/aaaa — on a site that routes
+    every other date through `app.labels` precisely so no machine-readable string
+    reaches a French page.
+    """
+    from datetime import UTC, datetime
+
+    from app.config import display_zone
+    from app.labels import french_date
+
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 2, raising=False)
+    for _ in range(4):
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+        client.cookies.clear()
+
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    # The day a voter would say they voted on, which is the zone the buckets are
+    # cut in — not the server's idea of today.
+    today = datetime.now(UTC).astimezone(display_zone()).date()
+
+    assert french_date(today) in page, "le tableau doit dater ses lignes en français"
+    assert today.isoformat() not in page, "la forme ISO ne doit pas atteindre la page"

@@ -48,7 +48,27 @@ DRAFT_FAILED = "echec"
 
 class ImportedLaw(Base):
     __tablename__ = "imported_laws"
-    __table_args__ = (UniqueConstraint("source", "dossier_uid", name="uq_imported_law_source_uid"),)
+    __table_args__ = (
+        UniqueConstraint("source", "dossier_uid", name="uq_imported_law_source_uid"),
+        # One dossier, one votation — as a fact about the table rather than as a
+        # check on one route.
+        #
+        # `create_law` already refuses to build a second law from a staged row
+        # that has one, and that guard is the right place to *explain* the rule to
+        # an administrator. It is not the only way in: `scripts.content` re-applies
+        # the review decisions carried in a snapshot, and nothing there stopped two
+        # dossiers claiming the same law. `get_by_law_id` would then return
+        # whichever row the planner handed back first — silently, since
+        # `Session.scalar` does not object to a second row — and the AI draft
+        # shown on a law's form could have belonged to another dossier.
+        #
+        # A plain unique constraint rather than a partial index, because SQL
+        # treats NULLs as distinct: every staged row still awaiting a decision
+        # carries NULL here and none of them collide. It also gives `law_id` the
+        # btree index it never had, which is what `get_by_law_id` reads on every
+        # visit to a law's form and what the `ON DELETE SET NULL` walks on a purge.
+        UniqueConstraint("law_id", name="uq_imported_law_law_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source: Mapped[str] = mapped_column(String(16), default=SOURCE_ASSEMBLEE)
@@ -107,3 +127,14 @@ class ImportedLaw(Base):
         repeats it is a copy that no rename would follow.
         """
         return self.status == STATUS_IMPORTED
+
+    @property
+    def is_ignored(self) -> bool:
+        """Whether an administrator has set this dossier aside.
+
+        Here for the same reason as :attr:`is_imported`, and it was noticeable
+        that only one of the pair existed: the imports table asked this one by
+        writing « ignore » out again, two lines below a branch that asked the
+        other one properly.
+        """
+        return self.status == STATUS_IGNORED

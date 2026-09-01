@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.crud import results
 from app.models import Law, Vote, VoteChoice
 
 
@@ -45,6 +46,18 @@ def cast_vote(
     """
     if not law.is_open():
         raise VotingClosed(law.slug)
+
+    # The figures for this law have just stopped being what anybody remembered.
+    # See `app.crud.results.forget`: the listings memoise a tally for as long as
+    # their own Cache-Control already promises, and this is what keeps that a
+    # backstop rather than the mechanism — one ballot forgets one law, so a busy
+    # site re-counts the votation being voted on and reads the rest from memory.
+    #
+    # Before the write rather than after, because the write is not this
+    # function's to finish: the ballot is one transaction and the caller commits
+    # it. The cost of being early is a reader landing in between and storing the
+    # previous figures — for the length of a window the page has already declared.
+    results.forget(law.id)
 
     # RETURNING yields no row when the insert was skipped, which is exactly the
     # signal we want: a row came back ⇒ this is the first ballot from this

@@ -61,6 +61,19 @@ def get_engine() -> Engine:
     return create_engine(
         settings.database_url,
         pool_pre_ping=True,
+        # Keep bound parameters out of the text of a database error.
+        #
+        # SQLAlchemy renders `[parameters: {...}]` into `str(StatementError)`, and
+        # `app.main`'s last-resort handler logs the exception. On the vote route
+        # the parameters of a failing statement are the law id, the choice and
+        # **the voter token** — so an IntegrityError there would have written a
+        # voter's identifier next to the instant of their ballot, in the logs, on
+        # a site whose privacy page states that pairing is never recorded and
+        # whose `app.logging_config` says in as many words never to log a token.
+        #
+        # The failure is still fully diagnosable: the statement, the table and
+        # the underlying database message are all still there. Only the values go.
+        hide_parameters=True,
         # Sized against the request thread pool: a pool smaller than the worker
         # count turns every burst into a queue on connection checkout.
         pool_size=settings.db_pool_size,

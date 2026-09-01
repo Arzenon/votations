@@ -16,6 +16,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,6 +51,35 @@ class Vote(Base):
             "law_id",
             "choice",
             postgresql_include=["created_at", "demographics_recorded"],
+        ),
+        # The one question asked on the *write* path, and the only one that is
+        # about a small subset of a law's votes: how many of them carried a
+        # profile. `app.crud.demographics.refresh_snapshot` asks it on every
+        # ballot until the law takes its first snapshot — which needs
+        # MIN_BUCKET_VOLUME profiled votes and, the profile being optional, may
+        # never happen. The index above answers it by walking *every* vote on the
+        # law and testing the included column, so a votation with a hundred
+        # thousand ballots and forty profiles paid a hundred-thousand-entry scan
+        # per ballot, on the busiest write in the application.
+        #
+        # This one holds only the profiled votes, so the count is proportional to
+        # what it counts. It stays small by construction: the rows it indexes are
+        # the minority who filled the optional fields in.
+        #
+        # **The predicate is the bare column**, and `count_profiled` must spell
+        # its WHERE the same way — see the note there, and `laws._published` for
+        # the same lesson learned the expensive way: Postgres uses a partial index
+        # only where it can prove the query implies the predicate, and it cannot
+        # prove that of `IS true`.
+        #
+        # Alembic compares an index on its columns and its uniqueness, never on
+        # its `where` (checked against 1.19) — which is what lets `ix_laws_home`
+        # be declared here too, and also means nothing would catch this predicate
+        # drifting from the migration's. Keep the two spellings identical.
+        Index(
+            "ix_votes_law_profiled",
+            "law_id",
+            postgresql_where=text("demographics_recorded"),
         ),
     )
 

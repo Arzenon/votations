@@ -18,7 +18,10 @@
   <meta property="og:image:alt" content="Votations Françaises — donnez votre avis sur les lois adoptées par le Parlement">
   <meta property="og:locale" content="fr_FR">
   <meta name="twitter:card" content="summary_large_image">
-  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  {# `.svg`, not `.ico`: the mark is an SVG, and a file named `.ico` that holds
+     one is a mismatch some browsers decline to render. `/favicon.ico` still
+     answers, for the clients that ask for it without reading this line. #}
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   {# htmx reads this before it initialises, on the two pages that load it. Both
      settings default to true, and the Content-Security-Policy already refuses
      what they permit — `script-src 'self'` with neither 'unsafe-eval' nor

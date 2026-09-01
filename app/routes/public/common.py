@@ -28,7 +28,17 @@ from app.templating import templates
 # Note that nothing in the shipped stack caches on the app's behalf: Caddy does
 # not, by default. So today this saves a reader's own repeat views, and makes a
 # CDN or a caching proxy worth adding the day traffic calls for one.
-PUBLIC_PAGE_CACHE = {"Cache-Control": "public, max-age=60"}
+#
+# The durations are named rather than written into the header, because one of
+# them is read twice. The home page shows the participation of every law it
+# lists, and counting those is a scan of every vote ever cast on any of them;
+# `app.crud.results` will serve that figure from memory for a bounded time, and
+# the bound it is given is *this* number. The header is a promise to the reader
+# that the figure may be a minute old, and the memo is the same promise kept on
+# the server — which only holds while the two are the same number, so they are
+# the same number.
+PUBLIC_PAGE_MAX_AGE = 60
+PUBLIC_PAGE_CACHE = {"Cache-Control": f"public, max-age={PUBLIC_PAGE_MAX_AGE}"}
 
 # The results of a votation still being voted on are a different trade, because
 # one of the readers is somebody who has just voted. A minute of caching would
@@ -40,13 +50,32 @@ PUBLIC_PAGE_CACHE = {"Cache-Control": "public, max-age=60"}
 # its spike in front of the app rather than in it, short enough that a voter
 # checking their own vote almost always sees it. Once the vote is closed the
 # figures no longer move at all, so that page is cached properly.
-OPEN_RESULTS_CACHE = {"Cache-Control": "public, max-age=30"}
-CLOSED_RESULTS_CACHE = {"Cache-Control": "public, max-age=300"}
+OPEN_RESULTS_MAX_AGE = 30
+CLOSED_RESULTS_MAX_AGE = 300
+OPEN_RESULTS_CACHE = {"Cache-Control": f"public, max-age={OPEN_RESULTS_MAX_AGE}"}
+CLOSED_RESULTS_CACHE = {"Cache-Control": f"public, max-age={CLOSED_RESULTS_MAX_AGE}"}
 
 
 def results_cache(status: str) -> dict[str, str]:
     """The caching a results page may ask for, given the votation's state."""
     return OPEN_RESULTS_CACHE if status == STATUS_OPEN else CLOSED_RESULTS_CACHE
+
+
+def results_memo_age(status: str) -> float:
+    """How stale a *server-side* figure may be on this page. Zero while open.
+
+    Deliberately not :func:`results_cache`'s number, and the asymmetry is the
+    point. The thirty seconds above are addressed to one reader's own browser and
+    were chosen so that somebody who has just voted still sees their ballot when
+    they follow « voir les résultats ». A memo shared by every reader would spend
+    that budget on somebody else's request and take from this voter the one thing
+    the page exists to give them — the ability to check the number themselves.
+
+    Once the votation is closed the figures cannot move at all, so the same
+    reasoning runs the other way: there is nothing to be fresh about, and the two
+    scans this page makes of every vote ever cast are pure repetition.
+    """
+    return 0.0 if status == STATUS_OPEN else float(CLOSED_RESULTS_MAX_AGE)
 
 
 def visible(db: Session, slug: str) -> Law | None:

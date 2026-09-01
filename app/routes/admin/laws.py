@@ -322,6 +322,24 @@ def export_law_csv(request: Request, law_id: int, db: Session = Depends(get_db))
     return csv_response(db, law)
 
 
+# --- What a route does about a law that is not there --------------------------
+#
+# Two answers, and the rule is which kind of request it was.
+#
+# A **GET** for a page about a law — the form, the preview, a confirmation — is a
+# request to *see* something that does not exist, and 404 is the only true thing
+# to say about it. So is a POST that carries a payload for one particular row:
+# `update_law` cannot apply an edit to a law that is gone, and pretending
+# otherwise would report a save that did not happen.
+#
+# A **POST that only asks for a state** — archive it, restore it, purge it — is
+# idempotent, and the state it asks for is already the case. Answering 404 there
+# would turn the ordinary browser accident (back, then submit again) into an
+# error page about something that in fact went perfectly well. These three
+# therefore redirect, exactly as they do on success. `archive` is idempotent for
+# real, not only in its status code — see `laws_crud.archive`.
+
+
 @router.post("/lois/{law_id}/archiver")
 def archive_law(law_id: int, db: Session = Depends(get_db)):
     law = laws_crud.get_by_id(db, law_id)

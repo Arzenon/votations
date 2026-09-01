@@ -30,7 +30,13 @@ from app.models import (
     Law,
     VoteChoice,
 )
-from app.routes.public.common import not_found, results_cache, too_many_votes, visible
+from app.routes.public.common import (
+    not_found,
+    results_cache,
+    results_memo_age,
+    too_many_votes,
+    visible,
+)
 from app.templating import templates
 
 router = APIRouter()
@@ -105,6 +111,12 @@ def _ballot_fragment(
         {
             "law": law,
             "status": status,
+            # The one question the ballot asks of the status, decided here rather
+            # than by comparing against « open » in the template: the value is
+            # `STATUS_OPEN`, and a page that spells it out is a copy no rename
+            # would follow — the same reason `draft_state_context` hands its
+            # partial three booleans instead of a status string.
+            "voting_open": status == STATUS_OPEN,
             "existing_choice": existing_choice,
             "choices": list(VoteChoice),
             "demographics_locked": demographics_locked,
@@ -158,6 +170,9 @@ def law_page_context(
     return {
         "law": law,
         "status": status,
+        # See `_ballot_fragment`: the template asks whether it may show a ballot,
+        # not what the status string happens to be.
+        "voting_open": status == STATUS_OPEN,
         "existing_choice": existing_choice,
         # Only the closed page shows a tally; counting the votes to render a
         # ballot nobody sees was wasted work on the busiest page of the site.
@@ -333,10 +348,16 @@ def results_page(
         return not_found(request)
     # One pass over this law's votes, shared by everything below that needs it.
     # Four separate COUNT(*)s used to answer the same question per render.
-    tally = results_crud.tally(db, law.id)
-    evolution = results_crud.evolution(db, law.id, total=tally.total)
-    breakdowns = demo_crud.all_breakdowns(db, law)
+    #
+    # Two passes, in fact — the tally and the curve — and on a closed votation
+    # both are repetition, because nothing about a closed votation can move. That
+    # is what `results_memo_age` returns a number for here and zero while the vote
+    # is open; see it for why the open case is deliberately not the same trade.
     status = law.status()
+    memo_age = results_memo_age(status)
+    tally = results_crud.tally(db, law.id, max_age=memo_age)
+    evolution = results_crud.evolution(db, law.id, total=tally.total, max_age=memo_age)
+    breakdowns = demo_crud.all_breakdowns(db, law)
     history = laws_crud.revisions(db, law.id, page=revisions)
     settings = get_settings()
     return templates.TemplateResponse(
@@ -345,6 +366,7 @@ def results_page(
         {
             "law": law,
             "status": status,
+            "voting_open": status == STATUS_OPEN,
             "tally": tally,
             "evolution": evolution,
             "chart": build_evolution_chart(evolution),

@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 
+from app.config import get_settings
+
 # Schemes a stored link may use. Anything else — `javascript:`, `data:` — becomes
 # an executable payload the moment it is rendered as an href.
 SAFE_URL_SCHEMES = ("http", "https")
@@ -25,6 +27,10 @@ def _origin(url: str) -> tuple[str, str]:
     return parts.scheme.lower(), parts.netloc.lower()
 
 
+#: Said to a caller whose request does not come from this site.
+_REFUSED = "Requête refusée : elle ne provient pas de ce site."
+
+
 def require_same_origin(request: Request) -> None:
     """Reject state-changing requests that came from another site.
 
@@ -34,21 +40,33 @@ def require_same_origin(request: Request) -> None:
     ballots.
 
     Comparing the request's own host to Origin (falling back to Referer) closes
-    that. Requests with neither header are not browser form posts (curl, the test
-    client) and are left alone.
+    that.
+
+    **A request carrying neither header is refused in production and allowed
+    outside it**, which is the one asymmetry here and is worth stating plainly.
+    Every browser has sent ``Origin`` on a cross-site form post for years, so
+    "neither header" describes a script rather than a page — but the whole point
+    of this check is that it must not depend on somebody else's default staying
+    what it is today, and the administration is guarded by HTTP Basic, which a
+    browser attaches to a cross-site request whether we like it or not. So the
+    deployment that faces the internet takes the strict reading.
+
+    Development keeps the lenient one because that is what `curl` and the test
+    client send, and because nothing there is worth forging. An operator
+    scripting against a live instance sends `Origin: https://<son domaine>`
+    explicitly, which is a fair thing to ask of a script that changes state.
     """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return
     stated = request.headers.get("origin") or request.headers.get("referer")
     if not stated:
+        if get_settings().is_production:
+            raise HTTPException(status_code=403, detail=_REFUSED)
         return
     # Compare parsed origins, never string prefixes: "http://site.evil.example"
     # starts with "http://site" and would otherwise sail through.
     if _origin(stated) != _origin(str(request.base_url)):
-        raise HTTPException(
-            status_code=403,
-            detail="Requête refusée : elle ne provient pas de ce site.",
-        )
+        raise HTTPException(status_code=403, detail=_REFUSED)
 
 
 def is_safe_url(value: str | None) -> bool:

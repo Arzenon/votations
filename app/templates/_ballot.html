@@ -11,7 +11,7 @@
   <p class="vote-notice" role="alert">{{ notice }}</p>
   {% endif %}
 
-  {% if law and status == "open" %}
+  {% if law and voting_open %}
   <form action="/loi/{{ law.slug }}/vote" method="post"
         hx-post="/loi/{{ law.slug }}/vote" hx-target="#ballot" hx-swap="outerHTML">
     <fieldset>

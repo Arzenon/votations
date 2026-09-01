@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import get_db
-from app.routes.public.common import PUBLIC_PAGE_CACHE
+from app.routes.public.common import PUBLIC_PAGE_CACHE, PUBLIC_PAGE_MAX_AGE
 from app.templating import templates
 
 router = APIRouter()
@@ -35,7 +35,18 @@ def home(request: Request, db: Session = Depends(get_db)):
     # on: ordering the page by it would make visibility follow votes and votes
     # follow visibility, which is the loop the charter's anti-manipulation rule
     # exists to refuse.
-    tallies = results_crud.tallies_for(db, [law.id for _, laws in bands for law in laws])
+    #
+    # One query is not the same thing as a cheap one: it groups every vote ever
+    # cast on up to a hundred and fifty votations, to draw a hundred and fifty
+    # cards, on the busiest page of the site. `max_age` lets that answer be
+    # reused for as long as this page's own Cache-Control already tells the
+    # reader it may be — the same number, deliberately — and a ballot forgets the
+    # law it was cast on, so what is reused is never a figure that has moved.
+    tallies = results_crud.tallies_for(
+        db,
+        [law.id for _, laws in bands for law in laws],
+        max_age=PUBLIC_PAGE_MAX_AGE,
+    )
     return templates.TemplateResponse(
         request,
         "home.html",
