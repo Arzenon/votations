@@ -115,6 +115,18 @@ h1 { font-size: 1.8rem; line-height: 1.2; }
 .search.advanced { gap: 1rem; }
 .search label { display: block; font-size: 0.85rem; color: var(--muted); }
 
+/* The home page's search box: label stacked above the field, field taking the
+   width the button leaves it.
+
+   Deliberately not what `.search.advanced` does. There, three controls share a
+   line and a small muted label is exactly what fits above each of them. Here
+   there is one field, it is the main thing the page invites you to do, and the
+   label is closer to a heading for it than to a caption — so it reads at body
+   size and in body colour. */
+.search-field { flex: 1; min-width: 220px; display: grid; gap: 0.35rem; }
+.search-field label { font-size: 1rem; color: var(--ink); }
+.search-field input[type=search] { width: 100%; }
+
 /* Buttons */
 button, .button {
   background: var(--accent-solid); color: var(--on-accent); border: 0; border-radius: var(--radius);

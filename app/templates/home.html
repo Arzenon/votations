@@ -4,10 +4,18 @@
 <p class="lede">{{ TAGLINE }}</p>
 
 {# One search, one page: the form posts to the dedicated search route rather
-   than duplicating a second implementation here. #}
+   than duplicating a second implementation here.
+
+   The label and the field are wrapped together so the label sits *above* it
+   rather than beside it. On its own the label was a third item in the same flex
+   row, squeezed to the left of the box it names — which reads as a caption
+   somebody forgot to place, and left the field itself narrower than it needed to
+   be. This is the page's main invitation; it is worth the line. #}
 <form class="search" action="/recherche" method="get" role="search">
-  <label for="q">Rechercher une loi</label>
-  <input type="search" id="q" name="q" placeholder="Titre ou référence…">
+  <div class="search-field">
+    <label for="q">Rechercher une loi</label>
+    <input type="search" id="q" name="q" placeholder="Titre ou référence…">
+  </div>
   <button type="submit">Rechercher</button>
 </form>
 
