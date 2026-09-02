@@ -35,13 +35,20 @@
      every other paragraph, and the debate had no summary at all: a reader had to
      scroll past two blocks of prose to discover there was even a disagreement. #}
   {% set lede, reste = law.summary_text | summary_split %}
-  {# `promulgated_on` is the predicate for saying anything about Parliament: it
-     means this text went through it. A law written by hand has none, and the
-     encart then says nothing about a vote it knows nothing about. Named here so
-     the gate and the branch inside cannot disagree - they did, and a law adopted
-     without a public scrutin got no encart at all while the branch that would
-     have said so sat unreachable inside it. #}
-  {% set parlement = law.promulgated_on is not none %}
+  {# Whether this page may say anything at all about how Parliament voted, which
+     takes two conditions and not one.
+
+     `promulgated_on` means the text went through Parliament: a law written by
+     hand has none. `an_vote_checked` means somebody actually looked it up in the
+     scrutins export. Without the second, an empty set of counts reads as « adoptée
+     sans scrutin public » - which is true of a third of promulgated laws and was
+     also being said, wrongly, about every law that predated this feature and had
+     simply never been looked up.
+
+     Named once so the gate and the branch inside cannot disagree - they did, and
+     a law adopted without a public scrutin got no encart at all while the line
+     that would have said so sat unreachable inside it. #}
+  {% set parlement = law.promulgated_on is not none and law.an_vote_checked %}
   {% if lede or law.debate_summary or parlement %}
   <aside class="encart" aria-label="L'essentiel">
     {% if lede %}<p class="encart-lede">{{ lede }}</p>{% endif %}

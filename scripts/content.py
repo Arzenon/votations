@@ -74,6 +74,7 @@ LAW_FIELDS = (
     "an_vote_against",
     "an_vote_abstain",
     "cmp_convened",
+    "an_vote_checked",
     "promulgated_on",
     "published",
     "opens_at",

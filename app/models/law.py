@@ -144,6 +144,19 @@ class Law(Base):
     an_vote_abstain: Mapped[int | None] = mapped_column(Integer, default=None)
     cmp_convened: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
+    #: Whether the scrutins export has actually been consulted for this text.
+    #:
+    #: The column exists because two very different situations produced the same
+    #: empty counts, and the page stated the wrong one. « Adoptée sans scrutin
+    #: public » is true of a third of promulgated laws and is worth saying; it is
+    #: also what the page said about every law that predated this feature, which
+    #: nobody had looked up. A claim about how Parliament voted is not a claim to
+    #: make from an absence of data.
+    #:
+    #: So there are three states, not two: counts (say them), checked and none
+    #: (say there was no scrutin), unchecked (say nothing at all).
+    an_vote_checked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     # Scheduling & publication.
     published: Mapped[bool] = mapped_column(Boolean, default=False)
     opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

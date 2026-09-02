@@ -9,9 +9,9 @@ many times the daily job sees it again.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import ColumnElement, String, func, select, update
+from sqlalchemy import ColumnElement, CursorResult, String, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, defer
 
@@ -27,6 +27,7 @@ from app.models import (
     SOURCE_ASSEMBLEE,
     STATUS_NEW,
     ImportedLaw,
+    Law,
 )
 
 # Columns the import job refreshes on every run. `status` and `law_id` are
@@ -47,6 +48,7 @@ _REFRESHED = (
     "an_vote_against",
     "an_vote_abstain",
     "cmp_convened",
+    "an_vote_checked",
 )
 
 # Sentinel telling `set_status` to leave `law_id` exactly as it is.
@@ -258,6 +260,64 @@ def last_import_at(db: Session) -> datetime | None:
     shows this so the silence is visible.
     """
     return db.scalar(select(func.max(ImportedLaw.last_seen_at)))
+
+
+#: The Assemblée's own record of a text, copied from the staged row onto the
+#: votation made from it. Facts, not presentation: nothing here is editable in
+#: the administration and nothing here is tracked in the public history of
+#: changes, because an administrator correcting a parliamentary vote count is not
+#: an operation this platform should offer.
+_PARLIAMENT_RECORD = (
+    "an_vote_for",
+    "an_vote_against",
+    "an_vote_abstain",
+    "cmp_convened",
+    "an_vote_checked",
+)
+
+
+def propagate_parliament_record(db: Session) -> int:
+    """Bring every created votation's vote record up to date. Returns how many moved.
+
+    The copy used to happen once, when an administrator turned a staged row into
+    a votation, and never again. Two things follow from that and both are wrong:
+
+    * a law created before this data existed kept empty counts **for ever**, and
+      the page read that emptiness as « adoptée sans scrutin public » - a claim
+      about how Parliament voted, made from never having looked;
+    * the Assemblée can publish a scrutin *after* a votation was created. The
+      export is rebuilt daily and a late vote is ordinary; it simply never
+      reached the page.
+
+    Safe to run every night because it is idempotent and because of the
+    ``IS DISTINCT FROM`` below: a row whose values already match is not written
+    at all. That matters beyond the wasted write - `laws.updated_at` carries an
+    ``onupdate``, and it is what the sitemap publishes as ``lastmod``. Touching
+    every law nightly would tell search engines the whole site changes daily.
+
+    Writing to a published law outside the administration is deliberate here and
+    would not be for anything else: these columns hold what the Assemblée
+    recorded, nobody here composes them, and a figure that has become available
+    is not an edit to somebody's text.
+    """
+    changed = or_(
+        *(
+            getattr(Law, name).is_distinct_from(getattr(ImportedLaw, name))
+            for name in _PARLIAMENT_RECORD
+        )
+    )
+    # `Session.execute` is typed as returning a plain `Result`; an ORM-enabled
+    # UPDATE really returns a `CursorResult`, which is the one that counts rows.
+    result = cast(
+        CursorResult,
+        db.execute(
+            update(Law)
+            .where(ImportedLaw.law_id == Law.id, changed)
+            .values({name: getattr(ImportedLaw, name) for name in _PARLIAMENT_RECORD})
+        ),
+    )
+    db.commit()
+    return result.rowcount or 0
 
 
 def get_by_id(db: Session, item_id: int) -> ImportedLaw | None:

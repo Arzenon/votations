@@ -32,14 +32,22 @@ def _attach_votes(records: list[PromulgatedLaw]) -> str:
     """
     wanted = {ref for record in records for ref in record.vote_refs}
     if not wanted:
+        # Looked, and no dossier references a vote at all. That is a finding, not
+        # a failure, so the records are marked as checked: the page may say these
+        # texts were adopted without a public scrutin.
+        for record in records:
+            record.an_vote_checked = True
         return "aucun scrutin référencé"
     try:
         index = fetch_votes(wanted)
     except ScrutinsFetchError as exc:
+        # `an_vote_checked` stays false on every record, which is the whole point
+        # of that column: the page says nothing about a vote nobody has looked up.
         return f"scrutins non récupérés ({exc}) - décomptes laissés vides"
 
     resolved = 0
     for record in records:
+        record.an_vote_checked = True
         vote = final_vote(record.vote_refs, index)
         if vote is None:
             continue
@@ -60,8 +68,13 @@ def main() -> int:
     votes = _attach_votes(records)
 
     db = SessionLocal()
+    propagated = 0
     try:
         created, refreshed = imports_crud.sync(db, records=records)
+        # And onto the votations already made from these rows. The copy used to
+        # happen only at creation, so a law created before a scrutin was
+        # published never saw it - see `propagate_parliament_record`.
+        propagated = imports_crud.propagate_parliament_record(db)
     except SQLAlchemyError as exc:
         # Every database refusal, not just the two that mean "the schema is not
         # migrated yet". The narrower pair let a `DataError` — a value the
@@ -75,7 +88,10 @@ def main() -> int:
     finally:
         db.close()
 
-    print(f"Lois promulguées : {created} nouvelle(s), {refreshed} actualisée(s) - {votes}")
+    print(
+        f"Lois promulguées : {created} nouvelle(s), {refreshed} actualisée(s) - {votes}"
+        f" - {propagated} votation(s) mise(s) à jour"
+    )
     return 0
 
 

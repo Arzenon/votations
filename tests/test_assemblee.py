@@ -356,3 +356,102 @@ def test_vote_references_come_back_in_reading_order():
 def test_a_commission_mixte_paritaire_is_noticed():
     assert _built([{"codeActe": "CMP"}]).cmp_convened is True
     assert _built([{"codeActe": "AN1-DEBATS-DEC"}]).cmp_convened is False
+
+
+def test_a_created_votation_picks_up_a_vote_published_later(client, db_session):
+    """The copy used to happen once, at creation, and never again.
+
+    Two things followed. A law created before this data existed kept empty counts
+    for ever - and the page read that as « adoptée sans scrutin public ». And the
+    Assemblée can publish a scrutin *after* a votation is created, which simply
+    never reached the page.
+    """
+    from app.crud import imports as imports_crud
+    from app.models import STATUS_IMPORTED, ImportedLaw, Law
+
+    law = Law(slug="loi-tardive", title="Loi au scrutin tardif", published=True)
+    db_session.add(law)
+    db_session.commit()
+
+    staged = ImportedLaw(
+        source="assemblee",
+        dossier_uid="DLR5L17NTARDIF",
+        title="Loi au scrutin tardif",
+        law_code="2026-99",
+        promulgated_on=date(2026, 6, 24),
+        status=STATUS_IMPORTED,
+        law_id=law.id,
+        an_vote_for=301,
+        an_vote_against=142,
+        an_vote_abstain=7,
+        cmp_convened=True,
+        an_vote_checked=True,
+    )
+    db_session.add(staged)
+    db_session.commit()
+
+    assert imports_crud.propagate_parliament_record(db_session) == 1
+    db_session.refresh(law)
+    assert (law.an_vote_for, law.an_vote_against, law.an_vote_abstain) == (301, 142, 7)
+    assert law.cmp_convened and law.an_vote_checked
+
+    # Idempotent: a second run writes nothing at all. That matters beyond the
+    # wasted update - `laws.updated_at` is what the sitemap publishes as lastmod,
+    # so touching every law nightly would claim the whole site changes daily.
+    assert imports_crud.propagate_parliament_record(db_session) == 0
+
+
+def test_propagation_leaves_a_law_with_no_staged_row_alone(db_session):
+    """A law written by hand has no dossier, and must keep claiming nothing."""
+    from app.crud import imports as imports_crud
+    from app.models import Law
+
+    law = Law(slug="loi-manuelle", title="Loi saisie à la main", published=True)
+    db_session.add(law)
+    db_session.commit()
+
+    assert imports_crud.propagate_parliament_record(db_session) == 0
+    db_session.refresh(law)
+    assert law.an_vote_checked is False
+
+
+def test_propagation_writes_no_entry_in_the_public_history(db_session):
+    """The record of changes answers one question: « was this the text I voted on ? »
+
+    A vote count arriving from the Assemblée is not an answer to it. Nobody here
+    wrote it, it was always true of the law, and it is not part of the
+    presentation somebody could have rewritten while people were voting - so it
+    must not appear in the history as though it were.
+
+    That holds because these columns are absent from `TRACKED_FIELDS` *and*
+    because propagation goes through a Core UPDATE rather than `laws_crud.update`,
+    which is the only place a `LawRevision` is ever written. Two independent
+    reasons, and this pins both.
+    """
+    from app.crud import imports as imports_crud
+    from app.models import STATUS_IMPORTED, ImportedLaw, Law, LawRevision
+
+    law = Law(slug="loi-historique", title="Loi suivie", published=True)
+    db_session.add(law)
+    db_session.commit()
+
+    db_session.add(
+        ImportedLaw(
+            source="assemblee",
+            dossier_uid="DLR5L17NHIST",
+            title="Loi suivie",
+            law_code="2026-98",
+            promulgated_on=date(2026, 6, 24),
+            status=STATUS_IMPORTED,
+            law_id=law.id,
+            an_vote_for=291,
+            an_vote_against=241,
+            an_vote_checked=True,
+        )
+    )
+    db_session.commit()
+
+    assert imports_crud.propagate_parliament_record(db_session) == 1
+    db_session.refresh(law)
+    assert law.an_vote_for == 291, "le décompte est bien arrivé"
+    assert db_session.query(LawRevision).filter_by(law_id=law.id).count() == 0

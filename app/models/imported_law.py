@@ -102,6 +102,18 @@ class ImportedLaw(Base):
     an_vote_against: Mapped[int | None] = mapped_column(Integer, default=None)
     an_vote_abstain: Mapped[int | None] = mapped_column(Integer, default=None)
     cmp_convened: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    #: Whether the scrutins export has actually been consulted for this text.
+    #:
+    #: The column exists because two very different situations produced the same
+    #: empty counts, and the page stated the wrong one. « Adoptée sans scrutin
+    #: public » is true of a third of promulgated laws and is worth saying; it is
+    #: also what the page said about every law that predated this feature, which
+    #: nobody had looked up. A claim about how Parliament voted is not a claim to
+    #: make from an absence of data.
+    #:
+    #: So there are three states, not two: counts (say them), checked and none
+    #: (say there was no scrutin), unchecked (say nothing at all).
+    an_vote_checked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     # Review state, owned by the admin and never overwritten by the import job.
     # Indexed: every admin page counts the rows still awaiting a decision.

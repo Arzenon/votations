@@ -15,4 +15,4 @@ exports/*
 !exports/.gitkeep
 
 # Utilitaire personnel sans rapport avec le projet, posé ici par commodité.
-dmarc/
+dmarc/*

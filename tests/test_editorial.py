@@ -377,6 +377,7 @@ def test_how_parliament_settled_the_text_is_shown(client, db_session):
         an_vote_against=156,
         an_vote_abstain=1,
         cmp_convened=True,
+        an_vote_checked=True,
         promulgated_on=date(2026, 6, 24),
         opens_at=datetime.now(UTC) - timedelta(hours=1),
     )
@@ -401,6 +402,7 @@ def test_a_law_adopted_without_a_public_vote_says_so(client, db_session):
         published=True,
         summary_text="Un résumé.",
         promulgated_on=date(2026, 6, 24),
+        an_vote_checked=True,
         opens_at=datetime.now(UTC) - timedelta(hours=1),
     )
     db_session.add(law)
@@ -421,4 +423,29 @@ def test_a_hand_written_law_claims_nothing_about_parliament(client, db_session):
     db_session.add(law)
     db_session.commit()
     body = client.get("/loi/loi-manuscrite").text
+    assert "Assemblée nationale" not in body
+
+
+def test_a_vote_nobody_has_looked_up_is_not_reported_as_absent(client, db_session):
+    """The three states are not two, and this is the one that was missing.
+
+    Empty counts meant « adoptée sans scrutin public » whatever the reason - so
+    every law published before the vote data existed asserted something about how
+    Parliament voted, on the strength of nobody having looked. And it would not
+    have corrected itself: the record was copied from the staged row at creation
+    and never again.
+    """
+    law = Law(
+        slug="loi-non-verifiee",
+        title="Loi jamais consultée",
+        published=True,
+        summary_text="Un résumé.",
+        promulgated_on=date(2026, 6, 24),
+        # an_vote_checked reste faux : personne n'a consulté l'export.
+        opens_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(law)
+    db_session.commit()
+    body = client.get("/loi/loi-non-verifiee").text
+    assert "sans scrutin public" not in body
     assert "Assemblée nationale" not in body

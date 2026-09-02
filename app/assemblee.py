@@ -103,6 +103,10 @@ class PromulgatedLaw:
     an_vote_for: int | None = None
     an_vote_against: int | None = None
     an_vote_abstain: int | None = None
+    # Whether the scrutins export was consulted for this text. False after a
+    # failed download, which is what stops the page claiming there was no vote
+    # when the truth is that nobody looked.
+    an_vote_checked: bool = False
 
 
 # A generous timeout: the archive is ~10 MB and served from a public portal.

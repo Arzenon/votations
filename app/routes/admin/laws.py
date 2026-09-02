@@ -235,6 +235,7 @@ def _parliament_record(item: ImportedLaw | None) -> dict:
         "an_vote_against": item.an_vote_against,
         "an_vote_abstain": item.an_vote_abstain,
         "cmp_convened": item.cmp_convened,
+        "an_vote_checked": item.an_vote_checked,
     }
 
 
