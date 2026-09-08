@@ -89,8 +89,13 @@
   </div>
   {% endif %}
 
+  {# The admission is on every page and never behind a click (charter). What a page
+     adds to it is the consequence — « les résultats ne peuvent pas être généralisés »
+     — and that belongs where a figure is actually published, not above the heading of
+     a page about cookies. Pages that show a tally override this block; see
+     `app.templating.DISCLAIMER_SHORT`. #}
   <div class="disclaimer" role="note">
-    <div class="container">⚠️ {{ DISCLAIMER }}</div>
+    <div class="container">⚠️ {% block disclaimer %}{{ DISCLAIMER_SHORT }}{% endblock %}</div>
   </div>
 
   <main class="container" id="main">

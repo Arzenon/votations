@@ -213,6 +213,7 @@ class Breakdown:
     @property
     def is_pending(self) -> bool:
         return self.reason == REASON_PENDING
+
     rows: list[BreakdownRow] = field(default_factory=list)
     dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used

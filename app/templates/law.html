@@ -7,11 +7,49 @@
    comfortably. Scoped to `main`, so the header and footer keep the site's width
    and only the article narrows. #}
 {% block body_class %}reading{% endblock %}
+{# A closed law shows its tally on this page, so it carries the full warning like
+   the results page does. While the vote is open there is no figure here to
+   misread — the ballot is not a result — and the admission alone is enough. #}
+{% block disclaimer %}{% if voting_open %}{{ DISCLAIMER_SHORT }}{% else %}{{ DISCLAIMER }}{% endif %}{% endblock %}
 {% block content %}
 {% macro audience_paragraph(para) -%}
   {%- set label, rest = para | audience_split -%}
   {%- if label %}<p class="audience"><strong>{{ label }}</strong> : {{ rest }}</p>
   {%- else %}<p>{{ para }}</p>{% endif -%}
+{%- endmacro %}
+{% macro argument_item(arg) -%}
+<li>
+  <p>{{ arg.text }}</p>
+  {% set source = arg.source | safe_href %}
+  {% if arg.author or source %}
+  <p class="attribution">
+    {% if arg.author %}{{ arg.author }}{% endif %}
+    {% if source %}- <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
+  </p>
+  {% endif %}
+</li>
+{%- endmacro %}
+{# One argument in view, the rest one click away — and the same treatment applied to
+   both columns, which is what keeps the symmetry the charter asks for. Symmetry is
+   in the *rule*, not in the count: quoting three speeches for and four against is
+   what the debate held, and evening the numbers by dropping one would be an
+   editorial act. What must never differ is how each side is shown.
+
+   Folding both sides entirely was the alternative and it was rejected: the
+   quotations are the only material on this page nobody here wrote, and a page that
+   opens with no argument visible at all lets someone vote without having read a
+   single one. #}
+{% macro arguments_block(args) -%}
+  {%- if args %}
+  <ul>{{ argument_item(args[0]) }}</ul>
+  {%- set suite = args[1:] %}
+  {%- if suite %}
+  <details class="plus-arguments">
+    <summary>{{ suite | length }} autre{{ "s" if suite | length > 1 }} argument{{ "s" if suite | length > 1 }}</summary>
+    <ul>{% for arg in suite %}{{ argument_item(arg) }}{% endfor %}</ul>
+  </details>
+  {%- endif %}
+  {%- else %}<p>-</p>{% endif -%}
 {%- endmacro %}
 <article class="law">
   <p class="breadcrumb"><a href="/">← Toutes les votations</a></p>
@@ -84,9 +122,33 @@
   </aside>
   {% endif %}
 
+  {# A route to the ballot from the top of the page, for a reader who arrives from a
+     shared link already knowing what they think. It sits under the encart and not
+     above it: what it skips is the presentation, not the one paragraph that says
+     what the law does, how Parliament settled it and what the disagreement was
+     about. Nothing is hidden from anyone — the presentation is still the page.
+
+     An anchor and not a floating bar: it scrolls the page a reader already has,
+     costs no script, and leaves the ballot where it belongs, after the arguments. #}
+  <p class="aller-au-vote"><a href="#voter">{% if voting_open %}Aller au vote{% else %}Voir les résultats{% endif %}</a></p>
+
+  {# Folded when the encart carries the opening paragraph: the sentence a hesitating
+     reader most needs is already above, and the detail underneath it was 992 px on a
+     phone — a third of what stood between arriving and voting. Left open when there
+     is no lede to carry, because this block then holds the only summary there is.
+
+     `<details>` like the two folds already on this page: it opens with scripting
+     off, it is a real button to a screen reader, and find-in-page reaches inside. #}
   <section class="block prose">
+    {% if lede %}
+    <details class="bloc-repliable">
+      <summary><h2>Ce que dit la loi</h2><span class="repli-indice">Plus de détails</span></summary>
+      {% for para in reste %}<p>{{ para }}</p>{% endfor %}
+    </details>
+    {% else %}
     <h2>Ce que dit la loi</h2>
     {% for para in reste %}<p>{{ para }}</p>{% else %}<p>-</p>{% endfor %}
+    {% endif %}
   </section>
 
   <section class="block prose">
@@ -102,8 +164,35 @@
        the substance - see `app.templating.audience_split`, which returns an empty
        label for any paragraph not written in that shape, so nothing here depends
        on the drafting having cooperated. #}
-    {% set shown, folded = law.practical_changes | practical_split %}
-    {% for para in shown %}{{ audience_paragraph(para) }}{% else %}<p>-</p>{% endfor %}
+    {# One row per public, opened by whoever recognises themselves in it. The block
+       is the longest on the page — 2 755 px on a phone for a law with nine publics —
+       and it is also the one a reader needs least of: they want their own situation,
+       not the eight others. So it stops being prose and becomes a list, with every
+       public named on the page and none of them behind a counter.
+
+       A paragraph the drafting left without a label renders plainly, in place. It is
+       not given an invented one: a wrong label is worse than none, and standing out
+       among the rows is exactly how the person reviewing the law before publication
+       finds out the drafting slipped. #}
+    {% set rows, folded = law.practical_changes | practical_layout %}
+    {# The count is announced only when it is exact - that is, when every paragraph
+       carries a label and the rows are the whole block. A paragraph the drafting
+       left unlabelled is still a public being addressed, so counting the rows alone
+       would publish « 7 publics concernés » above a block that speaks to nine. On a
+       page whose only claim is that its figures can be checked, a number that
+       quietly disagrees with what is under it costs more than it gives. #}
+    {% set publics = rows | map(attribute=0) | select | list %}
+    {% if publics | length == rows | length and publics | length > 2 %}
+    <p class="meta publics-indice">{{ publics | length }} publics concernés. Ouvrez le vôtre.</p>
+    {% endif %}
+    {% for label, texte in rows %}
+      {%- if label %}
+    <details class="public">
+      <summary>{{ label }}</summary>
+      <p>{{ texte }}</p>
+    </details>
+      {%- else %}<p>{{ texte }}</p>{% endif %}
+    {%- else %}<p>-</p>{% endfor %}
     {% if folded %}
     <details class="more-audiences">
       <summary>{{ folded | length }} autres publics concernés</summary>
@@ -115,42 +204,12 @@
   <div class="arguments">
     <section class="block arguments-for">
       <h2>Arguments des partisans</h2>
-      {% if law.arguments_for %}
-      <ul>
-        {% for arg in law.arguments_for %}
-        <li>
-          <p>{{ arg.text }}</p>
-          {% set source = arg.source | safe_href %}
-          {% if arg.author or source %}
-          <p class="attribution">
-            {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if source %}- <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
-          </p>
-          {% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-      {% else %}<p>-</p>{% endif %}
+      {{ arguments_block(law.arguments_for) }}
     </section>
 
     <section class="block arguments-against">
       <h2>Arguments des opposants</h2>
-      {% if law.arguments_against %}
-      <ul>
-        {% for arg in law.arguments_against %}
-        <li>
-          <p>{{ arg.text }}</p>
-          {% set source = arg.source | safe_href %}
-          {% if arg.author or source %}
-          <p class="attribution">
-            {% if arg.author %}{{ arg.author }}{% endif %}
-            {% if source %}- <a href="{{ source }}" rel="noopener noreferrer" target="_blank">source<span class="visually-hidden"> de l'argument{% if arg.author %} de {{ arg.author }}{% endif %} (nouvel onglet)</span></a>{% endif %}
-          </p>
-          {% endif %}
-        </li>
-        {% endfor %}
-      </ul>
-      {% else %}<p>-</p>{% endif %}
+      {{ arguments_block(law.arguments_against) }}
     </section>
   </div>
 
@@ -210,7 +269,7 @@
     </p>
   </details>
 
-  <section class="block vote-block">
+  <section class="block vote-block" id="voter">
     <h2>Voter</h2>
     {% if voting_open %}
       {% include "_ballot.html" %}

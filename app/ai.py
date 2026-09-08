@@ -145,6 +145,13 @@ employeurs », « pour les communes »), jamais en suivant le plan du texte.
 page met cette étiquette en évidence pour qu'on puisse parcourir le bloc et y \
 trouver son cas sans le lire en entier. Garde-la courte - c'est un public, pas une \
 phrase.
+- **L'étiquette fait au plus 45 caractères et ne contient ni virgule ni \
+point-virgule.** Au-delà, la page cesse de la reconnaître et rend le paragraphe en \
+texte plein. Si tu as besoin d'une virgule pour l'écrire, c'est que tu nommes deux \
+choses : ou bien c'est un seul lecteur sous plusieurs noms, et tu gardes le terme \
+qui les couvre tous en remettant le détail *à l'intérieur* du paragraphe ; ou bien \
+ce sont deux publics distincts, et tu fais deux paragraphes plutôt que de n'en \
+garder qu'un.
 - **Un public, c'est la façon dont quelqu'un se décrit lui-même** - pas la \
 catégorie que vise l'article. Personne ne se présente comme « irrigant », \
 « betteravier », « éleveur d'ovins » ou « producteur de lait au sein d'une \

@@ -31,7 +31,28 @@ TAGLINE = (
     "ouvertes, aucune donnée personnelle collectée."
 )
 
-# Permanent transparency disclaimer, shown on every page (charter requirement).
+# The permanent transparency disclaimer, in two lengths (charter requirement).
+#
+# The admission itself is on every page and is never behind a click: this platform's
+# whole claim is that it says what it is worth, and a limitation a reader has to ask
+# for is not one that has been stated. What varies is how much of the *consequence*
+# comes with it.
+#
+# `DISCLAIMER_SHORT` is the banner everywhere: it names the flaw — self-selection —
+# and stops there. `DISCLAIMER` adds what follows from it, and is used on the pages
+# that actually publish figures, where the mistake it prevents is live: reading a
+# percentage on this site as a percentage of the French population.
+#
+# The split is a measurement, not a preference. The full sentence ran to 154 px on a
+# 375 px screen — a fifth of the first thing a visitor ever sees, above the heading,
+# on every page including the ones carrying no number at all. The short form costs
+# 87 px. Nothing about the limitation was traded away for those 67 px; the sentence
+# that explains it simply now sits where the figure it qualifies is.
+DISCLAIMER_SHORT = (
+    "Votations Françaises n'est pas un sondage représentatif : les personnes qui "
+    "participent se sélectionnent elles-mêmes."
+)
+
 DISCLAIMER = (
     "Votations Françaises n'est pas un sondage représentatif. Les personnes qui "
     "participent se sélectionnent elles-mêmes : les résultats expriment l'opinion "
@@ -82,6 +103,7 @@ templates = Jinja2Templates(
 templates.env.auto_reload = not get_settings().is_production
 
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
+templates.env.globals["DISCLAIMER_SHORT"] = DISCLAIMER_SHORT
 templates.env.globals["TAGLINE"] = TAGLINE
 
 
@@ -164,6 +186,35 @@ def practical_split(value: str | None) -> tuple[list[str], list[str]]:
     return blocks[:VISIBLE_AUDIENCES], blocks[VISIBLE_AUDIENCES:]
 
 
+def practical_layout(value: str | None) -> tuple[list[tuple[str, str]], list[str]]:
+    """« Ce que ça change en pratique », as (rows in page order, folded tail).
+
+    Two shapes, and which one applies is decided by the drafting rather than by a
+    setting. When the paragraphs carry the labels the prompt asks for, each becomes
+    a row a reader opens for themselves: the whole block collapses to a list of
+    publics, every one of them named, none behind a counter. That is the shape this
+    page is built for — it turns the longest block of the page into something
+    scannable, and it is *more* faithful to the charter than the fold it replaces,
+    which hid the narrower publics behind « N autres publics concernés ».
+
+    When no paragraph carries a label, the rows cannot be built and the block falls
+    back to :func:`practical_split` — the wall treatment, unchanged. That is not a
+    legacy branch kept for symmetry: a law drafted before the labels existed, or one
+    the model wrote in another shape, still has to render, and rendering it as one
+    long unfoldable list would be worse than what it does today.
+
+    Labels are never invented for a paragraph that lacks one. A paragraph with no
+    label renders plainly, in place, among the rows — which makes the drafting
+    failure visible to whoever reviews the law before publication, rather than
+    silently averaged into the page.
+    """
+    rows = [audience_split(para) for para in paragraphs(value)]
+    if any(label for label, _ in rows):
+        return rows, []
+    shown, folded = practical_split(value)
+    return [("", para) for para in shown], folded
+
+
 def summary_split(value: str | None) -> tuple[str, list[str]]:
     """« Ce que dit la loi », as (the opening paragraph, the rest).
 
@@ -236,6 +287,7 @@ templates.env.filters["paragraphs"] = paragraphs
 templates.env.filters["summary_split"] = summary_split
 templates.env.filters["audience_split"] = audience_split
 templates.env.filters["practical_split"] = practical_split
+templates.env.filters["practical_layout"] = practical_layout
 templates.env.filters["law_status"] = law_status
 templates.env.filters["home_band"] = home_band
 templates.env.filters["import_status"] = import_status

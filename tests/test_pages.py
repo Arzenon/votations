@@ -420,6 +420,94 @@ def test_the_fold_needs_no_javascript(client, db_session):
     assert "onclick" not in fold and "hx-" not in fold
 
 
+def _labelled(n: int) -> str:
+    """A block of `n` publics written in the shape the drafting prompt asks for."""
+    return "\n\n".join(
+        f"Pour le public {i} : voici ce qui change pour vous." for i in range(1, n + 1)
+    )
+
+
+def test_labelled_publics_become_rows_and_none_is_hidden(client, db_session):
+    """The fold by count exists because a wall of prose cannot be scanned.
+
+    Once each paragraph carries the public it addresses, the wall is gone: every
+    public is named on the page, in one row, and the reader opens the one that is
+    theirs. Nothing sits behind « N autres publics concernés » any more — which is
+    the charter's own preference, since that counter was the last place where the
+    narrower publics were less visible than the broad ones.
+    """
+    law = make_law(db_session, slug="loi-etiquetee", practical_changes=_labelled(12))
+    page = client.get(f"/loi/{law.slug}").text
+
+    for i in range(1, 13):
+        assert f"<summary>Pour le public {i}</summary>" in page, f"public {i} sans ligne"
+    assert "autres publics concernés" not in page, "plus rien derrière un compteur"
+    assert page.count('<details class="public">') == 12
+    assert "12 publics concernés" in page, "le compte est exact, donc il est annoncé"
+
+
+def test_a_paragraph_without_a_label_stays_visible_among_the_rows(client, db_session):
+    """No label is ever invented, and the failure is left where a reviewer sees it.
+
+    A wrong label is worse than none: it would tell a reader « this one is not
+    about you » on the platform's authority. So the paragraph renders plainly, in
+    place, and looks different from its neighbours — which is how the person who
+    validates the law before publication finds out the drafting slipped.
+    """
+    law = make_law(
+        db_session,
+        slug="loi-mixte",
+        practical_changes=(
+            "Pour les employeurs : vous devez maintenir le contrat.\n\n"
+            "Si vous êtes locataire, propriétaire ou occupant, la règle change.\n\n"
+            "Pour les communes : la dotation est révisée."
+        ),
+    )
+    page = client.get(f"/loi/{law.slug}").text
+    assert page.count('<details class="public">') == 2
+    assert "Si vous êtes locataire, propriétaire ou occupant" in page, "rien n'est perdu"
+    assert "<summary>Si vous êtes locataire" not in page, "pas d'étiquette inventée"
+    # Two rows above a block that addresses three publics: the count would be wrong,
+    # so it is not published at all rather than published short.
+    assert "publics concernés" not in page
+
+
+def test_the_rows_need_no_javascript(client, db_session):
+    """`<details>`, like every other fold on this page."""
+    law = make_law(db_session, slug="loi-lignes-sans-js", practical_changes=_labelled(6))
+    page = client.get(f"/loi/{law.slug}").text
+    start = page.index('<details class="public">')
+    row = page[start : page.index("</details>", start)]
+    assert "<summary>" in row
+    assert "onclick" not in row and "hx-" not in row
+
+
+def test_the_ballot_can_be_reached_from_the_top_of_the_page(client, db_session):
+    """A reader arriving from a shared link already knowing what they think.
+
+    The presentation stays the page — the link skips it, it does not shorten it.
+    """
+    law = make_law(db_session, slug="loi-ancre", practical_changes=_labelled(4))
+    page = client.get(f"/loi/{law.slug}").text
+    assert 'href="#voter"' in page
+    assert 'id="voter"' in page
+    assert page.index('href="#voter"') < page.index('id="voter"'), "l'ancre précède la cible"
+
+
+def test_what_the_law_says_folds_only_when_the_encart_carries_the_opening(client, db_session):
+    """Folding it on a one-paragraph summary would hide the only summary there is."""
+    long_law = make_law(
+        db_session, slug="loi-deux-paras", summary_text="Premier.\n\nSecond paragraphe."
+    )
+    folded = client.get(f"/loi/{long_law.slug}").text
+    assert '<details class="bloc-repliable">' in folded
+
+    short_law = make_law(db_session, slug="loi-un-para", summary_text="Tout tient ici.")
+    plain = client.get(f"/loi/{short_law.slug}").text
+    assert '<details class="bloc-repliable">' not in plain
+    assert "Tout tient ici." in plain
+
+
 # --- L'ordre de la page d'accueil ---------------------------------------------
 
 
@@ -616,8 +704,10 @@ def test_a_paragraph_that_is_not_addressed_to_anyone_is_left_alone():
         "La règle est simple, et elle tient en peu de mots : agir.",
     )
     # Nor is something far too long to be a public.
-    trop_long = "Les personnes qui exploitent une installation classée pour la " \
-                "protection de l'environnement : elles déclarent."
+    trop_long = (
+        "Les personnes qui exploitent une installation classée pour la "
+        "protection de l'environnement : elles déclarent."
+    )
     assert audience_split(trop_long)[0] == ""
     # Nor a paragraph with no colon at all.
     assert audience_split("Rien de particulier ici.") == ("", "Rien de particulier ici.")

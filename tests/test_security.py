@@ -182,9 +182,7 @@ def test_comparing_an_accented_password_does_not_raise():
 def test_a_post_with_no_origin_is_allowed_in_development(client, open_law):
     """`curl` and this very test client send neither header, and must keep working."""
     assert not get_settings().is_production, "the suite runs in development"
-    r = client.post(
-        f"/loi/{open_law.slug}/vote", data={"choice": "for"}, follow_redirects=False
-    )
+    r = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"}, follow_redirects=False)
     assert r.status_code == 303
 
 

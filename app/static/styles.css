@@ -565,3 +565,58 @@ body.reading main.container { max-width: 44rem; }
    what the law says, the other is what happened to it. */
 .encart-scrutin { margin: 0.75rem 0 0; font-size: 0.95rem; color: var(--muted); }
 .encart-scrutin strong { color: var(--ink); }
+
+
+/* --- Page de loi : ce qui se replie ---------------------------------------- */
+/* Three folds were added at once, and they are deliberately the same object: a
+   native `<details>`, a chevron drawn from two borders rather than set as a
+   character (see `.provenance`, where `⌄` was found to render as tofu), and no
+   script anywhere. A reader who learns the control once knows all three. */
+
+/* The offer to skip ahead to the ballot, under the encart. Not the same object as
+   « Envoyer mon vote »: that is the page's primary action and stays the only solid
+   blue button on it. This one reads as a bordered link, because skipping the
+   presentation is a choice being offered, not the thing the page wants. */
+.aller-au-vote { margin: 0 0 1.25rem; }
+.aller-au-vote a { display: inline-block; text-decoration: none; border-radius: var(--radius);
+  padding: 0.5rem 1rem; background: var(--accent-soft); border: 1px solid var(--accent-line);
+  color: var(--blue); font-size: 0.95rem; }
+.aller-au-vote a:hover { background: var(--surface); }
+
+/* « Ce que dit la loi », folded behind its own heading. The `<h2>` stays inside the
+   summary rather than above it: the charter names a four-block structure, so what
+   folds is the detail of a block, never the fact that the block is there. */
+.bloc-repliable > summary { cursor: pointer; list-style: none; display: flex;
+  align-items: baseline; justify-content: space-between; gap: 1rem; }
+.bloc-repliable > summary::-webkit-details-marker { display: none; }
+.bloc-repliable > summary h2 { margin: 0; }
+.bloc-repliable > p:first-of-type { margin-top: 1.05em; }
+.repli-indice { position: relative; padding-right: 1.05rem; color: var(--blue);
+  font-size: 0.95rem; white-space: nowrap; }
+.repli-indice::after { content: ""; position: absolute; right: 0.1rem; top: 0.3em;
+  width: 0.42em; height: 0.42em; border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor; transform: rotate(45deg);
+  transition: transform 0.15s ease; }
+.bloc-repliable[open] > summary .repli-indice::after { transform: rotate(-135deg); top: 0.5em; }
+
+/* One public per row in « Ce que ça change en pratique » (see `practical_layout`).
+   The whole row is the target and it is 44 px tall, for the reason the ballot's
+   choices are: this is opened with a thumb far more often than with a mouse. */
+.publics-indice { margin: 0 0 0.4rem; }
+.block.prose .public { border-top: 1px solid var(--line); }
+.block.prose .public > summary { cursor: pointer; list-style: none; display: flex;
+  align-items: center; justify-content: space-between; gap: 0.9rem; font-weight: 600;
+  padding: 0.65rem 0; min-height: 44px; box-sizing: border-box; }
+.block.prose .public > summary::-webkit-details-marker { display: none; }
+.block.prose .public > summary::after { content: ""; flex: none; width: 0.45em; height: 0.45em;
+  border-right: 2px solid var(--blue); border-bottom: 2px solid var(--blue);
+  transform: rotate(45deg); transition: transform 0.15s ease; }
+.block.prose .public[open] > summary::after { transform: rotate(-135deg); }
+.block.prose .public > p { margin: 0 0 1.05em; }
+
+/* The arguments a reader has to ask for. Same control as `.more-audiences`: the two
+   do the same job on the same page and must not look like two different ideas. */
+.plus-arguments { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
+.plus-arguments > summary { cursor: pointer; color: var(--blue); font-size: 0.95rem; }
+.plus-arguments > summary:hover { text-decoration: underline; }
+.plus-arguments ul { margin-top: 0.75rem; }

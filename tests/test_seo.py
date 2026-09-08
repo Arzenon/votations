@@ -186,7 +186,7 @@ def test_a_title_cannot_break_out_of_the_structured_data(client, db_session):
     what it contains — so this is the only thing standing between a pasted title
     and a script tag on a public page.
     """
-    hostile = 'Loi </script><script>alert(1)</script> suite'
+    hostile = "Loi </script><script>alert(1)</script> suite"
     law = make_law(db_session, slug="loi-hostile", title=hostile)
     page = client.get(f"/loi/{law.slug}").text
 

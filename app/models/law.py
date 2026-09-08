@@ -127,7 +127,6 @@ class Law(Base):
     #: being a summary.
     debate_summary: Mapped[str] = mapped_column(String(600), default="", server_default="")
 
-
     #: How the Assemblée nationale settled the text, and whether the two chambers
     #: needed help agreeing. Facts published by Parliament, not presentation: they
     #: are copied from the staged row when the votation is created and are not

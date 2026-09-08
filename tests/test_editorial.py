@@ -80,12 +80,26 @@ def test_inclusive_spelling_is_uniform(client, open_law, db_session):
         assert "participant·es" not in page
 
 
-def test_the_representativeness_warning_appears_once_per_page(client, open_law):
-    """It is in the banner at the top; repeating it at the foot read as insistence."""
-    from app.templating import DISCLAIMER
+def test_the_representativeness_warning_appears_once_per_page(client, open_law, closed_law):
+    """It is in the banner at the top; repeating it at the foot read as insistence.
 
-    for url in ("/", f"/loi/{open_law.slug}", f"/loi/{open_law.slug}/resultats"):
-        assert client.get(url).text.count(str(escape(DISCLAIMER))) == 1
+    Two lengths, one rule. The admission — this is not a representative poll, and
+    why — is on every page without exception, because a limitation a reader has to
+    go and find is not one the platform has stated. What follows from it, that the
+    figures cannot be generalised to the French population, sits on the pages that
+    actually publish a figure, which is where that mistake can be made.
+    """
+    from app.templating import DISCLAIMER, DISCLAIMER_SHORT
+
+    for url in ("/", f"/loi/{open_law.slug}", "/vie-privee", "/mentions-legales"):
+        page = client.get(url).text
+        assert page.count(str(escape(DISCLAIMER_SHORT))) == 1, url
+        assert str(escape(DISCLAIMER)) not in page, url
+
+    for url in (f"/loi/{open_law.slug}/resultats", f"/loi/{closed_law.slug}"):
+        page = client.get(url).text
+        assert page.count(str(escape(DISCLAIMER))) == 1, url
+        assert str(escape(DISCLAIMER_SHORT)) not in page, url
 
 
 # --- French labels ------------------------------------------------------------
@@ -343,7 +357,14 @@ def test_a_law_with_no_debate_sentence_shows_no_such_block(client, db_session):
 
 
 def test_the_public_each_paragraph_addresses_is_set_apart(client, db_session):
-    """Navigation, not emphasis: the label is bold, the measure never is."""
+    """Navigation, not emphasis: the label opens the row, the measure never is.
+
+    The label used to be bold text at the head of a paragraph; it is now the summary
+    of the row that paragraph lives in. What the test protects is unchanged and is
+    the reason the filter exists: the *public* is what gets set apart, and nothing
+    inside the measure ever is. Marking what matters in a law is the one editorial
+    act this platform exists not to make.
+    """
     law = Law(
         slug="loi-publics",
         title="Loi à publics",
@@ -358,8 +379,10 @@ def test_the_public_each_paragraph_addresses_is_set_apart(client, db_session):
     db_session.add(law)
     db_session.commit()
     body = client.get("/loi/loi-publics").text
-    assert "<strong>Pour les employeurs</strong>" in body
-    assert "<strong>Si vous êtes réserviste</strong>" in body
+    assert "<summary>Pour les employeurs</summary>" in body
+    assert "<summary>Si vous êtes réserviste</summary>" in body
+    # The label names the public and stops there - the measure stays inside.
+    assert "<summary>Pour les employeurs : vous devez" not in body
     # And nothing inside the measure itself is emphasised.
     assert "<strong>vous devez" not in body
     assert "<strong>soixante" not in body

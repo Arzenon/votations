@@ -4,6 +4,9 @@
    thing to lose: the words before it are what somebody searched for. #}
 {% block title %}Résultats - {{ law.title }} - Votations Françaises{% endblock %}
 {% block description %}Résultats de la votation citoyenne sur « {{ law.title }} » : pourcentages, évolution dans le temps et données brutes anonymisées.{% endblock %}
+{# This page publishes percentages, so it carries the consequence as well as the
+   admission: what a reader must not do with the figure is stated beside it. #}
+{% block disclaimer %}{{ DISCLAIMER }}{% endblock %}
 {% block content %}
 <article class="law">
   <p class="breadcrumb"><a href="/loi/{{ law.slug }}">← Retour à la loi</a></p>
