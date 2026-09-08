@@ -102,11 +102,12 @@ app/
   static/            CSS minimal, htmx, app.js (rehaussement progressif)
 alembic/             Migrations
 docker/              Entrée du conteneur et les « cron » (voir periodic.sh)
-scripts/             Import AN/INSEE, export du contenu, sauvegarde, seed
+scripts/             Import AN/INSEE, export du contenu, sauvegarde, seed,
+                     et les deux rafraîchissements de dépendances (relock, htmx)
 tests/               pytest
 ```
 
-### Le « joint » FranceConnect (préparé pour la V2)
+### Le joint d'authentification
 
 Tout le code de vote ne dépend que de l'interface `AuthProvider`
 (`app/auth/base.py`) :
@@ -118,19 +119,26 @@ Tout le code de vote ne dépend que de l'interface `AuthProvider`
   sans rien créer. C'est ce que lit la page d'une loi.
 - `login_url()` → où pointe le bouton de connexion.
 - `login_label` / `login_enabled` → le libellé du bouton, et s'il existe un vrai
-  parcours de connexion derrière. À `False`, la page `/connexion` affiche le
-  bouton désactivé avec « bientôt disponible » — la charte demande que le
-  mécanisme en vigueur et ses limites soient énoncés, pas déguisés.
+  parcours de connexion derrière. À `False`, **aucun bouton n'est rendu** :
+  `/connexion` explique le mécanisme en vigueur et ses limites en prose. Un
+  bouton désactivé portant « bientôt disponible » y a figuré, puis a été retiré —
+  il se lisait comme « il faut un compte, et vous ne pouvez même pas en créer »,
+  soit l'inverse exact de ce que cette page a pour rôle de dire.
 
-Il n'y a délibérément **ni `logout_url()` ni `is_authenticated()`** : la V1 ne
-connecte personne, et un jeton anonyme ne se déconnecte pas. Ces deux méthodes
-viendront avec FranceConnect, en même temps que ce qu'elles décrivent.
+Il n'y a délibérément **ni `logout_url()` ni `is_authenticated()`** : la
+plateforme ne connecte personne, et un jeton anonyme ne se déconnecte pas. Ces
+deux méthodes arriveraient avec ce qu'elles décrivent, si cela arrive.
 
-La V1 utilise `AnonymousProvider` (jeton signé en cookie, hashé en base — aucune
-PII). La V2 fournira un `FranceConnectProvider` (OIDC) implémentant **la même
-interface** : aucun changement requis dans la logique de vote, les résultats ou
-les templates. La page `/connexion` documente le mécanisme courant et affiche un
-bouton FranceConnect désactivé (« bientôt disponible »).
+Aujourd'hui `AnonymousProvider` : jeton signé en cookie, hashé en base, aucune
+PII. Le joint existe pour qu'un autre fournisseur puisse le remplacer sans
+toucher à la logique de vote, aux résultats ni aux templates.
+
+**Ce joint ne promet aucune date, et surtout pas FranceConnect.** L'arrêté du
+8 novembre 2018 ne l'ouvre aux personnes morales de droit privé que sous une
+obligation légale de vérifier l'identité de leurs utilisateurs, dont une
+plateforme d'expression citoyenne ne relève pas. C'est une condition sur la
+nature juridique du porteur du projet, pas une étape que le code atteint : voir
+`CLAUDE.md`, « Authentication », et l'en-tête de `app/auth/base.py`.
 
 ## Confidentialité
 
@@ -524,6 +532,10 @@ concerné, voici la carte :
   versions figées **et empreintées** (`requirements.lock`, installé avec
   `--require-hashes`), limites mémoire sur les services qui décompressent des
   archives publiques.
+
+  Le revers d'un verrou : les versions ne bougent jamais d'elles-mêmes, correctifs
+  de sécurité compris. `scripts/relock.sh` est ce qui les fait bouger — à lancer
+  de temps en temps, puis à relire en diff et à repasser par la suite de tests.
 - **Identifiants ASCII.** `ADMIN_USERNAME` et `ADMIN_PASSWORD` doivent être en
   ASCII et l'application refuse de démarrer autrement : Starlette décode l'en-tête
   HTTP Basic en ASCII, donc un mot de passe accentué ne peut jamais correspondre —

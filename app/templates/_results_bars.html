@@ -2,7 +2,7 @@
    Bar widths ride on a data attribute rather than an inline style, so the page
    needs no 'unsafe-inline' in its Content-Security-Policy (see /static/app.js). #}
 <div class="results">
-  {% for key, label in (('for', 'Pour'), ('against', 'Contre'), ('abstain', 'Abstention')) %}
+  {% for key, label in CHOICE_LABELS.items() %}
   <div class="bar-row">
     <span class="bar-label">{{ label }}</span>
     {# The bar is a picture of the number beside it, and its width is painted by

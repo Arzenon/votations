@@ -117,7 +117,11 @@
     <h2>Ce qui n'est pas collecté</h2>
     <ul>
       <li>Aucune création de compte, aucune adresse électronique, aucun nom.</li>
-      <li>Aucune adresse IP dans les journaux : ils sont désactivés des deux côtés, précisément parce qu'ils associeraient une adresse à l'heure d'un vote.</li>
+      {# Deux mécanismes, et le dire exactement est le sujet de cette page : le
+         journal d'accès de l'application est éteint, celui du serveur web ne
+         garde que les erreurs et l'adresse en est retirée avant écriture. Écrire
+         « désactivés des deux côtés » était plus court et faux du second. #}
+      <li>Aucune adresse IP dans les journaux : celui de l'application est désactivé, et celui du serveur web ne conserve que les erreurs, dont l'adresse est retirée avant écriture - précisément parce qu'elle associerait une adresse à l'heure d'un vote.</li>
       <li>Aucune mesure d'audience, aucun traceur publicitaire, aucune ressource chargée depuis un autre domaine.</li>
       <li>Aucune donnée de navigation ni de localisation.</li>
     </ul>

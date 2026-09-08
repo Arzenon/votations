@@ -23,7 +23,10 @@
            is reachable without JavaScript disabled, just not from this form. #}
         <input type="radio" name="choice" value="{{ choice.value }}" required
                {% if existing_choice == choice.value %}checked{% endif %}>
-        {% if choice.value == "for" %}Pour{% elif choice.value == "against" %}Contre{% else %}Abstention{% endif %}
+        {# `CHOICE_LABELS`, not an if/elif chain: the chain ended in an `else`, so
+           a fourth choice would have been offered to voters as « Abstention ».
+           See `app.labels.CHOICE_LABELS`. #}
+        {{ CHOICE_LABELS[choice.value] }}
       </label>
       {% endfor %}
     </fieldset>
@@ -42,22 +45,27 @@
         ailleurs), uniquement pour que les compteurs restent justes si vous
         modifiez votre vote. Effacer vos cookies l'efface aussi.
       </p>
+      {# `selected` from `chosen`: these are typed on the same submit as the
+         vote, so a refused ballot must hand them back. Without it a rate-limited
+         voter got their radio button returned and these three silently reset,
+         with nothing on the page saying so. A value that is not one of the
+         options below simply matches nothing. #}
       <label class="demo-field">Tranche d'âge
         <select name="age_bracket">
           <option value="">Ne pas renseigner</option>
-          {% for b in age_brackets %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+          {% for b in age_brackets %}<option value="{{ b }}"{% if chosen.age_bracket == b %} selected{% endif %}>{{ b }}</option>{% endfor %}
         </select>
       </label>
       <label class="demo-field">Sexe
         <select name="sexe">
           <option value="">Ne pas renseigner</option>
-          {% for s in sexes %}<option value="{{ s }}">{{ s|capitalize }}</option>{% endfor %}
+          {% for s in sexes %}<option value="{{ s }}"{% if chosen.sexe == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
         </select>
       </label>
       <label class="demo-field">Région
         <select name="region">
           <option value="">Ne pas renseigner</option>
-          {% for r in regions %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+          {% for r in regions %}<option value="{{ r }}"{% if chosen.region == r %} selected{% endif %}>{{ r }}</option>{% endfor %}
         </select>
       </label>
     </details>

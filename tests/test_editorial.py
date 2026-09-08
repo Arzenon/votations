@@ -472,3 +472,42 @@ def test_a_vote_nobody_has_looked_up_is_not_reported_as_absent(client, db_sessio
     body = client.get("/loi/loi-non-verifiee").text
     assert "sans scrutin public" not in body
     assert "Assemblée nationale" not in body
+
+
+def test_the_parliamentary_record_travels_whole_from_the_staged_row(db_session):
+    """One list of columns, read by everything that copies them.
+
+    The same five names were written out three times — the daily refresh, the
+    nightly propagation, and the administration's create route. A sixth column
+    would have reached two of the three, so a law created after it took the value
+    a day late from the propagation and nothing anywhere said so.
+    """
+    from app.crud.imports import PARLIAMENT_RECORD
+    from app.models import ImportedLaw
+    from app.routes.admin.laws import _parliament_record
+
+    for name in PARLIAMENT_RECORD:
+        assert name in Law.__table__.c, f"laws.{name} is gone"
+        assert name in ImportedLaw.__table__.c, f"imported_laws.{name} is gone"
+
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid="D-1",
+        title="Un dossier",
+        law_code="2026-1",
+        promulgated_on=date(2026, 6, 24),
+        an_vote_for=357,
+        an_vote_against=177,
+        an_vote_abstain=9,
+        cmp_convened=True,
+        an_vote_checked=True,
+    )
+    copied = _parliament_record(item)
+    assert set(copied) == set(PARLIAMENT_RECORD), "the create route copies exactly the record"
+    assert copied["an_vote_for"] == 357 and copied["cmp_convened"] is True
+
+
+def test_a_hand_written_law_copies_no_parliamentary_record():
+    from app.routes.admin.laws import _parliament_record
+
+    assert _parliament_record(None) == {}

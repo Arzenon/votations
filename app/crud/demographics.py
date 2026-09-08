@@ -10,9 +10,11 @@ Two responsibilities:
    believe they are the first.
 2. ``all_breakdowns`` — build a demographic × choice table for display/export,
    applying whole-table suppression so small cells can never be read or
-   differenced out, and — while the vote is open — reading a *snapshot* of the
-   counters rather than the counters themselves. ``refresh_snapshot`` is what
-   moves that snapshot forward; see it for what the two together defend against.
+   differenced out, and reading a *snapshot* of the counters rather than the
+   counters themselves for as long as the difference between two readings could
+   name a person. ``refresh_snapshot`` moves that snapshot forward while the vote
+   is open and ``publishes_live_counters`` decides when it may finally be dropped;
+   see the two of them for what they defend against together.
 
 Nothing here commits. The ballot is one transaction, opened by ``cast_vote`` and
 closed by the route: a vote and the counters it moves are written together or
@@ -22,7 +24,7 @@ neither is.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -342,8 +344,9 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
     profile would otherwise hand that one person's categories over intact — the
     step has to be large in the quantity it actually discloses.
 
-    A closed votation is left alone: its counters have stopped moving, so there is
-    no sequence to difference and :func:`all_breakdowns` publishes them live.
+    A closed votation is left alone: no ballot can arrive to trigger a step, and
+    whether its live counters may be published is decided at read time instead —
+    see :func:`publishes_live_counters`.
 
     Called from the ballot transaction, before this voter's own contribution is
     folded in, so nobody can trigger a step and read themselves in it. Commits
@@ -371,6 +374,58 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
     return True
 
 
+def publishes_live_counters(db: Session, law: Law, *, profiled: int | None = None) -> bool:
+    """Whether this law's breakdowns may be read from ``count`` rather than the snapshot.
+
+    **The closing of a votation is a step like any other, and it is the one that
+    was not held to the rule.** :func:`refresh_snapshot` guarantees the published
+    figures never move by fewer than ``MIN_BUCKET_VOLUME`` profiled votes — and
+    then closing swapped them for the live counters in one go, moving them by
+    whatever remainder happened to be there. Between the last snapshot and the
+    close there may be a single profiled ballot; subtracting the page as it stood
+    an hour before closing from the page as it stands after gives that voter's
+    choice, age bracket, sex and région together, which is exactly the joint cell
+    the whole snapshot mechanism exists to withhold. Nothing had to be timed: the
+    two readings are a public page fetched twice.
+
+    So the same volume rule decides the last step too. A closed votation publishes
+    its live counters only when the residual since the last snapshot is a step
+    large enough to be one, and otherwise keeps publishing the snapshot — dated,
+    on a page that says so.
+
+    **A votation that never took a snapshot is the exception, and it is not a
+    hole.** The leak needs an earlier *published* reading to subtract; if nothing
+    was ever published while the vote was open, closing reveals a set rather than
+    a difference, and there is nothing to hold back. That is also the ordinary
+    case for a small votation, where withholding the figures for ever would be
+    the wrong answer to a risk that is not there.
+
+    ``profiled`` is the same optional-argument idiom the rest of the aggregation
+    uses: it is ``Tally.with_profile``, which both pages that ask this have
+    already counted, so the answer costs no query of its own.
+    """
+    if law.is_open():
+        return False
+    if law.demographics_snapshot_at is None:
+        return True
+    if profiled is None:
+        profiled = results.count_profiled(db, law.id)
+    return profiled - law.demographics_snapshot_profiles >= get_settings().min_bucket_volume
+
+
+def published_as_of(db: Session, law: Law, *, profiled: int | None = None) -> datetime | None:
+    """When the breakdowns on offer were arrested, or None if they are live.
+
+    What the results page and the JSON export both label their figures with. A
+    figure that is deliberately behind is only honest if it says by how much and
+    since when, and both surfaces have to say the same thing — which they did not
+    while each decided for itself by asking whether the votation was open.
+    """
+    if publishes_live_counters(db, law, profiled=profiled):
+        return None
+    return law.demographics_snapshot_at
+
+
 def _cells_by_dimension(
     db: Session, law_id: int, *, live: bool
 ) -> dict[str, dict[str, dict[str, int]]]:
@@ -396,19 +451,26 @@ def _cells_by_dimension(
     return out
 
 
-def all_breakdowns(db: Session, law: Law, *, min_cell: int | None = None) -> list[Breakdown]:
+def all_breakdowns(
+    db: Session, law: Law, *, min_cell: int | None = None, profiled: int | None = None
+) -> list[Breakdown]:
     """Every dimension's breakdown — two queries in total, not two per dimension.
 
     Takes the law rather than its id because *which* numbers may be published is
-    a fact about the votation, not about the counters: an open one publishes the
-    snapshot, a closed one the live totals. See :func:`refresh_snapshot`.
+    a fact about the votation, not about the counters. See
+    :func:`publishes_live_counters` for what decides it, and ``profiled`` for the
+    figure that lets it be decided without a query.
     """
     k = min_cell if min_cell is not None else get_settings().min_cell_count
-    live = not law.is_open()
-    if not live and law.demographics_snapshot_at is None:
+    live = publishes_live_counters(db, law, profiled=profiled)
+    if law.demographics_snapshot_at is None and law.is_open():
         # Open, and no snapshot taken yet. Every dimension is withheld — but as
         # "not published yet", never as "nothing to show": people may well have
         # been filling the optional fields in all along.
+        #
+        # Spelled out rather than read off `live` being false: a *closed* law
+        # holding its snapshot back is now the other way for that to happen, and
+        # it has figures to show — the ones from its last step.
         return [
             Breakdown(
                 dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason=REASON_PENDING

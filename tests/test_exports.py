@@ -271,3 +271,55 @@ def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open
     assert max(len(c) for c in chunks) <= _CHUNK_CHARS + 200, (
         "a chunk grew past the buffer - the point was to bound memory too"
     )
+
+
+# --- HEAD asks whether the file is there, not for the file --------------------
+
+
+def _scans(monkeypatch) -> list[int]:
+    """Counts how many times an export walked the votes."""
+    from app.routes.public import exports
+
+    seen: list[int] = []
+    real = exports.results_crud.iter_export_rows
+
+    def counting(*args, **kwargs):
+        seen.append(1)
+        yield from real(*args, **kwargs)
+
+    monkeypatch.setattr(exports.results_crud, "iter_export_rows", counting)
+    return seen
+
+
+def test_head_on_an_export_answers_without_scanning_the_votes(client, open_law, monkeypatch):
+    """`HeadAsGet` hands the handler a GET, and the server throws the body away.
+
+    Which is free everywhere except here, where *building* the body is a scan of
+    every vote on the votation — on the two URLs `robots.txt` marks as not worth
+    crawling, and which a link checker or an uptime probe therefore knocks on
+    first.
+    """
+    scans = _scans(monkeypatch)
+    for suffix in ("csv", "json"):
+        r = client.head(f"/loi/{open_law.slug}/export.{suffix}")
+        assert r.status_code == 200, suffix
+        assert "attachment" in r.headers["content-disposition"], suffix
+        assert open_law.slug in r.headers["content-disposition"], suffix
+    assert scans == [], "a HEAD built the whole export to throw it away"
+
+
+def test_get_still_scans_and_still_returns_the_rows(client, open_law, db_session, monkeypatch):
+    """The counterpart, so the short-circuit cannot swallow the real answer."""
+    db_session.add(Vote(law_id=open_law.id, voter_token="t", choice="for"))
+    db_session.commit()
+
+    scans = _scans(monkeypatch)
+    body = client.get(f"/loi/{open_law.slug}/export.csv").text
+    assert len(scans) == 1
+    assert len(body.strip().splitlines()) == 2, "header + the one vote"
+
+
+def test_head_on_a_page_is_unaffected(client, open_law):
+    """Only the exports branch; every other URL answers HEAD as it always did."""
+    for path in ("/", f"/loi/{open_law.slug}", "/robots.txt"):
+        assert client.head(path).status_code == 200, path

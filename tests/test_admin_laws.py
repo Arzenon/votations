@@ -603,3 +603,31 @@ def test_an_unreadable_promulgation_date_is_refused_with_a_message(client, db_se
     )
     assert r.status_code == 400
     assert "illisible" in r.text
+
+
+def test_previewing_an_unsaved_law_touches_no_memo_and_no_query(client, db_session):
+    """The previewed `Law` has no id, and two helpers typed `int` were given None.
+
+    They answered zero — `law_id IS NULL` matches nothing — and `tally` then filed
+    that answer in the per-law memo under the key `None`, in a table keyed by law
+    id and shared by every reader.
+    """
+    from app.crud import results as results_crud
+
+    results_crud.reset_cache()
+    r = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={
+            "title": "Loi jamais enregistrée",
+            "summary_text": "Un résumé.",
+            # A closing date in the past, so the page renders its tally rather
+            # than a ballot — which is the branch that used to reach `tally`.
+            "opens_at": "2020-01-01T10:00",
+            "closes_at": "2020-02-01T10:00",
+        },
+    )
+    assert r.status_code == 200
+    assert "Loi jamais enregistrée" in r.text
+    assert results_crud._TALLIES.get(None, max_age=3600) is None  # type: ignore[arg-type]
+    assert results_crud._TALLIES._entries == {}, "a preview left an entry behind"

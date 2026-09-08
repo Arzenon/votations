@@ -180,6 +180,21 @@ def _tally_from_counts(counts: dict[str, int], with_profile: int = 0) -> Tally:
     return Tally(total=total, counts=counts, percentages=pct, with_profile=with_profile)
 
 
+def empty_tally() -> Tally:
+    """A tally of nothing, for a law that has no row to count votes against.
+
+    The administration's « Aperçu public » renders an unsaved law: a transient
+    ``Law`` built from the posted form, never added to the session, whose ``id``
+    is therefore None. Asking for its figures used to reach :func:`tally` with
+    that None — which answers zero, because ``law_id IS NULL`` matches nothing,
+    and then filed the answer in :data:`_TALLIES` under the key ``None``, in a
+    table typed as keyed by law id. Harmless only because the preview never asks
+    for a remembered value; a stray key in a shared table is not a thing to leave
+    lying around on the strength of that.
+    """
+    return _tally_from_counts({c.value: 0 for c in VoteChoice})
+
+
 def tally(db: Session, law_id: int, *, max_age: float = 0.0) -> Tally:
     """This law's headline figures.
 

@@ -1,6 +1,12 @@
 # Pinned runtime dependencies, with hashes — the exact set installed in the image.
 #
-# Regenerate after changing the ranges in pyproject.toml:
+# Regenerate after changing the ranges in pyproject.toml — and periodically even
+# when nothing changed, because a pin never moves on its own and a security
+# release for fastapi or sqlalchemy lands here or nowhere:
+#
+#   scripts/relock.sh
+#
+# which is the four lines that used to be written out here, made runnable:
 #
 #   python -m venv /tmp/lock && /tmp/lock/bin/pip install pip-tools
 #   /tmp/lock/bin/pip-compile --generate-hashes --strip-extras \

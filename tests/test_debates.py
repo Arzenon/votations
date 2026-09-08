@@ -6,9 +6,9 @@ from datetime import date
 import pytest
 
 from app.debates import (
-    DEFAULT_LEGISLATURE,
     DebatesFetchError,
     Speech,
+    configured_legislature,
     fetch_speeches,
     speeches_from_record,
 )
@@ -501,9 +501,36 @@ def test_a_legislature_that_is_not_one_never_reaches_the_source_url():
     assert out, "the speeches themselves must still be found"
     for speech in out:
         assert speech.url.startswith(
-            f"https://www.assemblee-nationale.fr/dyn/{DEFAULT_LEGISLATURE}/"
+            f"https://www.assemblee-nationale.fr/dyn/{configured_legislature()}/"
         )
         assert ".." not in speech.url
+
+
+def test_the_fallback_legislature_follows_the_configured_export():
+    """It was a third copy of a number that also lives in two settings.
+
+    The one an operator moving to the next legislature would never see: they
+    correct `AN_DOSSIERS_URL` and `AN_SCRUTINS_URL`, and this stayed at 17 —
+    building `source` links into the previous legislature's URL space.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    assert configured_legislature() in settings.an_dossiers_url
+    assert f"/repository/{configured_legislature()}/" in settings.an_scrutins_url
+
+
+def test_an_export_url_of_another_shape_publishes_no_link_rather_than_a_wrong_one(monkeypatch):
+    """A misconfiguration must not invent a legislature to interpolate."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "an_dossiers_url", "https://example.test/export.zip")
+    assert configured_legislature() == ""
+
+    out = fetch_speeches(SEANCES, get=_with_legislature("pas-un-numero"))
+    assert out, "the quotations are still worth having, attributed by name and date"
+    assert all(speech.url == "" for speech in out)
 
 
 def test_an_ordinary_legislature_is_still_used():

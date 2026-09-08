@@ -1,9 +1,13 @@
 """Authentication routes.
 
-For the MVP this is a placeholder: a /connexion page explaining the provisional
-anonymous mechanism, with a (disabled) connect button reserved for the future
-FranceConnect integration. The transparency charter requires that we state how
-authentication works and what its limits are.
+One page, /connexion, explaining the provisional anonymous mechanism and its
+limits — which the transparency charter requires be stated rather than implied.
+
+No connect control is rendered, and that is a decision rather than an omission:
+``AuthProvider.login_enabled`` is False and nothing draws a button behind it. A
+disabled one reading « bientôt disponible » stood here and was removed, because
+it announced a gate this site does not have on the one page whose job is to say
+that voting needs no account.
 """
 
 from fastapi import APIRouter, Request

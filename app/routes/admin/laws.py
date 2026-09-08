@@ -16,6 +16,7 @@ from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form, preview_form
 from app.routes.public.exports import at_capacity, csv_response
 from app.routes.public.laws import law_page_context
+from app.security import is_head
 from app.templating import templates
 
 router = APIRouter()
@@ -227,16 +228,16 @@ def _parliament_record(item: ImportedLaw | None) -> dict:
     platform should offer. They are copied once, here, exactly as
     `promulgated_on` is - and a law written by hand simply has none, which the
     page renders as « adoptée sans scrutin public ».
+
+    The columns are read from `imports_crud.PARLIAMENT_RECORD` rather than named
+    again here. The same five were written out in three places, and this was the
+    copy that would have been forgotten: a sixth column would reach the daily
+    refresh and the nightly propagation, so a law created after it would take the
+    value a day late rather than at creation, and nothing would have said so.
     """
     if item is None:
         return {}
-    return {
-        "an_vote_for": item.an_vote_for,
-        "an_vote_against": item.an_vote_against,
-        "an_vote_abstain": item.an_vote_abstain,
-        "cmp_convened": item.cmp_convened,
-        "an_vote_checked": item.an_vote_checked,
-    }
+    return {name: getattr(item, name) for name in imports_crud.PARLIAMENT_RECORD}
 
 
 @router.post("/lois")
@@ -345,7 +346,7 @@ def export_law_csv(request: Request, law_id: int, db: Session = Depends(get_db))
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
-    return csv_response(db, law)
+    return csv_response(db, law, head=is_head(request))
 
 
 # --- What a route does about a law that is not there --------------------------

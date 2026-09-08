@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.crud import results as results_crud
 from app.crud import votes as votes_crud
 from app.models import Vote, VoteChoice
-from app.routes.public.laws import TOO_MANY_NOTICE
+from app.routes.public.laws import NO_CHOICE_NOTICE, TOO_MANY_NOTICE
 
 
 def test_one_vote_per_voter_then_changeable(client, open_law, db_session):
@@ -167,3 +167,90 @@ def test_voting_twice_at_once_updates_instead_of_failing(db_session, open_law):
     # demographic counters move without the row having to remember it.
     assert first_previous is None
     assert second_previous == "for"
+
+
+# --- Les trois choix, écrits une fois -------------------------------------------
+
+
+def test_every_choice_has_a_label():
+    """A choice with no label is a column that simply stops being drawn.
+
+    The mapping used to exist in three copies — the chart legend, the results
+    bars, and an if/elif chain in the ballot whose `else` was « Abstention ». A
+    fourth choice would have been *offered to voters* under that label.
+    """
+    from app.labels import CHOICE_LABELS
+    from app.models import VoteChoice
+
+    assert set(CHOICE_LABELS) == {c.value for c in VoteChoice}
+    assert list(CHOICE_LABELS) == [c.value for c in VoteChoice], "ballot order"
+    assert all(label for label in CHOICE_LABELS.values())
+
+
+def test_the_ballot_and_the_results_name_the_choices_the_same_way(client, closed_law, db_session):
+    """One mapping, so the ballot and the tables cannot disagree about a word."""
+    from app.labels import CHOICE_LABELS
+
+    db_session.add(Vote(law_id=closed_law.id, voter_token="t", choice="for"))
+    db_session.commit()
+
+    page = client.get(f"/loi/{closed_law.slug}/resultats").text
+    for label in CHOICE_LABELS.values():
+        assert label in page, label
+
+
+# --- Un bulletin refusé rend ce qui avait été saisi ------------------------------
+
+
+def test_a_refused_ballot_hands_back_the_profile_that_was_typed(client, open_law):
+    """The profile is typed on the same submit as the vote, and was being cleared.
+
+    A voter who forgets to choose gets their ballot back with a message — and had
+    three dropdowns silently reset to « Ne pas renseigner », with nothing saying
+    they had to fill them in again.
+    """
+    r = client.post(
+        f"/loi/{open_law.slug}/vote",
+        headers=HX,
+        data={"choice": "", "age_bracket": "35-49", "sexe": "femme", "region": "Bretagne"},
+    )
+    assert r.status_code == 200
+    assert escape(NO_CHOICE_NOTICE) in r.text
+    assert '<option value="35-49" selected>' in r.text
+    assert '<option value="femme" selected>' in r.text
+    assert '<option value="Bretagne" selected>' in r.text
+    assert r.text.count(" selected>") == 3, "only what was chosen comes back selected"
+
+
+def test_a_rate_limited_ballot_hands_it_back_too(client, open_law, monkeypatch):
+    """The refusal a voter is least at fault for — an address is not a person."""
+    monkeypatch.setattr(get_settings(), "vote_rate_limit", 1, raising=False)
+    ratelimit.reset()
+
+    # A first ballot with no profile: it spends the allowance without recording a
+    # contribution, so the dropdowns are still on offer for the second.
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"}, headers=HX)
+    r = client.post(
+        f"/loi/{open_law.slug}/vote",
+        data={"choice": "against", "age_bracket": "25-34"},
+        headers=HX,
+    )
+    assert escape(TOO_MANY_NOTICE) in r.text
+    assert '<option value="25-34" selected>' in r.text
+
+
+def test_a_category_this_site_does_not_know_is_never_echoed_back(client, open_law):
+    """`selected` is decided by matching an option, so nothing else can be marked."""
+    r = client.post(
+        f"/loi/{open_law.slug}/vote",
+        headers=HX,
+        data={"choice": "", "age_bracket": "150-200", "sexe": "<script>"},
+    )
+    assert " selected>" not in r.text
+    assert "150-200" not in r.text
+    assert "<script>" not in r.text
+
+
+def test_an_untouched_ballot_selects_nothing(client, open_law):
+    r = client.get(f"/loi/{open_law.slug}")
+    assert " selected>" not in r.text

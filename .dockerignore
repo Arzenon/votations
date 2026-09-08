@@ -17,3 +17,6 @@ __pycache__/
 # the host. They are data, sometimes large, and never belong in a build.
 exports/
 .env
+# Utilitaire personnel sans rapport avec le projet (voir .gitignore) : le
+# Dockerfile ne le copie pas, mais le contexte de construction est envoyé entier.
+dmarc/

@@ -30,6 +30,28 @@ from app.models import (
     Law,
 )
 
+#: The Assemblée's own record of a text: how it voted, whether the two chambers
+#: needed a commission mixte paritaire, and whether anybody has looked.
+#:
+#: Facts, not presentation. Nothing here is editable in the administration and
+#: nothing here is tracked in the public history of changes, because an
+#: administrator correcting a parliamentary vote count is not an operation this
+#: platform should offer.
+#:
+#: **Named once, and read from here by everything that copies these columns** —
+#: the daily refresh below, the nightly propagation onto votations already
+#: created, and the administration's own create route. It was three hand-written
+#: lists of the same five names, which is three chances for a sixth column to
+#: reach two of them: a law created after that would take the new value a day
+#: late, from the propagation, and nothing anywhere would have said so.
+PARLIAMENT_RECORD = (
+    "an_vote_for",
+    "an_vote_against",
+    "an_vote_abstain",
+    "cmp_convened",
+    "an_vote_checked",
+)
+
 # Columns the import job refreshes on every run. `status` and `law_id` are
 # deliberately absent: they record the admin's decision, not the source data.
 _REFRESHED = (
@@ -44,11 +66,7 @@ _REFRESHED = (
     "legifrance_url",
     "dossier_url",
     "seances",
-    "an_vote_for",
-    "an_vote_against",
-    "an_vote_abstain",
-    "cmp_convened",
-    "an_vote_checked",
+    *PARLIAMENT_RECORD,
 )
 
 # Sentinel telling `set_status` to leave `law_id` exactly as it is.
@@ -262,20 +280,6 @@ def last_import_at(db: Session) -> datetime | None:
     return db.scalar(select(func.max(ImportedLaw.last_seen_at)))
 
 
-#: The Assemblée's own record of a text, copied from the staged row onto the
-#: votation made from it. Facts, not presentation: nothing here is editable in
-#: the administration and nothing here is tracked in the public history of
-#: changes, because an administrator correcting a parliamentary vote count is not
-#: an operation this platform should offer.
-_PARLIAMENT_RECORD = (
-    "an_vote_for",
-    "an_vote_against",
-    "an_vote_abstain",
-    "cmp_convened",
-    "an_vote_checked",
-)
-
-
 def propagate_parliament_record(db: Session) -> int:
     """Bring every created votation's vote record up to date. Returns how many moved.
 
@@ -303,7 +307,7 @@ def propagate_parliament_record(db: Session) -> int:
     changed = or_(
         *(
             getattr(Law, name).is_distinct_from(getattr(ImportedLaw, name))
-            for name in _PARLIAMENT_RECORD
+            for name in PARLIAMENT_RECORD
         )
     )
     # `Session.execute` is typed as returning a plain `Result`; an ORM-enabled
@@ -313,7 +317,7 @@ def propagate_parliament_record(db: Session) -> int:
         db.execute(
             update(Law)
             .where(ImportedLaw.law_id == Law.id, changed)
-            .values({name: getattr(ImportedLaw, name) for name in _PARLIAMENT_RECORD})
+            .values({name: getattr(ImportedLaw, name) for name in PARLIAMENT_RECORD})
         ),
     )
     db.commit()

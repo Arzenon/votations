@@ -44,6 +44,21 @@ _PROSE_LIMITS = {
 #: out of one.
 MAX_ARGUMENT_CHARS = 5_000
 
+#: And how many of them one side may carry. Without this the sizing above was
+#: arithmetic that did not close: two prose blocks are bounded, the argument lists
+#: were not, and the form's real ceiling was Starlette's thousand-field limit —
+#: about three hundred rows, or a quarter of a megabyte of JSON rendered onto a
+#: public page, on a site whose charter names slow connections. The administrator
+#: met that as a bare 413 from the edge with no field named, which is the failure
+#: `_PROSE_LIMITS` exists to avoid.
+#:
+#: Ten is generous rather than tight: the model proposes five per side and the
+#: page shows one with the rest folded, so ten is already more than anybody will
+#: read. Two prose blocks (40 000) plus both full sides (100 000) leave the whole
+#: form comfortably inside the 256 kB Caddy accepts, which is what makes that
+#: sentence above true.
+MAX_ARGUMENTS_PER_SIDE = 10
+
 
 def _column_limits() -> dict[str, int]:
     """The declared width of each ``String`` column the form writes.
@@ -147,8 +162,8 @@ class ArgumentRows:
         return at(self.text), at(self.author), at(self.source)
 
 
-def parse_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
-    """Read one side's arguments from the form's rows, or refuse them.
+def _read_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
+    """One side's arguments, row by row, refusing any row that cannot be read.
 
     This used to read a JSON array typed into a textarea, which asked an
     administrator to be a programmer: one missing bracket and the whole block was
@@ -161,6 +176,9 @@ def parse_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
     lose an argument on a platform whose premise is symmetry between the two
     sides. Sources are checked because they are rendered as hrefs on the public
     page, and V3 opens this form to every authenticated user.
+
+    Says nothing about *how many* rows there may be — that is
+    :func:`parse_arguments`, because the two callers want opposite answers to it.
     """
     out: list[dict] = []
     for index in range(len(rows)):
@@ -187,6 +205,19 @@ def parse_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
                 "pas un compte rendu."
             )
         out.append({"text": text, "source": safe_url(source), "author": author})
+    return out
+
+
+def parse_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
+    """Read one side's arguments for *writing*, refusing anything unstorable."""
+    out = _read_arguments(rows, field=field)
+    if len(out) > MAX_ARGUMENTS_PER_SIDE:
+        raise InvalidFormValue(
+            f"« {field} » : {len(out)} arguments ; la limite est de "
+            f"{MAX_ARGUMENTS_PER_SIDE} par camp. Les arguments sont une sélection "
+            "de citations, pas le compte rendu du débat — la page en affiche un et "
+            "replie les autres."
+        )
     return out
 
 
@@ -381,9 +412,15 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
 
 
 def _lenient_arguments(rows: ArgumentRows, field: str) -> list[dict]:
-    """A half-filled argument reads as no argument rather than as a refusal."""
+    """A half-filled argument reads as no argument rather than as a refusal.
+
+    Too *many* arguments is the one thing truncated rather than dropped, which is
+    what :func:`_echoed` promises for every other field: an over-long block is cut
+    and shown back, and there is no reason a list should instead come back empty.
+    Saving still refuses and names the count — see :func:`parse_arguments`.
+    """
     try:
-        return parse_arguments(rows, field=field)
+        return _read_arguments(rows, field=field)[:MAX_ARGUMENTS_PER_SIDE]
     except InvalidFormValue:
         return []
 

@@ -570,18 +570,82 @@ def test_nothing_is_published_before_the_first_snapshot(open_law, db_session):
     assert {bd.reason for bd in breakdowns} == {"pending"}
 
 
-def test_a_closed_votation_publishes_its_live_counters(open_law, db_session):
-    """Nothing can move once voting has closed, so there is nothing to difference."""
+def _close(db, law):
+    law.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    db.commit()
+
+
+def _age(db, law):
+    return next(bd for bd in demo_crud.all_breakdowns(db, law) if bd.dimension == "age")
+
+
+def test_a_votation_that_never_published_shows_its_live_counters_once_closed(open_law, db_session):
+    """With nothing published while it ran, closing reveals a set and not a difference.
+
+    The leak the snapshot rule exists to stop needs an *earlier published
+    reading* to subtract from. A votation that never reached a first step has
+    none, so there is nothing being held back and withholding the figures for
+    ever would answer a risk that is not there.
+    """
     _profiled_ballots(db_session, open_law, 12, age_bracket="35-49", sexe="femme")
     # Not published yet: too few profiles for a snapshot while it was open.
     assert demo_crud.all_breakdowns(db_session, open_law)[0].reason == "pending"
 
-    open_law.closes_at = datetime.now(UTC) - timedelta(minutes=1)
-    db_session.commit()
+    _close(db_session, open_law)
 
-    age = next(bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "age")
+    age = _age(db_session, open_law)
     assert age.shown is True
     assert age.rows[0].counts["for"] == 12
+    assert demo_crud.published_as_of(db_session, open_law) is None, "live, so undated"
+
+
+def test_closing_does_not_release_a_step_too_small_to_be_one(open_law, db_session, client):
+    """The last step is held to the same volume rule as every other one.
+
+    Otherwise closing is a free reading: fetch the page an hour before, fetch it
+    after, subtract, and the difference is the handful of people who voted last —
+    their choice, age, sex and région together, which is the joint cell this
+    schema refuses to store. Every other step is at least MIN_BUCKET_VOLUME
+    profiles wide precisely so that no difference can be attributed to a person,
+    and the final one was moving by whatever remainder happened to be there.
+    """
+    _first_snapshot(db_session, open_law, age_bracket="35-49", sexe="femme")
+    before = _published_cells(client, open_law)
+
+    # One profiled ballot arrives, then the votation closes.
+    cast_ballot(
+        db_session, open_law, "last-voter", VoteChoice.AGAINST, age_bracket="65+", sexe="homme"
+    )
+    _close(db_session, open_law)
+
+    assert _published_cells(client, open_law) == before, (
+        "closing published the residual, so one voter's whole profile is the difference"
+    )
+    assert demo_crud.published_as_of(db_session, open_law) is not None, "and it is dated"
+    assert _age(db_session, open_law).shown is True, "the last step's figures are still shown"
+
+
+def test_a_closed_votation_publishes_live_once_the_residual_is_a_real_step(open_law, db_session):
+    """The counterpart: holding the snapshot is a rule, not a freeze."""
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
+    _profiled_ballots(db_session, open_law, volume, start=volume + 1, age_bracket="65+")
+    _close(db_session, open_law)
+
+    age = _age(db_session, open_law)
+    assert demo_crud.published_as_of(db_session, open_law) is None, "live, so undated"
+    assert {r.category for r in age.rows} == {"35-49", "65+"}
+
+
+def test_the_export_dates_its_breakdowns_exactly_as_the_page_does(open_law, db_session, client):
+    """The same numbers in a form far easier to poll must not tell another story."""
+    _first_snapshot(db_session, open_law, age_bracket="35-49", sexe="femme")
+    cast_ballot(db_session, open_law, "last-voter", VoteChoice.AGAINST, age_bracket="65+")
+    _close(db_session, open_law)
+
+    payload = client.get(f"/loi/{open_law.slug}/export.json").json()
+    assert payload["demographics_as_of"] is not None, "a snapshot, and the file says so"
+    categories = {row["category"] for block in payload["demographics"] for row in block["rows"]}
+    assert "65+" not in categories, "the export released what the page withheld"
 
 
 def test_the_snapshot_steps_by_profiles_not_by_votes(open_law, db_session):

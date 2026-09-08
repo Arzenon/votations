@@ -42,11 +42,24 @@ from app.templating import templates
 router = APIRouter()
 
 
-def _demographic_form_context() -> dict:
+def _demographic_form_context(chosen: dict[str, str] | None = None) -> dict:
+    """The three optional dropdowns: what they offer, and what is selected in them.
+
+    ``chosen`` is what the visitor had just picked, echoed back when their ballot
+    is refused. Without it a rate-limited voter — or one who forgot to choose —
+    got their radio button back and three dropdowns silently reset to « Ne pas
+    renseigner », with nothing on the page saying they had to fill them in again.
+
+    Keyed by form field name rather than by dimension, because that is what the
+    template renders and what the route was handed. Values that are not one of
+    the options simply match nothing, so a posted category this application does
+    not recognise cannot be echoed back as selected.
+    """
     return {
         "age_brackets": DIMENSION_ORDER[DIMENSION_AGE],
         "sexes": DIMENSION_ORDER[DIMENSION_SEXE],
         "regions": DIMENSION_ORDER[DIMENSION_REGION],
+        "chosen": chosen or {},
     }
 
 
@@ -91,6 +104,7 @@ def _ballot_fragment(
     existing_choice: str | None = None,
     demographics_locked: bool = False,
     notice: str = "",
+    chosen: dict[str, str] | None = None,
 ) -> HTMLResponse:
     """The ballot on its own, for HTMX to swap back into the page.
 
@@ -121,7 +135,7 @@ def _ballot_fragment(
             "choices": list(VoteChoice),
             "demographics_locked": demographics_locked,
             "notice": notice,
-            **_demographic_form_context(),
+            **_demographic_form_context(chosen),
         },
     )
 
@@ -133,11 +147,16 @@ def _refused_ballot(
     auth: AuthProvider,
     *,
     notice: str,
+    chosen: dict[str, str] | None = None,
 ) -> HTMLResponse:
     """The visitor's own ballot, re-rendered with the reason it was refused.
 
     Reads the existing vote back so a refusal leaves the radio buttons showing
-    what this browser had already chosen, rather than silently clearing it.
+    what this browser had already chosen, rather than silently clearing it — and
+    takes ``chosen`` for the same reason, one field further down: the optional
+    profile is typed on the same submit that was refused, and re-rendering the
+    ballot without it asked the voter to fill it in again with no indication that
+    it had gone.
     """
     voter_token = auth.peek_voter_token(request)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
@@ -148,6 +167,7 @@ def _refused_ballot(
         existing_choice=existing.choice if existing else None,
         demographics_locked=bool(existing and existing.demographics_recorded),
         notice=notice,
+        chosen=chosen,
     )
 
 
@@ -168,6 +188,23 @@ def law_page_context(
     approximate. Sharing the context is what keeps the preview honest as the page
     grows — a block added here appears in both, or in neither.
     """
+    # Three cases, and only the middle one asks the database anything.
+    #
+    # Only the closed page shows a tally: counting the votes to render a ballot
+    # nobody sees was wasted work on the busiest page of the site. And `law.id` is
+    # None for the administration's preview of an unsaved form — a `Law` built for
+    # one render and never added to the session. That case used to reach the two
+    # queries below and be answered zero, correctly and by accident: the predicate
+    # became `law_id IS NULL`, which matches nothing. Saying so here keeps a None
+    # out of two helpers whose parameter is typed `int`, and out of the per-law
+    # memo `tally` writes to. See `results_crud.empty_tally`.
+    if status == STATUS_OPEN:
+        tally = None
+    elif law.id:
+        tally = results_crud.tally(db, law.id)
+    else:
+        tally = results_crud.empty_tally()
+
     return {
         "law": law,
         "status": status,
@@ -175,12 +212,10 @@ def law_page_context(
         # not what the status string happens to be.
         "voting_open": status == STATUS_OPEN,
         "existing_choice": existing_choice,
-        # Only the closed page shows a tally; counting the votes to render a
-        # ballot nobody sees was wasted work on the busiest page of the site.
-        "tally": results_crud.tally(db, law.id) if status != STATUS_OPEN else None,
+        "tally": tally,
         "choices": list(VoteChoice),
         "demographics_locked": demographics_locked,
-        "revision_count": laws_crud.count_revisions(db, law.id),
+        "revision_count": laws_crud.count_revisions(db, law.id) if law.id else 0,
         "preview": preview,
         # For « Signaler une erreur » in the provenance note: the page admits the
         # presentation may be wrong, so it has to say where to report it. Empty
@@ -244,6 +279,9 @@ def cast_vote(
     auth: AuthProvider = Depends(get_auth_provider),
 ):
     htmx = bool(request.headers.get("HX-Request"))
+    # What the visitor typed in the optional dropdowns, kept so that every refusal
+    # below hands it back rather than clearing it — see `_demographic_form_context`.
+    chosen = {"age_bracket": age_bracket, "sexe": sexe, "region": region}
 
     law = visible(db, slug)
     if law is None:
@@ -270,14 +308,14 @@ def cast_vote(
     )
     if ratelimit.over_limit(request, **throttle):
         if htmx:
-            return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE)
+            return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE, chosen=chosen)
         return too_many_votes(request)
 
     try:
         vote_choice = VoteChoice(choice)
     except ValueError:
         if htmx:
-            return _refused_ballot(request, db, law, auth, notice=NO_CHOICE_NOTICE)
+            return _refused_ballot(request, db, law, auth, notice=NO_CHOICE_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
 
     # This one is a ballot. A vote on a votation that closed a moment ago still
@@ -285,7 +323,7 @@ def cast_vote(
     # two apart is exactly what an attacker would arrange.
     if ratelimit.too_many(request, **throttle):
         if htmx:
-            return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE)
+            return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE, chosen=chosen)
         return too_many_votes(request)
 
     carrier = Response()  # collects the cookies the helpers below set
@@ -300,7 +338,7 @@ def cast_vote(
         vote, previous_choice = votes_crud.cast_vote(db, law, voter_token, vote_choice)
     except votes_crud.VotingClosed:
         if htmx:
-            return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE)
+            return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
 
     # Move the *published* breakdown forward first, if it is due — before this
@@ -368,7 +406,12 @@ def results_page(
     memo_age = results_memo_age(status)
     tally = results_crud.tally(db, law.id, max_age=memo_age)
     evolution = results_crud.evolution(db, law.id, total=tally.total, max_age=memo_age)
-    breakdowns = demo_crud.all_breakdowns(db, law)
+    # `tally.with_profile` is the count both of these would otherwise ask the
+    # database for on their own — it decides whether this law's last step to the
+    # live counters is large enough to publish. See
+    # `demo_crud.publishes_live_counters`.
+    breakdowns = demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
+    breakdowns_as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
     history = laws_crud.revisions(db, law.id, page=revisions)
     settings = get_settings()
     origin = str(request.base_url).rstrip("/")
@@ -408,11 +451,11 @@ def results_page(
             # `breakdowns[0]` and take the list being non-empty on faith.
             "min_cell_count": settings.min_cell_count,
             # When the breakdowns above were last allowed to move, and by how
-            # little they may move at a time. Only while the vote is open: a
-            # closed one publishes its live counters, and dating them would
-            # suggest a lag that is not there. The page has to say this — a
-            # figure that is deliberately behind is only honest if it is labelled.
-            "breakdowns_as_of": law.demographics_snapshot_at if status == STATUS_OPEN else None,
+            # little they may move at a time. None once the live counters are
+            # published, where dating them would suggest a lag that is not there.
+            # The page has to say this — a figure that is deliberately behind is
+            # only honest if it is labelled.
+            "breakdowns_as_of": breakdowns_as_of,
             "min_bucket_volume": settings.min_bucket_volume,
             "provision": demo_crud.provision_rate(db, law.id, tally=tally),
             "export_note": results_crud.export_note(db, law.id, total=tally.total),

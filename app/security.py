@@ -1,4 +1,7 @@
-"""Cross-site request rejection and URL sanitising.
+"""What the application decides about a request before it becomes an answer.
+
+Three small things, and they are here together because each is a rule about an
+incoming request rather than about any one route.
 
 Both public voting and the administration accept state-changing POSTs from a
 browser form. Neither uses a session token a third-party page could not replay:
@@ -6,6 +9,9 @@ the admin sends HTTP Basic credentials (attached cross-site regardless of
 SameSite) and the voter sends a cookie or none at all. Comparing the request's
 own host to the origin it claims to come from closes both without a session
 rewrite.
+
+Beside it: whether the request was really a HEAD (see :func:`is_head`), and
+whether a stored URL may be rendered as an href at all.
 """
 
 from __future__ import annotations
@@ -67,6 +73,31 @@ def require_same_origin(request: Request) -> None:
     # starts with "http://site" and would otherwise sail through.
     if _origin(stated) != _origin(str(request.base_url)):
         raise HTTPException(status_code=403, detail=_REFUSED)
+
+
+#: Where `app.main.HeadAsGet` records that a request arrived as HEAD.
+#:
+#: Namespaced, because the ASGI scope is a dict several layers share and a bare
+#: key like "head" is the sort of thing two of them eventually both use for two
+#: different purposes.
+HEAD_SCOPE_KEY = "vf.head"
+
+
+def is_head(request: Request) -> bool:
+    """Whether this GET is really the HEAD that `HeadAsGet` rewrote.
+
+    Almost nothing needs to know — the whole point of that middleware is that a
+    handler answers both the same way, and the server drops the body. The
+    exception is a handler for which *producing* the body is the work: an
+    open-data export scans every vote on a votation, and doing that for a
+    response whose body is thrown away is the one case where the difference is
+    worth a branch.
+
+    False for an ordinary GET, and for a HEAD reaching an application that is not
+    behind that middleware — so a caller that forgets the branch is merely slow,
+    never wrong.
+    """
+    return bool(request.scope.get(HEAD_SCOPE_KEY))
 
 
 def is_safe_url(value: str | None) -> bool:

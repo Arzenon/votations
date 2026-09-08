@@ -24,7 +24,8 @@ router = APIRouter()
 
 
 # A search box is not a place to paste a novel. Long enough for any real query,
-# short enough that three unanchored ILIKEs stay cheap.
+# short enough that the tsquery it becomes stays a handful of terms and the
+# unanchored ILIKE beside it stays cheap — see `app.crud.laws._apply_search`.
 MAX_QUERY_CHARS = 120
 
 
@@ -55,6 +56,11 @@ def home(request: Request, db: Session = Depends(get_db)):
         {
             "bands": bands,
             "tallies": tallies,
+            # The number the database cut the excerpt at. The template held it as
+            # a literal, twice — once to slice and once to decide the ellipsis —
+            # against a constant that only exists in Python, and the whole point
+            # of fetching one character more than is shown is that the two agree.
+            "excerpt_chars": laws_crud.EXCERPT_CHARS,
             "jsonld": seo.graph(seo.website(origin, description=TAGLINE)),
         },
         headers=PUBLIC_PAGE_CACHE,

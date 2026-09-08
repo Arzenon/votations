@@ -64,7 +64,15 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 # `target: base` explicitly. Check that before adding a service.
 FROM base AS dev
 USER root
-RUN pip install "pytest>=8.3" "ruff>=0.15" "mypy>=1.14" "types-defusedxml>=0.7"
+# Read out of pyproject.toml's `dev` extra rather than written again here. The
+# two lists were identical and had no way to stay so: the one that drifts is this
+# one, and what it drifts into is an image whose mypy silently stops checking a
+# module nobody notices. `pip install -e ".[dev]"` would be the obvious way to
+# say it and is the one thing this build must not do — see the note above about
+# build isolation reaching the network unpinned.
+RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['optional-dependencies']['dev']))" > /tmp/dev.txt \
+    && pip install -r /tmp/dev.txt \
+    && rm /tmp/dev.txt
 COPY tests ./tests
 RUN chown -R votations:votations /app
 USER votations

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from app.models import Law
+from app.routes.admin import forms
 from tests.helpers import admin_headers, make_law
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -245,6 +246,67 @@ def test_an_argument_longer_than_a_quotation_is_refused(client):
     )
     assert r.status_code == 400
     assert "citation" in r.text
+
+
+def test_more_arguments_than_a_side_may_carry_are_refused(client, db_session):
+    """The prose blocks were bounded and the argument lists were not.
+
+    Which made the sizing at `_PROSE_LIMITS` arithmetic that did not close: the
+    form's real ceiling was Starlette's thousand-field limit, so a side could
+    carry a quarter of a megabyte of JSON onto a public page and the
+    administrator met it as a bare 413 from the edge, naming no field.
+    """
+    over = forms.MAX_ARGUMENTS_PER_SIDE + 1
+    r = client.post(
+        "/admin/lois",
+        headers=admin_headers(),
+        data={
+            "title": "Loi bavarde",
+            "arguments_for_text": [f"Citation numéro {i}." for i in range(over)],
+            "arguments_for_author": [f"Orateur {i}" for i in range(over)],
+            "arguments_for_source": ["https://x.example"] * over,
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 400
+    assert str(over) in r.text and str(forms.MAX_ARGUMENTS_PER_SIDE) in r.text
+    assert db_session.query(Law).filter_by(title="Loi bavarde").one_or_none() is None
+
+
+def test_exactly_the_limit_is_accepted(client, db_session):
+    """The bound is generous on purpose; it must not be off by one."""
+    n = forms.MAX_ARGUMENTS_PER_SIDE
+    client.post(
+        "/admin/lois",
+        headers=admin_headers(),
+        data={
+            "title": "Loi à la limite",
+            "arguments_for_text": [f"Citation numéro {i}." for i in range(n)],
+            "arguments_for_author": [f"Orateur {i}" for i in range(n)],
+            "arguments_for_source": ["https://x.example"] * n,
+        },
+        follow_redirects=False,
+    )
+    law = db_session.query(Law).filter_by(title="Loi à la limite").one()
+    assert len(law.arguments_for) == n
+
+
+def test_the_preview_truncates_the_arguments_rather_than_dropping_them(client):
+    """`_echoed` cuts every other over-long field; a list must not come back empty."""
+    over = forms.MAX_ARGUMENTS_PER_SIDE + 3
+    r = client.post(
+        "/admin/lois/apercu",
+        headers=admin_headers(),
+        data={
+            "title": "Loi bavarde",
+            "arguments_for_text": [f"Citation numéro {i}." for i in range(over)],
+            "arguments_for_author": [f"Orateur {i}" for i in range(over)],
+            "arguments_for_source": ["https://x.example"] * over,
+        },
+    )
+    assert r.status_code == 200
+    assert "Citation numéro 0." in r.text, "the preview kept what it could show"
+    assert f"Citation numéro {over - 1}." not in r.text, "and cut the rest"
 
 
 def test_an_ordinary_presentation_still_saves(client, db_session):

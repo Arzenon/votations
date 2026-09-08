@@ -8,6 +8,10 @@ network: how much of a response this is willing to read.
 
 from __future__ import annotations
 
+import io
+import json
+import zipfile
+
 import httpx
 import pytest
 
@@ -138,3 +142,67 @@ def test_a_law_with_no_recorded_vote_resolves_to_nothing():
 
     assert final_vote([], {}) is None
     assert final_vote(["inconnu"], {}) is None
+
+
+# --- Lire l'archive des scrutins ----------------------------------------------
+
+
+def _scrutins_zip(entries: dict[str, str]) -> bytes:
+    """An in-memory copy of the scrutins export."""
+    from app.scrutins import MEMBER
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        for uid, body in entries.items():
+            archive.writestr(MEMBER.format(uid=uid), body)
+    return buf.getvalue()
+
+
+def test_a_scrutin_is_read_out_of_the_archive_by_name():
+    from app.scrutins import fetch_votes
+
+    body = json.dumps(
+        {
+            "scrutin": {
+                "uid": "VTANR5L17V1234",
+                "sort": {"code": "adopté"},
+                "objet": {"libelle": "l'ensemble du projet de loi."},
+                "syntheseVote": {"decompte": {"pour": "357", "contre": "177", "abstentions": "9"}},
+            }
+        }
+    )
+    blob = _scrutins_zip({"VTANR5L17V1234": body})
+    found = fetch_votes({"VTANR5L17V1234"}, get=lambda url: blob)
+    assert found["VTANR5L17V1234"].pour == 357
+    assert found["VTANR5L17V1234"].contre == 177
+
+
+def test_a_scrutin_larger_than_the_cap_is_not_read():
+    """The same rule the dossiers and JO readers apply, in the third reader.
+
+    A zip member declares its own uncompressed size, and the download cap bounds
+    the *compressed* bytes only — so reading a member without looking first is how
+    a few kilobytes of archive become gigabytes of memory. This reader was the one
+    that did not look.
+    """
+    from app.scrutins import MAX_MEMBER_BYTES, fetch_votes
+
+    blob = _scrutins_zip({"gros": "p" * (MAX_MEMBER_BYTES + 10)})
+    assert fetch_votes({"gros"}, get=lambda url: blob) == {}
+
+
+def test_one_unreadable_scrutin_does_not_lose_the_others():
+    from app.scrutins import fetch_votes
+
+    good = json.dumps(
+        {
+            "scrutin": {
+                "uid": "bon",
+                "sort": {"code": "adopté"},
+                "syntheseVote": {"decompte": {"pour": "10", "contre": "2", "abstentions": "0"}},
+            }
+        }
+    )
+    blob = _scrutins_zip({"bon": good, "casse": "{ pas du json"})
+    found = fetch_votes({"bon", "casse"}, get=lambda url: blob)
+    assert set(found) == {"bon"}

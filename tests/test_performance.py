@@ -168,6 +168,23 @@ def test_the_excerpt_says_when_there_is_more(db_session):
     )
 
 
+def test_the_home_page_trails_off_at_the_length_the_database_cut(client, db_session):
+    """And the page must cut at the same number the SQL did.
+
+    It held that number as a literal, twice — once to slice and once to decide
+    the ellipsis — against a constant that lives in Python. The overshoot of one
+    only means anything while the two agree.
+    """
+    cut = laws_crud.EXCERPT_CHARS
+    make_law(db_session, slug="loi-longue", title="Loi longue", summary_text="a" * (cut + 500))
+    make_law(db_session, slug="loi-courte", title="Loi courte", summary_text="b" * (cut - 5))
+
+    body = client.get("/").text
+    assert "a" * cut + "…" in body, "a summary longer than the cut trails off at the cut"
+    assert "a" * (cut + 1) not in body, "and the overshoot character is never displayed"
+    assert "b" * (cut - 5) in body and "b" * (cut - 5) + "…" not in body, "short: no ellipsis"
+
+
 def test_recording_a_vote_reads_it_back_once(db_session, open_law, count_queries):
     """`get` followed by `refresh` fetched the same row twice, on every vote."""
     from app.crud import votes as votes_crud
@@ -394,3 +411,39 @@ def test_the_index_the_listings_rely_on_is_declared():
     index = next(i for i in Law.__table__.indexes if i.name == "ix_laws_home")
     where = index.dialect_options["postgresql"]["where"]
     assert str(text("published AND archived_at IS NULL")) == str(where)
+
+
+def test_a_closed_votation_with_a_snapshot_costs_no_extra_scan(
+    client, closed_law, db_session, count_queries
+):
+    """Deciding whether the last step may be published must be free.
+
+    A closed votation that took a snapshot while it was open has to compare its
+    profiled count against the one recorded at that snapshot — see
+    `demo_crud.publishes_live_counters`. That number is `Tally.with_profile`,
+    which this page already counts, so both the breakdowns and their date are
+    decided from it. Asking the database again would have put a second scan back
+    on the page the memo exists to keep off.
+    """
+    for i in range(30):
+        db_session.add(
+            Vote(
+                law_id=closed_law.id,
+                voter_token=f"snap{i}",
+                choice="for",
+                demographics_recorded=True,
+            )
+        )
+    closed_law.demographics_snapshot_at = datetime.now(UTC) - timedelta(days=2)
+    closed_law.demographics_snapshot_profiles = 10
+    db_session.commit()
+
+    with count_queries() as seen:
+        r = client.get(f"/loi/{closed_law.slug}/resultats")
+    assert r.status_code == 200
+    counting = [
+        s
+        for s in seen
+        if "from votes" in s.lower() and "count" in s.lower() and "date_trunc" not in s.lower()
+    ]
+    assert len(counting) == 1, f"{len(counting)} scans to count the votes: {counting}"

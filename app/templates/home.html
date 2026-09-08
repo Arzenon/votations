@@ -38,10 +38,14 @@
       <a href="/loi/{{ law.slug }}">
         <span class="status status-{{ state }}">{{ state | law_status }}</span>
         <h3>{{ law.title }}</h3>
-        {# `excerpt`, not `summary_text`: the database cuts it to 201 characters so
-           this page never reads a whole presentation to show two lines of one.
-           The 201st character is how we know there was more to say. #}
-        {% if law.excerpt %}<p>{{ law.excerpt[:200] }}{% if law.excerpt|length > 200 %}…{% endif %}</p>{% endif %}
+        {# `excerpt`, not `summary_text`: the database cuts it to one character
+           more than is shown, so this page never reads a whole presentation to
+           display two lines of one — and that extra character is how we know
+           there was more to say. `excerpt_chars` is the cut, handed down from
+           `laws_crud.EXCERPT_CHARS` rather than written here as a number: the
+           slice and the ellipsis have to agree with the SQL, and a literal in a
+           template agrees with it only until somebody changes the constant. #}
+        {% if law.excerpt %}<p>{{ law.excerpt[:excerpt_chars] }}{% if law.excerpt|length > excerpt_chars %}…{% endif %}</p>{% endif %}
         <p class="meta card-facts">
           {# The date the list is ordered by, so the order is legible rather than
              mysterious. Absent on a law written by hand, which has no staged row

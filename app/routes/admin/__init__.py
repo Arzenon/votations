@@ -1,7 +1,9 @@
 """Administration routes.
 
 Guarded by HTTP Basic against env-configured credentials for the MVP. This is a
-provisional measure; V3 replaces it with FranceConnect-based roles.
+provisional measure: V3 opens this form to every authenticated user, by whatever
+mechanism authenticates them by then. Which mechanism that is is deliberately not
+promised here — see :mod:`app.auth.base`.
 
 Split by resource — the guard, the form, the laws, the staged imports — because
 one module had grown to hold authentication, timezone parsing, French date

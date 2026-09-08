@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.labels import local_day
 from app.models import Law
 from app.security import safe_url
 
@@ -179,6 +180,18 @@ def votation_dataset(origin: str, law: Law) -> dict:
 
     No `license` — see the module docstring. `isAccessibleForFree` is a fact
     about this deployment and is safe to state; a licence is a decision.
+
+    **The two `contentUrl`s are `Disallow`ed in robots.txt, and that is not the
+    contradiction it looks like.** `app.routes.public.pages.sitemap` refuses to
+    list `/recherche` precisely because asking for a page to be indexed while the
+    page itself says `noindex` is a contradiction search engines report as an
+    error. This is a different statement: a `DataDownload` says *where the data
+    is*, for a person or a client that wants it, and Dataset Search indexes this
+    markup rather than fetching the files. The `Disallow` says only that a crawler
+    walking the site should not pull a full scan of every votation's votes, which
+    is what the per-address rate limit and the concurrency cap exist to bound in
+    the first place. Both remain true at once, and the files remain one click away
+    on the page this node points at.
     """
     page = f"{origin}/loi/{law.slug}/resultats"
     return _pruned(
@@ -218,11 +231,17 @@ def _coverage(law: Law) -> str:
 
     Schema.org's open-ended form is a trailing slash — « opened on this day and
     still running » — which is exactly what an open votation is.
+
+    Both ends go through :func:`~app.labels.local_day`, like every other date this
+    site publishes. ``.date()`` on the stored instant gives the *UTC* day, so a
+    votation opening at 00:30 Paris was declared to a search engine as having
+    opened the day before — the same off-by-one the home page's cards learned the
+    hard way, on a value nobody would ever have looked at.
     """
     if not law.opens_at:
         return ""
-    start = law.opens_at.date().isoformat()
-    return f"{start}/{law.closes_at.date().isoformat()}" if law.closes_at else f"{start}/"
+    start = local_day(law.opens_at).isoformat()
+    return f"{start}/{local_day(law.closes_at).isoformat()}" if law.closes_at else f"{start}/"
 
 
 def graph(*nodes: dict) -> dict:

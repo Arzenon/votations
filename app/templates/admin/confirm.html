@@ -14,9 +14,7 @@
   {% if law.official_ref %}<p class="meta">{{ law.official_ref }}</p>{% endif %}
   <p class="meta">
     Votes exprimés : <strong>{{ tally.total }}</strong>
-    (Pour {{ tally.counts['for'] }} ·
-     Contre {{ tally.counts['against'] }} ·
-     Abstention {{ tally.counts['abstain'] }})
+    ({% for key, label in CHOICE_LABELS.items() %}{{ label }} {{ tally.counts[key] }}{{ " · " if not loop.last }}{% endfor %})
   </p>
 </div>
 

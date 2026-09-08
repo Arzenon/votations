@@ -1,8 +1,8 @@
 """The provisional administration guard: HTTP Basic, with a real throttle.
 
-Replaced by FranceConnect-based roles in V3. Until then it is a single static
-credential pair, which is precisely the thing a brute force is good at, so the
-throttle here has to do actual work.
+Provisional until V3 opens the administration to authenticated users. Until then
+it is a single static credential pair, which is precisely the thing a brute force
+is good at, so the throttle here has to do actual work.
 """
 
 from __future__ import annotations

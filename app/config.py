@@ -271,7 +271,8 @@ class Settings(BaseSettings):
         out, with a 401 that says nothing about why.
 
         Refusing at boot is the honest answer while the guard is HTTP Basic. The
-        constraint disappears with FranceConnect in V3.
+        constraint is a property of that header and disappears with it, whenever
+        the administration stops being guarded by a single credential pair.
         """
         if not value.isascii():
             raise ValueError(

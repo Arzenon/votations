@@ -133,57 +133,65 @@ def _iter_actes(node: object) -> Iterator[dict]:
         yield from _iter_actes((acte.get("actesLegislatifs") or {}).get("acteLegislatif"))
 
 
-def _seances(dossier: dict) -> list[dict]:
-    """Sittings where the text was discussed, oldest first, without duplicates."""
-    seen: set[tuple[str, str]] = set()
-    out: list[dict] = []
-    actes = dossier.get("actesLegislatifs") or {}
-    for acte in _iter_actes(actes.get("acteLegislatif")):
-        if acte.get("codeActe") != SEANCE_ACTE:
-            continue
-        reunion, odj = acte.get("reunionRef"), acte.get("odjRef")
-        if not (reunion and odj) or (reunion, odj) in seen:
-            continue
-        seen.add((reunion, odj))
-        out.append({"reunion_ref": reunion, "odj_ref": odj, "date": acte.get("dateActe") or ""})
-    out.sort(key=lambda s: s["date"])
-    return out
+@dataclass
+class _Actes:
+    """Everything one dossier's tree of actes has to say, read in a single pass.
 
+    There were four readers here — promulgation, sittings, vote references,
+    commission mixte paritaire — and each walked the whole tree from the top,
+    three of them repeating the same ``(dossier.get("actesLegislatifs") or
+    {}).get("acteLegislatif")`` to get there. Four copies of one accessor is four
+    places to get the null-coalescing wrong, and a fifth thing worth reading off
+    an acte would have been a fifth walk by default.
 
-def _vote_refs(dossier: dict) -> list[str]:
-    """Every vote a decision act refers to, oldest first, across all readings.
-
-    Order is the order the export lists the acts in, which is chronological, and
-    it is what lets `app.scrutins.final_vote` take the *last* adoption: a law read
-    three times has three recorded votes and only the final one settles it.
-
-    Only `…-DEC` acts. The dossier also carries `…-MOTION-VOTE`, whose figures are
-    a vote on a motion de rejet and therefore inverted - see `DECISION_SUFFIX`.
+    One pass, so a promulgated dossier is walked once instead of four times.
     """
-    refs: list[str] = []
-    for acte in _iter_actes((dossier.get("actesLegislatifs") or {}).get("acteLegislatif")):
-        if not (acte.get("codeActe") or "").endswith(DECISION_SUFFIX):
-            continue
-        for ref in as_list((acte.get("voteRefs") or {}).get("voteRef")):
-            if isinstance(ref, str) and ref:
-                refs.append(ref)
-    return refs
+
+    #: The PROM-PUB acte, or None — which is what says this dossier never became
+    #: a law and is the first thing every caller checks.
+    promulgation: dict | None = None
+    #: Sittings where the text was discussed, oldest first, without duplicates.
+    seances: list[dict] = field(default_factory=list)
+    #: Every vote a decision act refers to, in export order — which is
+    #: chronological, and is what lets `app.scrutins.final_vote` take the *last*
+    #: adoption: a law read three times has three recorded votes and only the
+    #: final one settles it.
+    #:
+    #: Only `…-DEC` acts. The dossier also carries `…-MOTION-VOTE`, whose figures
+    #: are a vote on a motion de rejet and therefore inverted — see
+    #: `DECISION_SUFFIX`.
+    vote_refs: list[str] = field(default_factory=list)
+    #: Whether a commission mixte paritaire was convened on this text.
+    cmp_convened: bool = False
 
 
-def _went_to_cmp(dossier: dict) -> bool:
-    """Whether a commission mixte paritaire was convened on this text."""
-    return any(
-        (acte.get("codeActe") or "") == CMP_ACTE
-        for acte in _iter_actes((dossier.get("actesLegislatifs") or {}).get("acteLegislatif"))
-    )
+def _read_actes(dossier: dict) -> _Actes:
+    """Walk this dossier's actes once, collecting everything read off them."""
+    out = _Actes()
+    seen: set[tuple[str, str]] = set()
+    root = (dossier.get("actesLegislatifs") or {}).get("acteLegislatif")
 
+    for acte in _iter_actes(root):
+        code = acte.get("codeActe") or ""
+        # The first PROM-PUB wins, as the previous reader's early return did.
+        if code == PROMULGATION_ACTE and out.promulgation is None:
+            out.promulgation = acte
+        elif code == CMP_ACTE:
+            out.cmp_convened = True
+        elif code == SEANCE_ACTE:
+            reunion, odj = acte.get("reunionRef"), acte.get("odjRef")
+            if reunion and odj and (reunion, odj) not in seen:
+                seen.add((reunion, odj))
+                out.seances.append(
+                    {"reunion_ref": reunion, "odj_ref": odj, "date": acte.get("dateActe") or ""}
+                )
+        if code.endswith(DECISION_SUFFIX):
+            for ref in as_list((acte.get("voteRefs") or {}).get("voteRef")):
+                if isinstance(ref, str) and ref:
+                    out.vote_refs.append(ref)
 
-def _find_promulgation(dossier: dict) -> dict | None:
-    actes = dossier.get("actesLegislatifs") or {}
-    for acte in _iter_actes(actes.get("acteLegislatif")):
-        if acte.get("codeActe") == PROMULGATION_ACTE:
-            return acte
-    return None
+    out.seances.sort(key=lambda s: s["date"])
+    return out
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -196,8 +204,16 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def _build(dossier: dict, acte: dict) -> PromulgatedLaw | None:
-    """Map one dossier + its promulgation acte, or None if unusable."""
+def _build(dossier: dict, actes: _Actes) -> PromulgatedLaw | None:
+    """Map one dossier and its actes to a law, or None if it is not one.
+
+    None covers both « this dossier never reached promulgation » — by far the
+    commonest case, 2 900 of the 3 047 in a legislature — and « it did, but the
+    acte is missing what identifies the law ».
+    """
+    acte = actes.promulgation
+    if acte is None:
+        return None
     uid = dossier.get("uid")
     law_code = acte.get("codeLoi")
     promulgated_on = _parse_date(acte.get("dateActe"))
@@ -218,9 +234,9 @@ def _build(dossier: dict, acte: dict) -> PromulgatedLaw | None:
         nor=info_jo.get("referenceNOR"),
         legifrance_url=info_jo.get("urlLegifrance"),
         dossier_url=AN_DOSSIER_URL_TEMPLATE.format(legislature=legislature, uid=uid),
-        seances=_seances(dossier),
-        vote_refs=_vote_refs(dossier),
-        cmp_convened=_went_to_cmp(dossier),
+        seances=actes.seances,
+        vote_refs=actes.vote_refs,
+        cmp_convened=actes.cmp_convened,
     )
 
 
@@ -284,10 +300,7 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
                 # raises it, not ValueError, on a deeply nested document.
                 try:
                     dossier = json.loads(archive.read(info))["dossierParlementaire"]
-                    acte = _find_promulgation(dossier)
-                    if acte is None:
-                        continue
-                    law = _build(dossier, acte)
+                    law = _build(dossier, _read_actes(dossier))
                 except (
                     AttributeError,
                     KeyError,

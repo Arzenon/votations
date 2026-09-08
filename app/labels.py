@@ -16,6 +16,30 @@ from app.models.imported_law import (
     STATUS_NEW,
 )
 from app.models.law import STATUS_CLOSED, STATUS_DRAFT, STATUS_OPEN, STATUS_SCHEDULED
+from app.models.vote import VoteChoice
+
+#: The three choices, in ballot order, as a reader sees them.
+#:
+#: This module exists so that no stored value reaches a French page written out
+#: by hand, and this was the one mapping that had escaped it — in three copies:
+#: the chart's series legend, the results bars, and an if/elif chain in the
+#: ballot, with the table headings on the results page spelling them a fourth
+#: time. A fourth choice would have been rendered as « Abstention » by that
+#: chain, silently, because it was the `else`.
+#:
+#: Keyed on the stored value rather than on the enum member: that is what lands
+#: in `votes.choice`, in the counters and in the open-data export, and it is what
+#: every template and every tally dict is keyed on. Written in ballot order, so
+#: iterating this is iterating the ballot — which is what the bars, the chart
+#: legend and the two result tables now do instead of listing the three by hand.
+#:
+#: `test_every_choice_has_a_label` holds the pairing: a fourth choice added to
+#: the enum and not to this map would simply be missing a column, in silence.
+CHOICE_LABELS = {
+    VoteChoice.FOR.value: "Pour",
+    VoteChoice.AGAINST.value: "Contre",
+    VoteChoice.ABSTAIN.value: "Abstention",
+}
 
 #: Headings for the home page's bands. Distinct from LAW_STATUS_LABELS on
 #: purpose: that one labels a single votation's badge (« ouverte »), this one
@@ -89,8 +113,13 @@ def field_label(value: str) -> str:
     return FIELD_LABELS.get(value, value)
 
 
-def _local_day(value: date) -> date:
+def local_day(value: date) -> date:
     """The calendar day ``value`` falls on, as a reader here would name it.
+
+    Public because two callers need it and only one of them formats French. The
+    other is `app.seo`, which publishes the voting window as ISO dates: it was
+    calling ``.date()`` on the stored instant, so a votation opening at 00:30
+    Paris was declared to a search engine as having opened the day before.
 
     A plain :class:`~datetime.date` carries no zone and is returned unchanged — a
     promulgation happened on a day, not at an instant.
@@ -112,9 +141,9 @@ def french_date(value: date) -> str:
     """e.g. ``24 juin 2026`` — the form a law is cited in.
 
     Accepts an instant as well as a date, and converts it first; see
-    :func:`_local_day`.
+    :func:`local_day`.
     """
-    day = _local_day(value)
+    day = local_day(value)
     return f"{day.day} {MOIS[day.month - 1]} {day.year}"
 
 

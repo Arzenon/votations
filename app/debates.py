@@ -47,15 +47,39 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from app.config import get_settings
+from app.logging_config import get_logger
 from app.opendata import Getter, as_list, getter
+
+log = get_logger("debates")
 
 OPENDATA_URL = "https://www.assemblee-nationale.fr/dyn/opendata/{uid}.json"
 SEANCE_URL = "https://www.assemblee-nationale.fr/dyn/{legislature}/comptes-rendus/seance/{uid}"
 
-#: Used when a compte rendu does not state its own legislature, or states
-#: something that is not one. Matches the legislature the shipped
-#: `AN_DOSSIERS_URL` points at; both move together, once per legislature.
-DEFAULT_LEGISLATURE = "17"
+#: Where the legislature sits inside the Assemblée's export URLs, e.g.
+#: ``…/repository/17/loi/dossiers_legislatifs/…``.
+_LEGISLATURE_IN_URL = re.compile(r"/repository/(\d+)/")
+
+
+def configured_legislature() -> str:
+    """The legislature this deployment's import is pointed at, or "".
+
+    Read off ``AN_DOSSIERS_URL`` rather than held as a constant here. It was
+    ``DEFAULT_LEGISLATURE = "17"``, a third copy of a number that also sits inside
+    the two export URLs in `app.config` — and the copy an operator would never
+    see. The number changes once per legislature; correcting the two settings in
+    `.env` used to leave this one saying 17, and the only thing that reads it
+    builds the ``source`` href of a published argument. A link into the previous
+    legislature's URL space, on the one field whose promise is that a reader can
+    follow it and check the quote.
+
+    Empty when the URL is not shaped like the Assemblée's, which is a
+    misconfiguration rather than a legislature nobody thought of — and the caller
+    then publishes no link at all rather than a wrong one.
+    """
+    match = _LEGISLATURE_IN_URL.search(get_settings().an_dossiers_url)
+    return match.group(1) if match else ""
+
 
 # Agenda-item sections where members argue for or against the text as a whole.
 # Everything else — amendment-by-amendment discussion, points of order, voting
@@ -473,6 +497,15 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
     # that retry instantaneous rather than another timeout.
     documents: dict[str, dict] = {}
 
+    # Read once for the whole call rather than per sitting: it is a regex over a
+    # setting, and a text with twenty sittings would run it twenty times.
+    fallback = configured_legislature()
+    if not fallback:
+        log.warning(
+            "AN_DOSSIERS_URL ne porte pas de numéro de législature : les comptes "
+            "rendus qui n'annoncent pas la leur seront cités sans lien"
+        )
+
     def document(uid: str) -> dict:
         if uid not in documents:
             documents[uid] = _get_json(get, uid)
@@ -497,11 +530,15 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
         # checks the identifier it is given: this value is read out of a fetched
         # document and ends up as the `source` href of a published argument, on
         # the one page whose promise is that the quotes can be checked. A
-        # legislature is a small number; anything else falls back to the current
-        # one rather than being interpolated into a path.
+        # legislature is a small number; anything else falls back to the one this
+        # deployment imports from rather than being interpolated into a path.
         legislature = str((record.get("metadonnees") or {}).get("legislature") or "")
         if not legislature.isdigit():
-            legislature = DEFAULT_LEGISLATURE
-        url = SEANCE_URL.format(legislature=legislature, uid=cr_ref)
+            legislature = fallback
+        # No legislature to build one from — see `configured_legislature`. The
+        # speeches are still worth having: they are verbatim and attributed by
+        # name and date, and the page drops a link it was given as empty. A wrong
+        # link would be worse than none on exactly this field.
+        url = SEANCE_URL.format(legislature=legislature, uid=cr_ref) if legislature else ""
         out.extend(speeches_from_record(record, subject=subject, url=url))
     return out

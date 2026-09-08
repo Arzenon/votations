@@ -214,3 +214,42 @@ def test_head_is_answered_wherever_get_is(client, db_session):
 def test_head_does_not_open_a_route_that_writes(client, open_law):
     """Only reads gained a method."""
     assert client.request("HEAD", f"/loi/{open_law.slug}/vote").status_code == 405
+
+
+def test_the_voting_window_is_dated_in_the_zone_the_site_publishes_in():
+    """`temporalCoverage` was the last date on the site still cut in UTC.
+
+    A votation opening at 00:30 Paris is stored as 22:30 or 23:30 UTC the day
+    before, so `.date()` on the stored instant declared to a search engine that it
+    had opened a day early. Every other date here goes through `local_day`.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app import seo
+    from app.models import Law
+
+    paris = ZoneInfo("Europe/Paris")
+    law = Law(
+        slug="loi-minuit",
+        title="Loi de minuit",
+        opens_at=datetime(2026, 7, 1, 0, 30, tzinfo=paris),
+        closes_at=datetime(2026, 8, 1, 0, 30, tzinfo=paris),
+    )
+    dataset = seo.votation_dataset("https://exemple.test", law)
+    assert dataset["temporalCoverage"] == "2026-07-01/2026-08-01"
+
+
+def test_an_open_votation_declares_an_open_ended_window():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app import seo
+    from app.models import Law
+
+    law = Law(
+        slug="loi-ouverte",
+        title="Loi ouverte",
+        opens_at=datetime(2026, 7, 1, 0, 30, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+    assert seo.votation_dataset("https://exemple.test", law)["temporalCoverage"] == "2026-07-01/"

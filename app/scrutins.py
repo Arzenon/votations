@@ -41,6 +41,17 @@ MEMBER = "json/{uid}.json"
 #: this figure, see `app.opendata.fetch`.
 MAX_EXPORT_BYTES = 64 * 1024 * 1024
 
+#: The largest single scrutin worth reading, uncompressed. Real ones are a few
+#: kilobytes; a `zipfile` member declares its own uncompressed size, and reading
+#: one without looking first is how a few kilobytes of archive become gigabytes of
+#: memory. The cap on the download bounds the *compressed* bytes and nothing else.
+#:
+#: The same rule the two other archive readers already state — see
+#: `app.legifrance.MAX_MEMBER_BYTES` and `app.assemblee.MAX_DOSSIER_BYTES`. This
+#: reader was the one that did not apply it, which is precisely the way a rule
+#: held in three places stops being one.
+MAX_MEMBER_BYTES = 16 * 1024 * 1024
+
 
 class ScrutinsFetchError(RuntimeError):
     """Raised on any network/archive/parse problem, so callers keep old rows."""
@@ -61,10 +72,6 @@ class Scrutin:
     pour: int
     contre: int
     abstentions: int
-
-    @property
-    def exprimes(self) -> int:
-        return self.pour + self.contre
 
 
 def _count(decompte: dict, key: str) -> int:
@@ -106,13 +113,22 @@ def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scruti
     found: dict[str, Scrutin] = {}
     try:
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
-            available = set(archive.namelist())
+            # The entries by name, with their declared sizes — `namelist()` gave
+            # only the first half, and the size is what has to be looked at before
+            # a member is read into memory.
+            available = {info.filename: info for info in archive.infolist()}
             for uid in wanted:
-                name = MEMBER.format(uid=uid)
-                if name not in available:
+                info = available.get(MEMBER.format(uid=uid))
+                if info is None:
+                    continue
+                if info.file_size > MAX_MEMBER_BYTES:
+                    # No real scrutin is this large, so this is a malformed or
+                    # hostile archive. Skipped rather than fatal: the other
+                    # hundred and fifty votes are still worth having.
+                    log.warning("scrutin %s anormalement volumineux - ignoré", uid)
                     continue
                 try:
-                    scrutin = _parse(json.loads(archive.read(name)))
+                    scrutin = _parse(json.loads(archive.read(info)))
                 except (ValueError, RecursionError, KeyError, TypeError, zipfile.BadZipFile):
                     log.warning("scrutin %s illisible - ignoré", uid)
                     continue

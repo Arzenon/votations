@@ -19,12 +19,18 @@ from app.drafting import shutdown_drafting
 from app.logging_config import configure_logging, get_logger
 from app.routes import admin, auth, public
 from app.routes.admin import InvalidFormValue
+from app.security import HEAD_SCOPE_KEY
 from app.templating import STATIC_DIR, templates
 
 log = get_logger("app")
 
 # Robots: everything is public and worth indexing except the administration and
 # the bulk exports, which are large and pointless for a crawler.
+#
+# The two export URLs are also named as the `DataDownload` distributions of each
+# votation's `Dataset` — see `app.seo.votation_dataset`, which explains why
+# declaring where the data is and asking a crawler not to walk into it are two
+# compatible statements rather than the sitemap-versus-noindex contradiction.
 ROBOTS_TXT = """\
 User-agent: *
 Disallow: /admin
@@ -246,6 +252,15 @@ class HeadAsGet:
     them — `require_same_origin` already treats HEAD as the read it is — and the
     body the handler produces is discarded by the server, exactly as it would be
     for a route that declared the method itself.
+
+    **Except where producing that body is the expensive part.** The server throws
+    it away, but the application still builds it: a HEAD on an open-data export
+    therefore scanned every vote on a votation and serialised the lot, for a
+    response that is headers only. That is the request a link checker or an uptime
+    probe makes *first*, on the two URLs `robots.txt` marks as not worth
+    crawling. So the original method is recorded in the scope under
+    :data:`~app.security.HEAD_SCOPE_KEY`, and the routes that would pay for it ask
+    :func:`~app.security.is_head` and answer with the headers alone.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -253,7 +268,7 @@ class HeadAsGet:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope.get("method") == "HEAD":
-            scope = {**scope, "method": "GET"}
+            scope = {**scope, "method": "GET", HEAD_SCOPE_KEY: True}
         await self.app(scope, receive, send)
 
 

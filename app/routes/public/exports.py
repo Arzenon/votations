@@ -14,7 +14,7 @@ import json
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app import ratelimit
@@ -24,6 +24,7 @@ from app.crud import results as results_crud
 from app.db import get_db
 from app.models import Law
 from app.routes.public.common import exports_busy, not_found, too_many_exports, visible
+from app.security import is_head
 
 router = APIRouter()
 
@@ -44,6 +45,26 @@ router = APIRouter()
 #: times rarer, and bounds what one export holds in memory at the same figure —
 #: which is the property that mattered in the first place, and is unchanged.
 _CHUNK_CHARS = 64 * 1024
+
+_CSV_TYPE = "text/csv; charset=utf-8"
+_JSON_TYPE = "application/json; charset=utf-8"
+
+
+def _headers_only(media_type: str, headers: dict[str, str]) -> Response:
+    """What a HEAD on an export gets: everything but the scan.
+
+    `app.main.HeadAsGet` lets every URL answer HEAD by handing the application
+    the GET it is, and the server then drops the body — but the application has
+    already built it, and here building it means walking every vote on the
+    votation and serialising the lot. On the two URLs `robots.txt` marks as not
+    worth crawling, which is exactly where a link checker or an uptime probe
+    knocks first.
+
+    So this answers what a HEAD is for: the status, the type, and the filename it
+    would download. No ``Content-Length``, because a streamed response has none to
+    give and a guess would be worse than the absence.
+    """
+    return Response(status_code=200, media_type=media_type, headers=headers)
 
 
 def at_capacity(request: Request) -> HTMLResponse | None:
@@ -89,7 +110,18 @@ def _export_refused(request: Request) -> HTMLResponse | None:
     return None
 
 
-def csv_response(db: Session, law: Law) -> StreamingResponse:
+def _download_headers(law: Law, extension: str) -> dict[str, str]:
+    """The filename this export downloads as. Built from ``law.slug``.
+
+    The column, never the path parameter: a slug is what the database holds, not
+    what the caller typed, and this value ends up in a response header. The two
+    are the same string today because `visible` matched on it — the same reason
+    `laws._back_to` builds its redirect from the column.
+    """
+    return {"Content-Disposition": f'attachment; filename="votations-{law.slug}.{extension}"'}
+
+
+def csv_response(db: Session, law: Law, *, head: bool = False) -> Response:
     """One law's votes, streamed as CSV.
 
     Shared with the administration, which offers this same file for a law that
@@ -97,7 +129,12 @@ def csv_response(db: Session, law: Law) -> StreamingResponse:
     it, and a law the public route refuses by design. The reductions applied to
     the rows are the same either way: an archived votation is withdrawn from the
     site, not exempted from the anonymity rules.
+
+    ``head`` answers with the headers and no body — see :func:`_headers_only`.
     """
+    if head:
+        return _headers_only(_CSV_TYPE, _download_headers(law, "csv"))
+
     # Counted once and handed down, as the JSON route already did. Without it
     # `iter_export_rows` runs its own COUNT to decide whether the time column may
     # be published at all.
@@ -124,11 +161,7 @@ def csv_response(db: Session, law: Law) -> StreamingResponse:
             if tail:
                 yield tail
 
-    return StreamingResponse(
-        rows(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="votations-{law.slug}.csv"'},
-    )
+    return StreamingResponse(rows(), media_type=_CSV_TYPE, headers=_download_headers(law, "csv"))
 
 
 @router.get("/loi/{slug}/export.csv")
@@ -145,7 +178,7 @@ def export_csv(request: Request, slug: str, db: Session = Depends(get_db)):
     law = visible(db, slug)
     if law is None:
         return not_found(request)
-    return csv_response(db, law)
+    return csv_response(db, law, head=is_head(request))
 
 
 @router.get("/loi/{slug}/export.json")
@@ -156,6 +189,8 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
     law = visible(db, slug)
     if law is None:
         return not_found(request)
+    if is_head(request):  # see `_headers_only`
+        return _headers_only(_JSON_TYPE, _download_headers(law, "json"))
 
     # One pass over the votes answers both the total and how many carried a
     # profile; the two used to be a COUNT and a COUNT … FILTER over the same rows.
@@ -176,9 +211,13 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
                 for r in bd.rows
             ],
         }
-        for bd in demo_crud.all_breakdowns(db, law)
+        for bd in demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
         if bd.shown
     ]
+    # The same label the results page carries, decided the same way — this
+    # endpoint serves the same numbers in a form far easier to poll, so the two
+    # must not disagree about whether they are a snapshot.
+    as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
     provision = demo_crud.provision_rate(db, law.id, tally=tally)
     envelope = {
         "law": {"id": law.id, "slug": law.slug, "title": law.title},
@@ -189,23 +228,18 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
             "percentage": provision.percentage,
         },
         "votes_note": results_crud.export_note(db, law.id, total=total),
-        # Dated for the same reason the page is: while the votation is open
-        # these are a snapshot, and a file that did not say so would invite
-        # exactly the differencing the snapshot exists to stop — this endpoint
-        # serves the same numbers, in a form far easier to poll.
-        "demographics_as_of": (
-            law.demographics_snapshot_at.isoformat()
-            if law.is_open() and law.demographics_snapshot_at
-            else None
-        ),
+        # Dated for the same reason the page is: while 'demographics_as_of' is
+        # set these are a snapshot, and a file that did not say so would invite
+        # exactly the differencing the snapshot exists to stop.
+        "demographics_as_of": as_of.isoformat() if as_of else None,
         "demographics_note": (
             "Répartitions agrégées uniquement, masquées sous le seuil "
             "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
             "de grandeur national INSEE (approx.), jamais utilisé pour "
-            "repondérer. Tant que la votation est ouverte, ces répartitions "
-            "sont arrêtées à la date 'demographics_as_of' et n'avancent que "
-            "par paliers : les publier en direct permettrait de déduire le "
-            "profil d'une personne en comparant deux téléchargements."
+            "repondérer. Lorsque 'demographics_as_of' est renseigné, ces "
+            "répartitions y sont arrêtées et n'avancent que par paliers : les "
+            "publier en direct permettrait de déduire le profil d'une personne "
+            "en comparant deux téléchargements."
         ),
     }
 
@@ -240,11 +274,5 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
             yield "".join(pending)
 
     return StreamingResponse(
-        document(),
-        media_type="application/json; charset=utf-8",
-        # `law.slug`, not the path parameter — same reason the CSV route above and
-        # `laws._back_to` use the column: a slug is what the database holds, not
-        # what the caller typed. The two are the same string today because
-        # `visible` matched on it, and this value ends up in a response header.
-        headers={"Content-Disposition": f'attachment; filename="votations-{law.slug}.json"'},
+        document(), media_type=_JSON_TYPE, headers=_download_headers(law, "json")
     )

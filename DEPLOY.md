@@ -85,6 +85,25 @@ Les conteneurs de rafraîchissement **partagent** l'image de l'application
 le `--build` sans nom de service — il reconstruit `app`, et les trois jobs
 repartent sur la même image, sans possibilité de diverger d'elle.
 
+### Les migrations qui créent un index
+
+`docker/entrypoint.sh` applique les migrations au démarrage du conteneur, avant
+que l'application ne réponde. Les migrations qui créent un index le font sans
+`CONCURRENTLY` : un `CREATE INDEX` prend un verrou `SHARE` sur la table, qui
+bloque les écritures — donc les votes — pendant sa construction.
+
+Sans conséquence aujourd'hui, et pour deux raisons : la pile n'a qu'un conteneur
+`app`, donc une mise à jour est de toute façon une courte interruption ; et sur
+quelques milliers de votes un index se construit en quelques dizaines de
+millisecondes. Ça cesse d'être vrai à quelques centaines de milliers de votes, où
+la même migration tient la table plusieurs secondes.
+
+Le jour où ce sera le cas, une migration qui touche `votes` doit passer en
+`CONCURRENTLY` — ce qui ne peut pas se faire dans la transaction qu'Alembic
+ouvre, et demande un `with op.get_context().autocommit_block():`. C'est une
+décision à prendre au moment d'écrire la migration, pas après l'avoir appliquée :
+`SELECT count(*) FROM votes` dit dans lequel des deux cas vous êtes.
+
 ## Sauvegardes
 
 Les lois importées se reconstruisent en relançant l'import. **Les votes ne se

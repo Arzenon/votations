@@ -19,6 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+# The chart's series *are* the three choices, and their legend is the same French
+# the ballot and the tables use — see `app.labels.CHOICE_LABELS`, which is where
+# that mapping lives now rather than in a fourth copy here.
+from app.labels import CHOICE_LABELS
+
 # Canvas. A viewBox with width="100%" scales to any column without reflowing the
 # geometry, so the same numbers serve a phone and a desktop.
 WIDTH = 720.0
@@ -50,8 +55,6 @@ MAX_DOTS = 60
 # and stays daily, which is what the chart is a picture *of*; this only decides
 # how the picture is drawn.
 MAX_POINTS = 90
-
-SERIES_LABELS = {"for": "Pour", "against": "Contre", "abstain": "Abstention"}
 
 
 @dataclass(frozen=True)
@@ -118,7 +121,7 @@ def _grouped(buckets, period: Period) -> list[_Point]:
     return [
         _Point(
             window[0].label,
-            {key: sum(b.counts.get(key, 0) for b in window) for key in SERIES_LABELS},
+            {key: sum(b.counts.get(key, 0) for b in window) for key in CHOICE_LABELS},
         )
         for window in (
             buckets[start : start + period.days] for start in range(0, len(buckets), period.days)
@@ -247,7 +250,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     period = _period_for(len(buckets))
     drawn = _grouped(buckets, period)
 
-    keys = list(SERIES_LABELS)
+    keys = list(CHOICE_LABELS)
     peak = max((max(b.counts.get(k, 0) for k in keys) for b in drawn), default=0)
     top, step = _nice_ceiling(peak)
 
@@ -278,7 +281,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         series.append(
             Series(
                 key=key,
-                label=SERIES_LABELS[key],
+                label=CHOICE_LABELS[key],
                 line=line,
                 area=area,
                 # Dropped on a long votation — see MAX_DOTS.

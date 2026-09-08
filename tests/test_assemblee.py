@@ -317,10 +317,10 @@ _PROM = {
 
 
 def _built(actes):
-    from app.assemblee import _build, _find_promulgation
+    from app.assemblee import _build, _read_actes
 
     dossier = _dossier_with([_PROM, *actes])["dossierParlementaire"]
-    return _build(dossier, _find_promulgation(dossier))
+    return _build(dossier, _read_actes(dossier))
 
 
 def test_only_decision_acts_contribute_a_vote_reference():

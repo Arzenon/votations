@@ -10,6 +10,7 @@ from starlette.requests import Request
 from app.auth.base import get_auth_provider
 from app.config import get_settings
 from app.labels import (
+    CHOICE_LABELS,
     field_label,
     french_date,
     french_datetime,
@@ -65,7 +66,9 @@ def _auth_context(request: Request) -> dict:
     """Resolve the auth provider per render, not once at import time.
 
     Binding it into the globals at import made it impossible to swap the provider
-    — which is the whole point of the seam, with FranceConnect due in V2.
+    at all, which is the whole point of the seam. Deliberately no date attached:
+    the provider that would replace the anonymous one is not a milestone the code
+    reaches — see :mod:`app.auth.base`.
     """
     return {"auth": get_auth_provider()}
 
@@ -105,6 +108,10 @@ templates.env.auto_reload = not get_settings().is_production
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
 templates.env.globals["DISCLAIMER_SHORT"] = DISCLAIMER_SHORT
 templates.env.globals["TAGLINE"] = TAGLINE
+# The three choices in ballot order, so the bars, the two result tables and the
+# ballot itself iterate one mapping instead of each writing « Pour / Contre /
+# Abstention » out again. See `app.labels.CHOICE_LABELS`.
+templates.env.globals["CHOICE_LABELS"] = CHOICE_LABELS
 
 
 def _digest(name: str) -> str:
