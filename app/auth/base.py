@@ -1,9 +1,16 @@
 """The authentication seam.
 
 ``AuthProvider`` is the single interface the rest of the app talks to. Today the
-MVP wires up :class:`~app.auth.anonymous.AnonymousProvider`. In V2 a
-``FranceConnectProvider`` implementing this same protocol will be swapped in here
-— no change to voting, results, or templates required.
+MVP wires up :class:`~app.auth.anonymous.AnonymousProvider`. Any future provider
+implementing this same protocol swaps in here — no change to voting, results, or
+templates required.
+
+The seam is kept deliberately even though no second provider is in sight.
+FranceConnect is the one we want and cannot have: the arrêté of 8 November 2018
+opens it to private bodies only under an explicit statutory duty to verify user
+identity, which a civic-expression platform has no way to fall under. That is a
+legal condition on who runs the project, not a milestone the code can reach — so
+this file promises an interface, never a date. See CLAUDE.md, Authentication.
 """
 
 from __future__ import annotations
@@ -20,8 +27,12 @@ class AuthProvider(Protocol):
 
     #: Human label for the connect button (e.g. "Se connecter", "FranceConnect").
     login_label: str
-    #: Whether a real login flow exists yet. False ⇒ the connect button is shown
-    #: but disabled with a "bientôt disponible" note (transparency requirement).
+    #: Whether a real login flow exists yet. False ⇒ no connect control is
+    #: rendered at all. A disabled button reading "bientôt disponible" used to
+    #: stand in its place, and it read as « you need an account and cannot even
+    #: make one » — the exact opposite of the truth, on the one page whose job is
+    #: to say that voting needs nothing. Transparency is served by the prose
+    #: there, not by a control promising an availability nobody controls.
     login_enabled: bool
 
     def get_voter_token(self, request: Request, response: Response) -> str:

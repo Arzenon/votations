@@ -4,37 +4,52 @@
 <h1>Authentification</h1>
 
 <section class="block">
-  <h2>Comment ça marche aujourd'hui</h2>
+  <h2>Vous n'avez pas besoin de compte pour voter</h2>
   <p>
-    Pendant la phase provisoire, la plateforme ne demande aucune création de compte
-    et ne collecte <strong>aucune donnée personnelle</strong>. Un jeton anonyme est
-    enregistré dans votre navigateur afin d'éviter les votes multiples sur une même
-    loi. Ce jeton ne permet pas de vous identifier.
-  </p>
-  <h2>Limites</h2>
-  <p>
-    Ce mécanisme est volontairement simple et transparent. Il n'empêche pas une
-    personne déterminée de voter plusieurs fois (par exemple depuis plusieurs
-    navigateurs). C'est l'une des raisons pour lesquelles les résultats ne sont pas
-    représentatifs de la population française. Nous espérons pouvoir améliorer cela
-    à l'avenir.
+    La plateforme ne demande aucune inscription et ne collecte
+    <strong>aucune donnée personnelle</strong>. Vous pouvez voter dès maintenant,
+    sur n'importe quelle votation ouverte. Un cookie anonyme est enregistré dans
+    votre navigateur au moment de votre premier vote, uniquement pour éviter les
+    votes multiples sur une même loi. Ce cookie ne permet pas de vous identifier.
   </p>
 </section>
 
 <section class="block">
-  <h2>À venir : FranceConnect</h2>
+  <h2>Pourquoi il n'y a pas d'authentification</h2>
   <p>
-    L'intégration de <strong>FranceConnect</strong> est prévue pour relier le vote à
-    une identité citoyenne, dans le respect des exigences légales et techniques de la
-    DILA. Cette étape nécessite un projet mature et des démarches administratives
-    spécifiques.
+    Nous n'avons pas trouvé de solution convenable. Garantir qu'un votant est
+    une personne distincte suppose un fournisseur d'identité, et aucun de ceux qui
+    nous sont accessibles aujourd'hui ne concilie une couverture suffisante de la
+    population et notre exigence de ne conserver aucune donnée personnelle.
+    Plutôt que d'imposer une inscription qui n'apporterait qu'une illusion de
+    rigueur, nous avons préféré le mécanisme le plus simple possible.
+  </p>
+  <h2>Limites</h2>
+  <p>
+    Ce mécanisme n'empêche pas une personne déterminée de voter plusieurs fois,
+    par exemple depuis plusieurs navigateurs. C'est l'une des raisons pour
+    lesquelles les résultats ne sont pas représentatifs de la population française.
+  </p>
+</section>
+
+<section class="block">
+  <h2>FranceConnect : le rêve</h2>
+  <p>
+    <strong>FranceConnect</strong> répondrait à notre besoin : il garantirait
+    qu'une personne ne vote qu'une fois, sans que nous ayons à conserver la
+    moindre donnée d'état civil. Nous souhaitons l'intégrer.
+  </p>
+  <p>
+    Ce n'est pas possible aujourd'hui, et l'obstacle est juridique, non technique.
+    L'arrêté du 8 novembre 2018 qui encadre FranceConnect ne l'ouvre aux organismes
+    privés que lorsqu'un texte de loi leur impose explicitement de vérifier
+    l'identité de leurs utilisateurs, ce qui vise des secteurs comme la banque ou
+    les jeux d'argent. Une plateforme d'expression citoyenne ne relève d'aucun des
+    cas prévus. Aucune évolution du site n'y changerait quoi que ce soit : il
+    faudrait que le projet soit porté par une autorité publique.
   </p>
   {% if auth.login_enabled %}
   <a class="button" href="{{ auth.login_url() }}">{{ auth.login_label }}</a>
-  {% else %}
-  <button class="button" type="button" disabled aria-disabled="true">
-    {{ auth.login_label }} - bientôt disponible
-  </button>
   {% endif %}
 </section>
 {% endblock %}

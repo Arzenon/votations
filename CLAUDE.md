@@ -80,11 +80,31 @@ The same threshold governs the open-data export: it may never reveal more than t
 
 ## Authentication
 
+### What Authentication Is For
+The platform needs exactly one guarantee: **one person, one vote**. It does not need to know who the voter is, and it does not need their nationality. Every candidate mechanism is judged against that single requirement, and against the constraint that no personal data be retained.
+
 ### Provisional Phase
-Pending integration of FranceConnect, the provisional authentication mechanism is yet to be decided. Whatever solution is chosen, the site disclaimer will explicitly state how it works and what its limitations are.
+The provisional authentication mechanism is yet to be decided. Whatever solution is chosen, the site disclaimer will explicitly state how it works and what its limitations are.
+
+### FranceConnect Is Blocked, and Not for Technical Reasons
+FranceConnect is **not available to this project**. The obstacle is legal, not a matter of project maturity.
+
+The arrêté of 8 November 2018 (NOR PRMJ1819224A), article 4, as amended by the arrêté of 17 March 2026, admits four categories of service provider: administrative authorities empowered by a legal text; providers of change-of-address services; administrative authorities running electronic voting for their own professional elections; and private legal entities placed under an **explicit statutory obligation** to verify the identity of their own users. A privately run civic-expression platform falls under none of them. No feature added to the product would change that — only a change in the project's legal nature would, by becoming or being carried by a public authority.
+
+Two further findings, established and not to be re-litigated:
+
+- **FranceConnect does not transmit nationality.** The pivot identity is limited to surname, given names, usual name, sex, date of birth, INSEE codes of the city and country of birth, a verified email, and a pseudonymous `sub` unique to each service provider. Country of birth is not a substitute for nationality, and using it as one would be both factually wrong and discriminatory.
+- What FranceConnect proves is **attachment to the French administration**, not French citizenship. A foreign resident who pays tax in France has an account.
+
+That second limitation is accepted rather than regretted: laws passed by Parliament apply to those who live in France, not to those who hold its nationality.
 
 ### Target Phase
-Integration of **FranceConnect** for authentication tied to civic identity, subject to the legal and technical requirements of the DILA. This step requires a mature project and specific administrative procedures.
+Should the project ever be carried by a public authority, FranceConnect becomes available under category 1 or 3 above. The `sub` identifier alone would then satisfy the one-person-one-vote requirement — stored hashed, with no civil-status data retained — which keeps the design compatible with the no-personal-data principle.
+
+Failing that, the only technically open route to certified uniqueness is a private identity provider such as L'Identité Numérique La Poste (eIDAS substantial level, attested by ANSSI, sold directly to private services outside the DINUM eligibility review). Its coverage is far below FranceConnect's, which federates impots.gouv.fr and ameli.fr, and it is not free.
+
+### What the Disclaimer Must Say
+Whichever mechanism is in place, its limitation is stated plainly and permanently, as the transparency principle requires: voters are people attached to the French administration, one person carries one voice, and **nationality is not verified**.
 
 ---
 
@@ -109,8 +129,10 @@ Laws are sourced from the **Journal Officiel de la République Française**, acc
 |---|---|
 | MVP | Home page, vote page, results page, admin, provisional auth |
 | V1 | Advanced search, raw data export, vote evolution curve |
-| V2 | FranceConnect integration |
+| V2 | Certified uniqueness through a private identity provider |
 | V3 | Opening the admin page to all authenticated users |
+
+**FranceConnect is deliberately absent from this roadmap.** It is not a milestone a more mature project eventually reaches: it is conditioned on the project being carried by a public authority, which is a governance decision taken outside the codebase. See Authentication.
 
 ---
 

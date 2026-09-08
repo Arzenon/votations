@@ -66,7 +66,10 @@
       <a class="brand" href="/">Votations&nbsp;Françaises</a>
       <nav class="nav" aria-label="Navigation principale">
         <a href="/recherche">Rechercher</a>
-        <a href="/connexion">{{ auth.login_label }}</a>
+        {# No « Se connecter » here. Voting needs no account, and that label is one
+           of the web's most fixed conventions for « participation requires one » —
+           it advertised a gate the site does not have. The footer links the same
+           page under its honest name. #}
       </nav>
     </div>
   </header>

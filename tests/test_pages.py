@@ -74,11 +74,29 @@ def test_admin_can_create_law(client, db_session):
     assert db_session.query(Law).filter_by(title="Nouvelle loi créée").count() == 1
 
 
-def test_connexion_shows_disabled_button(client):
+def test_connexion_leads_with_no_account_needed(client):
+    """The page must not read as a gate — voting needs nothing.
+
+    It used to end on a disabled « Se connecter - bientôt disponible » button,
+    which answered « do I need an account? » with the opposite of the truth. The
+    page still names FranceConnect, but as something wanted and unavailable.
+    """
     r = client.get("/connexion")
     assert r.status_code == 200
+    assert "Vous n'avez pas besoin de compte pour voter" in r.text
     assert "FranceConnect" in r.text
-    assert "bientôt disponible" in r.text
+    assert "bientôt disponible" not in r.text
+    assert "disabled" not in r.text
+
+
+def test_no_login_link_in_the_header(client, open_law):
+    """« Se connecter » in a nav advertises a gate this site does not have."""
+    for path in ("/", "/connexion", f"/loi/{open_law.slug}"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert "Se connecter" not in r.text, path
+        # The footer still reaches the same page, under its honest name.
+        assert "À propos de l'authentification" in r.text, path
 
 
 # --- Error pages --------------------------------------------------------------

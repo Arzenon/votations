@@ -27,8 +27,10 @@ _COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
 
 
 class AnonymousProvider:
+    # Rendered only if a provider ever sets `login_enabled`; nothing shows it today.
     login_label = "Se connecter"
-    # No real login flow yet — FranceConnect arrives in V2.
+    # No login flow, and none scheduled: FranceConnect is closed to this project
+    # for legal reasons, not for want of maturity. See `app.auth.base`.
     login_enabled = False
 
     def __init__(self) -> None:
