@@ -716,10 +716,19 @@ def test_a_paragraph_that_is_not_addressed_to_anyone_is_left_alone():
         "Pour les employeurs",
         "vous devez déclarer.",
     )
-    # A sentence that happens to reach a colon is not a label.
-    assert audience_split("La règle est simple, et elle tient en peu de mots : agir.") == (
+    # A public that covers several situations keeps its commas. This is what the
+    # comma used to cost: « Pour les établissements de santé, EHPAD et services
+    # médico-sociaux » is a public somebody recognises themselves in, and it was
+    # being rendered as prose in the middle of a list of rows.
+    enumeration = "Pour les établissements de santé, EHPAD et services médico-sociaux"
+    assert audience_split(f"{enumeration} : vous ne pouvez pas vous y opposer.") == (
+        enumeration,
+        "vous ne pouvez pas vous y opposer.",
+    )
+    # A sentence that has actually ended is still not a label.
+    assert audience_split("La règle est simple. Elle tient en peu de mots : agir.") == (
         "",
-        "La règle est simple, et elle tient en peu de mots : agir.",
+        "La règle est simple. Elle tient en peu de mots : agir.",
     )
     # Nor is something far too long to be a public.
     trop_long = (

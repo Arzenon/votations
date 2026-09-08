@@ -272,17 +272,27 @@ def summary_split(value: str | None) -> tuple[str, list[str]]:
 #: anything that reads as a sentence.
 MAX_AUDIENCE_CHARS = 75
 
-#: Punctuation a label does not contain. A label is a short noun phrase; anything
-#: carrying sentence punctuation — a comma included — is prose that happened to
-#: arrive at a colon.
+#: Punctuation a label does not contain. A label is a noun phrase; anything
+#: carrying end-of-sentence punctuation is prose that happened to arrive at a
+#: colon.
 #:
-#: The comma is here because of a test that caught it: « La règle est simple, et
-#: elle tient en peu de mots : … » is short enough and was being promoted. It
-#: costs the occasional real label — « Pour les communes, les départements et les
-#: régions » renders plain — and that is the right way round. A false positive
-#: puts bold on the substance of a law, which is the one thing this platform must
-#: not do; a false negative renders a paragraph exactly as it did last week.
-_NOT_IN_A_LABEL = ".?!;,"
+#: **The comma used to be in this set and was taken out deliberately.** It was
+#: there to catch « La règle est simple, et elle tient en peu de mots : … » — a
+#: sentence promoted to a label because it was short enough. But a comma is also
+#: how a public that covers several situations is written, and that turned out to
+#: be the commoner case by far: « Pour les établissements de santé, EHPAD et
+#: services médico-sociaux » and « Si vous êtes sous tutelle ou curatelle, ou
+#: chargé d'une telle mesure » are both publics a reader recognises themselves in,
+#: and both were rendered as plain prose in the middle of a list of rows.
+#:
+#: What is given up with it: a mis-drafted paragraph whose first clause is a
+#: sentence with a comma and no full stop, under 75 characters, is now shown as a
+#: public. The remaining marks still refuse anything that has actually ended a
+#: sentence, and `MAX_AUDIENCE_CHARS` still refuses anything long — the 161, 703
+#: and 1 180-character paragraphs in the current corpus are all caught by length
+#: alone. The exposure is a short clause, and the person who validates a law
+#: before publication sees the block as the reader will.
+_NOT_IN_A_LABEL = ".?!;"
 
 
 def audience_split(paragraph: str) -> tuple[str, str]:
