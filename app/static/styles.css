@@ -67,6 +67,18 @@
   --danger-bg: #fdf5f5;
   --danger-line: #f0c9c9;
 
+  /* The public record of changes: what an edit removed and what it added.
+     Tokens of their own rather than `--for` / `--against`, which mean a vote —
+     conflating "somebody voted against" with "this sentence was deleted" is how
+     a palette stops meaning anything. Read against `--surface`; the inks clear
+     AA on their washes, and the marking never rests on colour alone (the strike
+     and the underline carry it, and `<del>`/`<ins>` carry it to a screen
+     reader). */
+  --del-bg: #fdecec;
+  --del-ink: #8a2020;
+  --ins-bg: #e6f4e7;
+  --ins-ink: #1f5e26;
+
   --axis: #c9cfd8;
   /* The filled area under each curve. A tenth is enough over a white plot and
      disappears over a dark one, where the same three colours have to read as a
@@ -74,7 +86,36 @@
   --area-opacity: 0.10;
 
   --radius: 8px;
-  --maxw: 880px;
+
+  /* The shell. Wide enough that a 1680px screen is not two thirds margin, which
+     is what 880px made of it — the site used under half the width it was given
+     and read as an empty page with a column down the middle.
+
+     This is deliberately *not* the width of a line of text. Everything that is
+     prose keeps the reading measure below (see `--measure`), and what the extra
+     width buys is the things that are not prose: two law cards side by side
+     instead of one, the results tables, the evolution curve. Widening the shell
+     alone would have taken the home page's excerpts from ~106 characters a line
+     to ~131 — the exact figure the reading column exists to avoid. */
+  --maxw: 1080px;
+
+  /* The comfortable measure, 45-75 characters at 16px. Named here because three
+     rules depend on it: the law article, the legal pages, and the standalone
+     prose paragraphs. It was written out as `44rem` in two places before
+     anything else needed it. */
+  --measure: 44rem;
+
+  /* The narrowest a law card may be before the grid stops adding columns —
+     which is what decides how many there are, since `auto-fill` fits as many of
+     these as the shell allows.
+
+     Deliberately *not* `--measure`: two 44rem columns need 1424px and the shell
+     is 1080, so using the measure here produced one column and a card 126
+     characters wide — worse than what this change set out to fix. Between about
+     22rem and 32rem the shell yields exactly two columns; 26rem sits in the
+     middle of that band, which puts a card's own text at roughly 60 characters
+     a line — inside the measure, without being the measure. */
+  --card-min: 26rem;
 }
 
 * { box-sizing: border-box; }
@@ -106,6 +147,16 @@ main { padding: 1.5rem 1rem 3rem; }
 h1 { font-size: 1.8rem; line-height: 1.2; }
 .lede { font-size: 1.1rem; color: var(--muted); }
 .meta { color: var(--muted); font-size: 0.88rem; }
+
+/* Prose keeps the reading measure even where the shell is wider than it.
+   `.meta` is 0.88rem, so a paragraph of it spanning the whole shell would run to
+   about 150 characters a line — worse than the 106 that made the law page
+   narrow in the first place, and the results page carries thirteen of them
+   explaining the anonymity thresholds. Only standalone paragraphs: the same
+   class inside a card or a table is already narrower than this and unaffected. */
+main > .lede,
+main > p.meta,
+.block > p.meta { max-width: var(--measure); }
 .breadcrumb a { text-decoration: none; }
 
 /* Search */
@@ -137,7 +188,23 @@ button:disabled, .button:disabled { background: var(--disabled); cursor: not-all
 .link-danger { background: none; color: var(--against); padding: 0; }
 
 /* Law list */
-.law-list { list-style: none; padding: 0; display: grid; gap: 1rem; }
+/* Cards flow into as many columns as fit, rather than one tall stack down the
+   middle of a wide screen. This is where the shell's extra width actually goes:
+   two cards side by side on a desktop, one below about 900px, and a card's
+   excerpt around 60 characters a line — so the width buys more cards rather than
+   longer lines, which is what widening a single column would have bought.
+
+   `min(var(--card-min), 100%)` rather than the token alone: `auto-fill` with a
+   bare minimum lays out one column *at* that minimum, which overflows any
+   viewport narrower than it. The `min()` is what keeps a phone at one column
+   that fits, and is why this needs no media query. */
+.law-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr));
+}
 .law-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .law-card a { display: block; padding: 1rem 1.2rem; text-decoration: none; color: inherit; }
 .law-card h3 { margin: 0.3rem 0; }
@@ -331,9 +398,46 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
 /* Public record of edits made to a law after publication (charter: transparency). */
 .revised-note { background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: var(--radius);
   padding: 0.75rem 1rem; font-size: 0.9rem; }
-.revision-value { max-width: 22rem; font-size: 0.85rem; color: var(--muted);
-  overflow-wrap: anywhere; }
-table.revisions td { vertical-align: top; }
+/* The public record of changes. One block per edit, and the edit itself marked
+   inside the text rather than left for the reader to find between two whole
+   copies of it — see `app.textdiff`. */
+.revisions { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: 0.9rem; }
+.revision { background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 0.8rem 1rem; }
+.revision-head { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem;
+  align-items: baseline; margin: 0 0 0.4rem; }
+.revision-field { font-weight: 600; }
+
+/* The diff keeps the reading measure: it is prose with marks in it, and the
+   marks do not make it read any faster than the law page's own paragraphs. */
+.revision-diff, .revision-swap { margin: 0; max-width: var(--measure);
+  overflow-wrap: anywhere; white-space: pre-wrap; }
+
+/* Colour is the *third* cue, never the only one: `<del>` and `<ins>` are what a
+   screen reader announces, the strike and the underline are what somebody who
+   cannot separate the two hues still sees. */
+/* The horizontal margin is not decoration. A deletion and the insertion that
+   replaces it are adjacent tokens with no space between them, so « garanties »
+   followed by « garde-fous » rendered as one run-on word. */
+del, ins { padding: 0.05em 0.2em; margin: 0 0.15em; border-radius: 3px; }
+del { background: var(--del-bg); color: var(--del-ink); text-decoration: line-through; }
+ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underline; }
+
+/* A block rewritten rather than edited: both versions whole, one under the
+   other. Stacked rather than side by side — two columns is what made the old
+   table unreadable, and it is worse on a phone. */
+.revision-rewrite { display: grid; gap: 0.6rem; }
+.revision-before, .revision-after { margin: 0; max-width: var(--measure);
+  overflow-wrap: anywhere; white-space: pre-wrap; }
+.revision-note { margin: 0 0 0.5rem; font-style: italic; }
+
+/* A run of unchanged words, collapsed. Set apart from the text it stands in so
+   it reads as the page speaking rather than as part of the law. */
+.diff-elided { color: var(--muted); font-size: 0.85rem; font-style: italic;
+  white-space: nowrap; }
+
+/* « avant → après », for the values too short to be worth diffing. */
+.revision-swap { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
 
 /* Triage controls on the imports listing: status, procedure, sort. Inline on a
    wide screen, stacked on a phone. */
@@ -372,7 +476,7 @@ table.revisions td { vertical-align: top; }
 /* Legal pages: long prose, read once, so a comfortable measure matters more
    than density. `.unfilled` marks a mandatory field nobody has filled in — it
    has to look wrong, because a plausible-looking placeholder would be worse. */
-.legal { max-width: 44rem; }
+.legal { max-width: var(--measure); }
 .legal ul { padding-left: 1.2rem; }
 .legal li { margin-bottom: 0.4rem; }
 .legal .lede { font-size: 1.05rem; color: var(--muted); }
@@ -501,6 +605,11 @@ table.revisions td { vertical-align: top; }
     --danger-bg: #2f1a1b;
     --danger-line: #57292a;
 
+    --del-bg: #40232a;
+    --del-ink: #ffb3b3;
+    --ins-bg: #1d3a24;
+    --ins-ink: #8fdc9a;
+
     --axis: #414958;
     /* Twice the light value. The same tenth that reads as a tint under a white
        plot is invisible under a dark one, and the area is what makes the three
@@ -518,7 +627,7 @@ table.revisions td { vertical-align: top; }
 
    Scoped to `main` so the header, the disclaimer band and the footer keep the
    site's own width - only the article narrows. */
-body.reading main.container { max-width: 44rem; }
+body.reading main.container { max-width: var(--measure); }
 
 /* More air between paragraphs and inside them. A block of six paragraphs set
    solid is the "gros pavé" the first reader complained about, and half of that

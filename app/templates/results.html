@@ -193,22 +193,59 @@
       publication. Le détail est donné ici pour que chacun·e puisse juger si les
       votes exprimés portaient sur le même texte que celui affiché aujourd'hui.
     </p>
-    <div class="table-scroll">
-      <table class="evolution revisions">
-        <caption class="visually-hidden">Modifications apportées depuis la publication</caption>
-        <thead><tr><th scope="col">Date</th><th scope="col">Bloc modifié</th><th scope="col">Avant</th><th scope="col">Après</th></tr></thead>
-        <tbody>
-          {% for rev in revisions %}
-          <tr>
-            <th scope="row">{{ rev.changed_at | french_datetime }}</th>
-            <td>{{ rev.field | field_label }}</td>
-            <td class="revision-value">{{ rev.old_value or '-' }}</td>
-            <td class="revision-value">{{ rev.new_value or '-' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {# One block per change rather than a four-column table. The table put both
+       whole values side by side in two narrow cells, so checking an edit meant
+       reading two presentation blocks and finding the difference yourself — on
+       the section whose entire job is to make that difference visible.
+
+       Not a table any more because this is not tabular: each entry is one
+       change, narrated. It also means no horizontal scroll on a phone, which the
+       four-column version needed. #}
+    <ol class="revisions">
+      {% for rev in revisions %}
+      {% set change = field_change(rev.old_value, rev.new_value) %}
+      <li class="revision">
+        <p class="revision-head">
+          <span class="revision-field">{{ rev.field | field_label }}</span>
+          <span class="meta">{{ rev.changed_at | french_datetime }}</span>
+        </p>
+        {% if change.short %}
+        {# Short single-line values — the publication flag, the three dates. A
+           word diff of « oui » → « non » marks noise around a change already
+           visible whole. #}
+        <p class="revision-swap">
+          <del>{{ change.old or "(vide)" }}</del>
+          <span aria-hidden="true">→</span>
+          <ins>{{ change.new or "(vide)" }}</ins>
+        </p>
+        {% elif change.rewritten %}
+        {# Most of the words moved, so marking them one by one is confetti rather
+           than a picture of the change — see `app.textdiff.REWRITE_SHARE`. Both
+           versions whole, stacked and full width, which is what the old table
+           did badly by putting them side by side in two narrow cells. #}
+        <p class="meta revision-note">Bloc réécrit : les deux versions sont données entières.</p>
+        <div class="revision-rewrite">
+          <p class="revision-before"><del>{{ change.old or "(vide)" }}</del></p>
+          <p class="revision-after"><ins>{{ change.new or "(vide)" }}</ins></p>
+        </div>
+        {% else %}
+        {# `<del>` and `<ins>` rather than styled spans: they are what a screen
+           reader announces as removed and inserted, so the marking is not
+           carried by colour alone. See `app.textdiff` — these segments are data,
+           escaped here like any other value. #}
+        <p class="revision-diff">
+          {%- for seg in change.segments -%}
+            {%- if seg.kind == "added" %}<ins>{{ seg.text }}</ins>
+            {%- elif seg.kind == "removed" %}<del>{{ seg.text }}</del>
+            {%- elif seg.kind == "elided" %}<span class="diff-elided"
+              >… {{ seg.words }} mots inchangés …</span>
+            {%- else %}{{ seg.text }}{% endif -%}
+          {%- endfor -%}
+        </p>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
 
     {# Paginated because this table has no ceiling: every edit adds a row holding
        the whole before and after value of a field. The links carry the anchor so

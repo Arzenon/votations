@@ -19,6 +19,7 @@ from app.labels import (
     law_status,
 )
 from app.security import safe_url
+from app.textdiff import field_change
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -112,6 +113,11 @@ templates.env.globals["TAGLINE"] = TAGLINE
 # ballot itself iterate one mapping instead of each writing « Pour / Contre /
 # Abstention » out again. See `app.labels.CHOICE_LABELS`.
 templates.env.globals["CHOICE_LABELS"] = CHOICE_LABELS
+# What changed between two versions of a field, as segments the template marks
+# up itself — see `app.textdiff` for why no HTML is built in Python. A global
+# rather than a filter: it takes both values, and `old | f(new)` reads as
+# though one of them were the subject.
+templates.env.globals["field_change"] = field_change
 
 
 def _digest(name: str) -> str:
