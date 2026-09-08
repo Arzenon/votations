@@ -1,11 +1,20 @@
 # syntax=docker/dockerfile:1
 
 # --- Base: dependencies only, so a source edit never reinstalls them ---------
-# 3.12 is what `requires-python`, the ruff target and the developers' virtualenvs
-# all say, so it is what the image runs: shipping a runtime the suite never
-# executes is how a version-specific bug reaches production first. Moving to 3.13
-# means moving all four together.
-FROM python:3.12-slim AS base
+# 3.14 is what `requires-python`, the ruff target, the mypy setting and the
+# developers' virtualenvs all say, so it is what the image runs: shipping a
+# runtime the suite never executes is how a version-specific bug reaches
+# production first. Moving again means moving all five together — and
+# `scripts/relock.sh` reads the version from the line below, so the lockfile is
+# resolved under whatever this says and follows on its own.
+#
+# Moved here from 3.12, which had gone security-fix-only. Nothing was gained in
+# speed and none was expected: this application waits on Postgres and on
+# government archives, not on the interpreter. What it buys is the supported
+# window — and the whole dependency set resolves and installs on 3.14 with a
+# wheel for every C extension, which is the part that had to be checked rather
+# than assumed.
+FROM python:3.14-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

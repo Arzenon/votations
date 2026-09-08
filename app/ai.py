@@ -145,7 +145,7 @@ employeurs », « pour les communes »), jamais en suivant le plan du texte.
 page met cette étiquette en évidence pour qu'on puisse parcourir le bloc et y \
 trouver son cas sans le lire en entier. Garde-la courte - c'est un public, pas une \
 phrase.
-- **L'étiquette fait au plus 45 caractères et ne contient ni virgule ni \
+- **L'étiquette fait au plus 75 caractères et ne contient ni virgule ni \
 point-virgule.** Au-delà, la page cesse de la reconnaître et rend le paragraphe en \
 texte plein. Si tu as besoin d'une virgule pour l'écrire, c'est que tu nommes deux \
 choses : ou bien c'est un seul lecteur sous plusieurs noms, et tu gardes le terme \

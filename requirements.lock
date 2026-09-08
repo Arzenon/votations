@@ -814,12 +814,9 @@ typing-extensions==4.16.0 \
     #   anthropic
     #   anyio
     #   fastapi
-    #   httpx2
-    #   psycopg
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.4 \
     --hash=sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47 \

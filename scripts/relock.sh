@@ -52,7 +52,7 @@ if ! command -v "$python" >/dev/null 2>&1; then
   echo "✗ $python est introuvable, et python3 est $have." >&2
   echo "  L'image tourne sous $wanted : verrouiller sous $have produirait un jeu" >&2
   echo "  de versions que personne n'exécute. Installez $python, ou lancez ce" >&2
-  echo "  script dans le conteneur :" >&2
+  echo "  script dans le conteneur, qui l'a déjà :" >&2
   echo "    docker compose -f docker-compose.dev.yml run --rm app scripts/relock.sh" >&2
   exit 1
 fi
@@ -64,7 +64,20 @@ echo "→ résolution des dépendances déclarées dans pyproject.toml (Python $
 
 # pip-tools in a throwaway virtualenv, never in the project's: it is a build tool
 # for this one file and has no business being installed beside the application.
-"$python" -m venv "$work/venv"
+#
+# This is the step that fails on Debian and Ubuntu, and the failure is confusing
+# enough to be worth naming: they ship `ensurepip` in a separate
+# `pythonX.Y-venv` package, so the interpreter exists, `-m venv` exists, and
+# creating an environment with pip in it fails anyway. One apt away, and there
+# is nothing to work around here that is worth the lines it would take.
+if ! "$python" -m venv "$work/venv" >/dev/null 2>&1; then
+  echo "✗ $python ne peut pas créer d'environnement virtuel avec pip." >&2
+  echo "  Sur Debian/Ubuntu, ensurepip est dans un paquet à part :" >&2
+  echo "    sudo apt install python$wanted-venv" >&2
+  echo "  Ou lancez ce script dans le conteneur, qui n'a pas ce découpage :" >&2
+  echo "    docker compose -f docker-compose.dev.yml run --rm app scripts/relock.sh" >&2
+  exit 1
+fi
 "$work/venv/bin/pip" install --quiet --upgrade pip
 "$work/venv/bin/pip" install --quiet pip-tools
 

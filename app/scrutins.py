@@ -78,7 +78,7 @@ def _count(decompte: dict, key: str) -> int:
     """One figure of a vote, as a number. The export writes them as strings."""
     try:
         return int(decompte.get(key) or 0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -129,7 +129,7 @@ def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scruti
                     continue
                 try:
                     scrutin = _parse(json.loads(archive.read(info)))
-                except (ValueError, RecursionError, KeyError, TypeError, zipfile.BadZipFile):
+                except ValueError, RecursionError, KeyError, TypeError, zipfile.BadZipFile:
                     log.warning("scrutin %s illisible - ignoré", uid)
                     continue
                 if scrutin is not None:

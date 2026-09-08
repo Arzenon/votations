@@ -731,6 +731,36 @@ def test_a_paragraph_that_is_not_addressed_to_anyone_is_left_alone():
     assert audience_split("Rien de particulier ici.") == ("", "Rien de particulier ici.")
 
 
+def test_a_long_public_is_still_a_public():
+    """The bound was set on a guess and the guess was measured to be wrong.
+
+    « Real labels run to twenty or thirty characters » was the reasoning behind the
+    original 45. Against the laws actually drafted, punctuation-free labels run to
+    55, and these three — all from the loi de programmation militaire — were being
+    dropped for length alone. None of them can be shortened without naming the
+    institution instead of the reader, and « a public is how somebody describes
+    themselves » is the rule the whole block is organised on.
+    """
+    from app.templating import MAX_AUDIENCE_CHARS, audience_split
+
+    for label in (
+        "Si vous travaillez dans un secteur scientifique protégé",
+        "Si vous travaillez dans un établissement scolaire",
+        "Si vous êtes agent d'un service de renseignement",
+        "Pour les professionnels du transport maritime",
+    ):
+        assert audience_split(f"{label} : ce qui change.") == (label, "ce qui change."), label
+        assert len(label) <= MAX_AUDIENCE_CHARS
+
+    # The bound is still a bound: a clause with no punctuation is not a label.
+    clause = (
+        "Les personnes qui exploitent une installation classée pour la "
+        "protection de l'environnement"
+    )
+    assert len(clause) > MAX_AUDIENCE_CHARS
+    assert audience_split(f"{clause} : elles déclarent.")[0] == ""
+
+
 def test_the_opening_paragraph_is_separated_from_the_rest():
     from app.templating import summary_split
 

@@ -245,11 +245,26 @@ def summary_split(value: str | None) -> tuple[str, list[str]]:
 #: Longest an audience label may be before it stops being one.
 #:
 #: « Pour les employeurs » is a label. « La règle est simple » is a sentence that
-#: happens to reach a colon, and bolding it would emphasise a statement rather
+#: happens to reach a colon, and promoting it would set apart a statement rather
 #: than mark a section — which is the whole distinction this filter rests on.
-#: Real labels run to twenty or thirty characters; the bound is what keeps a
-#: mis-drafted paragraph from being silently promoted.
-MAX_AUDIENCE_CHARS = 45
+#:
+#: This was 45, on the belief that « real labels run to twenty or thirty
+#: characters ». Measured against the four laws actually drafted, that belief was
+#: wrong: the 23 punctuation-free labels run from 9 to 55 characters, and the bound
+#: was rejecting three legitimate publics on the loi de programmation militaire
+#: alone — « Si vous travaillez dans un secteur scientifique protégé » (55), « Si
+#: vous travaillez dans un établissement scolaire » (49), « Si vous êtes agent d'un
+#: service de renseignement » (48). None of the three can be shortened without
+#: naming the institution instead of the reader, which is the opposite of what a
+#: public is supposed to be.
+#:
+#: The same measurement showed what really separates labels from prose here:
+#: *everything* longer than 55 characters in that corpus carries punctuation, up to
+#: whole 1 180-character paragraphs. `_NOT_IN_A_LABEL` is doing the work; this bound
+#: is the backstop for the case it cannot catch — a long clause with no punctuation
+#: at all. 75 leaves the observed maximum 20 characters of room and still refuses
+#: anything that reads as a sentence.
+MAX_AUDIENCE_CHARS = 75
 
 #: Punctuation a label does not contain. A label is a short noun phrase; anything
 #: carrying sentence punctuation — a comma included — is prose that happened to
