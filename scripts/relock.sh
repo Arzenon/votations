@@ -30,14 +30,41 @@ set -e
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 target="$root/requirements.lock"
 
+# Resolve under the Python the image runs, not under whatever `python3` happens
+# to be here. A resolver picks versions and environment markers against the
+# interpreter it is running on, so locking under 3.14 and installing under 3.12
+# is how a lockfile comes to describe a set that was never tested — silently,
+# because both are valid resolutions of the same ranges.
+#
+# The version is read off the Dockerfile's `FROM`, which is the thing that
+# actually runs it. `requires-python`, the ruff target and the mypy setting all
+# name it too; taking a fifth copy here and calling it a constant is how they
+# stop agreeing.
+wanted=$(sed -n 's/^FROM python:\([0-9][0-9.]*\)-.*/\1/p' "$root/Dockerfile" | head -1)
+if [ -z "$wanted" ]; then
+  echo "✗ impossible de lire la version de Python dans le Dockerfile" >&2
+  exit 1
+fi
+
+python="python$wanted"
+if ! command -v "$python" >/dev/null 2>&1; then
+  have=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+  echo "✗ $python est introuvable, et python3 est $have." >&2
+  echo "  L'image tourne sous $wanted : verrouiller sous $have produirait un jeu" >&2
+  echo "  de versions que personne n'exécute. Installez $python, ou lancez ce" >&2
+  echo "  script dans le conteneur :" >&2
+  echo "    docker compose -f docker-compose.dev.yml run --rm app scripts/relock.sh" >&2
+  exit 1
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-echo "→ résolution des dépendances déclarées dans pyproject.toml"
+echo "→ résolution des dépendances déclarées dans pyproject.toml (Python $wanted)"
 
 # pip-tools in a throwaway virtualenv, never in the project's: it is a build tool
 # for this one file and has no business being installed beside the application.
-python3 -m venv "$work/venv"
+"$python" -m venv "$work/venv"
 "$work/venv/bin/pip" install --quiet --upgrade pip
 "$work/venv/bin/pip" install --quiet pip-tools
 
