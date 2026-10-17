@@ -135,8 +135,8 @@ Sur GitHub, dans Settings :
   avec `Code quality` et `Prod image`.
 - **Actions → General** : *Require approval for all external contributors*.
 
-Après le premier merge, rendez public le paquet `votations` (Packages → Package
-settings) : le serveur le télécharge sans identifiants.
+Le paquet `votations` sur ghcr.io hérite de la visibilité publique du dépôt : le
+serveur le télécharge sans identifiants.
 
 ### Les migrations qui créent un index
 
