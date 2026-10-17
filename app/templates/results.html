@@ -66,6 +66,9 @@
       La courbe regroupe les votes par {{ chart.period.name }} ; le tableau
       ci-dessous garde le détail jour par jour.
       {% endif %}
+      Un jour de moins de {{ min_cell_count }} votes est regroupé avec les
+      suivants : sinon, savoir qu'une personne a voté ce jour-là révélerait
+      son choix.
     </p>
 
     <details class="chart-data">
@@ -78,7 +81,7 @@
             {% for bucket in evolution %}
             <tr>
               {# `day` rather than the ISO `label`, to show a French date. #}
-              <th scope="row">{{ bucket.day | french_date }}</th>
+              <th scope="row">{% if bucket.days > 1 %}du {{ bucket.day | french_date }} au {{ bucket.last_day | french_date }}{% else %}{{ bucket.day | french_date }}{% endif %}</th>
               {# Same loop as the headings, so columns stay aligned. #}
               {% for key in CHOICE_LABELS %}<td>{{ bucket.counts[key] }}</td>{% endfor %}
             </tr>
@@ -108,12 +111,15 @@
       en direct reviendrait à livrer le profil de chaque votant·e un par un : il
       suffirait de comparer la page à deux instants pour lire, d'un seul vote, le
       choix, l'âge, le sexe et la région de la personne qui vient de voter. Le
-      décompte total, lui, reste en direct.
+      décompte total, lui, reste en direct. Pour la même raison, une répartition
+      dont une catégorie n'a gagné que quelques votes depuis son dernier palier
+      attend le suivant : elle peut dater d'un palier antérieur.
       {%- if not voting_open %}
       {# Closed, but the remainder since the last snapshot is too small to publish. #}
       La votation est close : les derniers profils renseignés avant la clôture
-      restent en dehors de ce tableau, parce qu'un dernier palier trop petit
-      désignerait les personnes qui ont voté juste avant la fin.
+      restent en dehors des répartitions qui n'ont pas pu avancer, parce qu'un
+      dernier palier trop petit désignerait les personnes qui ont voté juste
+      avant la fin.
       {%- endif %}
     </p>
     {% endif %}
@@ -151,8 +157,14 @@
     {% elif bd.is_pending %}
     {# Not "aucune donnée": there may be data, just not published yet. #}
     <p class="meta">
-      Pas encore publiée : la première répartition paraîtra dès que
-      {{ min_bucket_volume }} personnes auront renseigné un profil.
+      {% if voting_open %}
+      Pas encore publiée : elle paraîtra dès que {{ min_bucket_volume }}
+      personnes auront renseigné un profil, et qu'aucune de ses catégories ne
+      se limitera à quelques votes.
+      {% else %}
+      Non publiée : une de ses catégories n'a gagné que quelques votes depuis
+      le dernier palier, et les publier désignerait les personnes concernées.
+      {% endif %}
     </p>
     {% else %}
     <p class="meta">Aucune donnée renseignée pour cette répartition.</p>

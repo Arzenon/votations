@@ -317,9 +317,9 @@ def results_page(
     memo_age = results_memo_age(status)
     tally = results_crud.tally(db, law.id, max_age=memo_age)
     evolution = results_crud.evolution(db, law.id, total=tally.total, max_age=memo_age)
-    # Pass with_profile to save a query (see `publishes_live_counters`).
+    # Pass with_profile to save a query (see `live_dimensions`).
     breakdowns = demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
-    breakdowns_as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
+    breakdowns_as_of = demo_crud.published_as_of(law, breakdowns)
     history = laws_crud.revisions(db, law.id, page=revisions)
     settings = get_settings()
     origin = str(request.base_url).rstrip("/")

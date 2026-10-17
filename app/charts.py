@@ -8,7 +8,7 @@ table below, so the SVG is an image with a text description.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from app.labels import CHOICE_LABELS
 
@@ -65,6 +65,23 @@ def _period_for(days: int) -> Period:
         if -(-days // period.days) <= MAX_POINTS:
             return period
     return PERIODS[-1]
+
+
+def _daily(buckets) -> list[_Point]:
+    """One point per day. A bucket of merged quiet days is spread over its days.
+
+    Drawn whole on its first day, ten votes over ten quiet days would read as
+    ten votes in one day. Remainders go to the first days, so totals are exact.
+    """
+    out = []
+    for b in buckets:
+        for i in range(b.days):
+            share: dict[str, int] = {}
+            for key in CHOICE_LABELS:
+                whole, rest = divmod(b.counts.get(key, 0), b.days)
+                share[key] = whole + (i < rest)
+            out.append(_Point((b.day + timedelta(days=i)).isoformat(), share))
+    return out
 
 
 def _grouped(buckets, period: Period) -> list[_Point]:
@@ -163,7 +180,7 @@ def _short_date(label: str) -> str:
         return label
 
 
-def _describe(buckets, series: list[Series], period: Period) -> str:
+def _describe(buckets, series: list[Series], period: Period, *, merged: bool) -> str:
     """Text alternative for screen readers.
 
     Takes the daily buckets so the range ends on the actual last day.
@@ -172,7 +189,10 @@ def _describe(buckets, series: list[Series], period: Period) -> str:
         return "Aucune donnée."
     span = f"du {_short_date(buckets[0].label)} au {_short_date(buckets[-1].label)}"
     parts = [f"{s.label} : {s.total} votes, au plus {s.peak} en {period.span}" for s in series]
-    return f"Votes par {period.name} {span}. " + " ; ".join(parts) + "."
+    text = f"Votes par {period.name} {span}. " + " ; ".join(parts) + "."
+    if merged:
+        text += " Les jours calmes regroupés sont répartis à parts égales."
+    return text
 
 
 def build_evolution_chart(buckets) -> EvolutionChart | None:
@@ -183,7 +203,9 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     if not buckets:
         return None
 
-    # `buckets` is daily, `drawn` is what goes on the chart.
+    # One point per day, then `drawn` is what goes on the chart.
+    merged = any(b.days > 1 for b in buckets)
+    buckets = _daily(buckets)
     period = _period_for(len(buckets))
     drawn = _grouped(buckets, period)
 
@@ -257,6 +279,6 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         y_ticks=y_ticks,
         x_ticks=x_ticks,
         max_value=top,
-        description=_describe(buckets, series, period),
+        description=_describe(buckets, series, period, merged=merged),
         period=period,
     )

@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, date, datetime, timedelta
+
+from fastapi import HTTPException
+from sqlalchemy import delete
 
 from app.config import get_settings
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.crud.laws import REVISIONS_PAGE_SIZE
-from app.models import Law, LawRevision
+from app.models import ImportedLaw, Law, LawRevision
+from app.routes.admin.forms import LawForm
+from app.routes.admin.laws import create_law
 from tests.helpers import admin_headers, make_law
 
 # --- Public history of edits after publication --------------------------------
@@ -587,3 +593,70 @@ def test_previewing_an_unsaved_law_touches_no_memo_and_no_query(client, db_sessi
     assert "Loi jamais enregistrée" in r.text
     assert results_crud._TALLIES.get(None, max_age=3600) is None  # type: ignore[arg-type]
     assert results_crud._TALLIES._entries == {}, "a preview left an entry behind"
+
+
+def test_a_double_click_on_create_makes_one_votation(sessionmaker_for):
+    """Two simultaneous creations from one dossier: one law, and a 409 for the other.
+
+    Both used to read the dossier as unlinked and each create a law.
+    """
+    Session = sessionmaker_for
+    setup = Session()
+    now = datetime.now(UTC)
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid="DDOUBLE",
+        title="Loi cliquée deux fois",
+        law_code="2026-10",
+        promulgated_on=date(2026, 1, 1),
+        dossier_url="https://an.fr",
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+    setup.add(item)
+    setup.commit()
+    item_id = item.id
+    form = LawForm(
+        title="Loi cliquée deux fois",
+        official_ref="",
+        legifrance_url="",
+        summary_text="",
+        practical_changes="",
+        arguments_for=[],
+        arguments_against=[],
+        debate_summary="",
+        promulgated_on=None,
+        opens_at=None,
+        closes_at=None,
+        published=False,
+    )
+    start = threading.Barrier(2, timeout=10)
+    outcomes: list[str] = []
+
+    def submit() -> None:
+        db = Session()
+        try:
+            start.wait()
+            create_law(db=db, form=form, import_id=item_id)
+            outcomes.append("created")
+        except HTTPException as exc:
+            outcomes.append(str(exc.status_code))
+        except Exception as exc:  # shown by the assert below
+            outcomes.append(repr(exc))
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    try:
+        assert sorted(outcomes) == ["409", "created"], outcomes
+        assert setup.query(Law).filter_by(title=form.title).count() == 1
+    finally:
+        # The dossier first: it references the law.
+        setup.execute(delete(ImportedLaw).where(ImportedLaw.id == item_id))
+        setup.execute(delete(Law).where(Law.title == form.title))
+        setup.commit()
+        setup.close()

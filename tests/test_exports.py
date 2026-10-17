@@ -4,6 +4,7 @@ import csv
 import io
 import json
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app import ratelimit
 from app.config import get_settings
@@ -225,6 +226,64 @@ def test_the_export_and_the_curve_agree_on_the_boundary(client, open_law, db_ses
     curve_days = {b.label for b in results_crud.evolution(db_session, open_law.id)}
     rows = list(csv.DictReader(io.StringIO(client.get(f"/loi/{open_law.slug}/export.csv").text)))
     assert {row["created_at"] for row in rows} == curve_days == {"2026-05-03", "2026-05-04"}
+
+
+def test_the_export_merges_quiet_days_like_the_curve(client, open_law, db_session, monkeypatch):
+    """Votes of a quiet day carry the start of their period, and come sorted by choice."""
+    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
+    _vote_at(db_session, open_law, datetime(2026, 5, 4, 12, 0, tzinfo=UTC), n=50, tag="calme")
+    db_session.add(
+        Vote(
+            law_id=open_law.id,
+            voter_token="tz-seul",
+            choice="against",
+            created_at=datetime(2026, 5, 6, 12, 0, tzinfo=UTC),
+        )
+    )
+    db_session.commit()
+
+    rows = list(csv.DictReader(io.StringIO(client.get(f"/loi/{open_law.slug}/export.csv").text)))
+    assert {row["created_at"] for row in rows} == {"2026-05-04"}, "the lone vote's day leaked"
+    assert [row["choice"] for row in rows] == ["against"] + ["for"] * 50
+
+
+def test_hour_groups_never_cross_the_curve_s_days(client, open_law, db_session, monkeypatch):
+    """With hour precision, the hour groups add up to the days on the results page.
+
+    A 23:00 vote used to share an hour group with the next morning: the day's
+    figures minus its 10:00 group then gave back that one late "Contre".
+    """
+    monkeypatch.setattr(get_settings(), "export_time_resolution", "hour", raising=False)
+    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
+    paris = ZoneInfo("Europe/Paris")
+    plan = [(4, 10, "for", 14), (4, 23, "against", 1), (5, 1, "for", 9), (5, 12, "for", 30)]
+    for day, hour, choice, n in plan:
+        for i in range(n):
+            db_session.add(
+                Vote(
+                    law_id=open_law.id,
+                    voter_token=f"h{day}-{hour}-{i}",
+                    choice=choice,
+                    created_at=datetime(2026, 5, day, hour, 0, tzinfo=paris),
+                )
+            )
+    db_session.commit()
+
+    rows = list(csv.DictReader(io.StringIO(client.get(f"/loi/{open_law.slug}/export.csv").text)))
+    groups: dict[str, dict[str, int]] = {}
+    for row in rows:
+        cell = groups.setdefault(row["created_at"], {"for": 0, "against": 0, "abstain": 0})
+        cell[row["choice"]] += 1
+    # The lone 23:00 vote joins its own day's group, not the next morning's.
+    assert groups == {
+        "2026-05-04T10:00:00+0200": {"for": 14, "against": 1, "abstain": 0},
+        "2026-05-05T01:00:00+0200": {"for": 39, "against": 0, "abstain": 0},
+    }
+    days = {b.label: b.counts for b in results_crud.evolution(db_session, open_law.id)}
+    assert days == {
+        "2026-05-04": {"for": 14, "against": 1, "abstain": 0},
+        "2026-05-05": {"for": 39, "against": 0, "abstain": 0},
+    }
 
 
 # --- Streaming is batched, not one message per vote ---------------------------

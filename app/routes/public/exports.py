@@ -127,6 +127,7 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
     tally = results_crud.tally(db, law.id)
     total = tally.total
 
+    breakdowns = demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
     # Only breakdowns that pass the suppression threshold.
     demographics = [
         {
@@ -141,11 +142,11 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
                 for r in bd.rows
             ],
         }
-        for bd in demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
+        for bd in breakdowns
         if bd.shown
     ]
     # Same snapshot date as the results page.
-    as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
+    as_of = demo_crud.published_as_of(law, breakdowns)
     provision = demo_crud.provision_rate(db, law.id, tally=tally)
     envelope = {
         "law": {"id": law.id, "slug": law.slug, "title": law.title},

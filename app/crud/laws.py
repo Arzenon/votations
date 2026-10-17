@@ -27,8 +27,10 @@ from app.labels import french_date, french_datetime
 from app.models import (
     SEARCH_VECTOR_QUERY_SQL,
     STATUS_CLOSED,
+    STATUS_IMPORTED,
     STATUS_OPEN,
     STATUS_SCHEDULED,
+    ImportedLaw,
     Law,
     LawRevision,
 )
@@ -258,30 +260,34 @@ def _apply_status(stmt: Select, status: str | None, *, now: datetime | None = No
 _SLUG_ATTEMPTS = 5
 
 
-def create(db: Session, **fields) -> Law:
+def create(db: Session, *, imported: ImportedLaw | None = None, **fields) -> Law:
     """Insert a law, deriving a unique slug from the title if none is given.
 
     Two concurrent creations can pick the same slug. The unique constraint
     rejects one of them, which then retries with a fresh slug. An explicit slug
     is never retried.
+
+    ``imported`` is the staged row the law comes from, linked in the same
+    transaction. Retries use a savepoint, so the caller's lock on it holds.
     """
     explicit = bool(fields.get("slug"))
-    attempt = 0
-    while True:
-        attempt += 1
+    for attempt in range(1, _SLUG_ATTEMPTS + 1):
         if not explicit:
             fields["slug"] = unique_slug(db, fields.get("title", ""))
         law = Law(**fields)
-        db.add(law)
         try:
-            db.commit()
+            with db.begin_nested():
+                db.add(law)
+            break
         except IntegrityError:
-            db.rollback()
-            if explicit or attempt >= _SLUG_ATTEMPTS:
+            if explicit or attempt == _SLUG_ATTEMPTS:
                 raise
-            continue
-        db.refresh(law)
-        return law
+    if imported is not None:
+        imported.status = STATUS_IMPORTED
+        imported.law_id = law.id
+    db.commit()
+    db.refresh(law)
+    return law
 
 
 def _as_text(value) -> str:

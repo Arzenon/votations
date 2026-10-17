@@ -198,3 +198,22 @@ def test_the_day_by_day_table_is_dated_in_french(client, open_law, monkeypatch):
     )
     # Only check the row header: the JSON-LD has ISO dates on purpose.
     assert f'<th scope="row">{today.isoformat()}' not in page, "the table should not show ISO dates"
+
+
+def test_merged_quiet_days_are_spread_not_drawn_as_one_day():
+    """Ten votes over ten quiet days read as one a day, not ten in a day."""
+    from app.charts import build_evolution_chart
+    from app.crud.results import EvolutionBucket
+
+    buckets = [
+        EvolutionBucket(
+            label=f"2026-05-{1 + 10 * i:02}",
+            counts={"for": 10, "against": 0, "abstain": 0},
+            days=10,
+        )
+        for i in range(3)
+    ]
+    chart = build_evolution_chart(buckets)
+    assert "Pour : 30 votes, au plus 1 en une journée" in chart.description
+    assert "répartis à parts égales" in chart.description
+    assert chart.x_ticks[-1][1] == "30/05", "the axis ends on the last merged day"

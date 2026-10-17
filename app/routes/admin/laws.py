@@ -11,7 +11,7 @@ from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import as_utc, get_db, utcnow
-from app.models import STATUS_IMPORTED, ImportedLaw, Law
+from app.models import ImportedLaw, Law
 from app.routes.admin.context import cached_draft, law_form_context
 from app.routes.admin.forms import LawForm, law_form, preview_form
 from app.routes.public.exports import at_capacity, csv_response
@@ -194,7 +194,8 @@ def create_law(
     form: LawForm = Depends(law_form),
     import_id: int | None = Form(None),
 ):
-    item = imports_crud.get_by_id(db, import_id) if import_id else None
+    # Locked until the law is linked: a double click waits here, then gets the 409.
+    item = db.get(ImportedLaw, import_id, with_for_update=True) if import_id else None
 
     # One law per dossier. Otherwise `set_status` would move the import's link
     # to the new law and the first one would lose its draft.
@@ -209,9 +210,7 @@ def create_law(
             ),
         )
 
-    law = laws_crud.create(db, **form.columns(), **_parliament_record(item))
-    if item is not None:
-        imports_crud.set_status(db, item, status=STATUS_IMPORTED, law_id=law.id)
+    laws_crud.create(db, imported=item, **form.columns(), **_parliament_record(item))
     return RedirectResponse("/admin", status_code=303)
 
 
