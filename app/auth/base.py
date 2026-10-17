@@ -1,16 +1,8 @@
-"""The authentication seam.
+"""The authentication interface.
 
-``AuthProvider`` is the single interface the rest of the app talks to. Today the
-MVP wires up :class:`~app.auth.anonymous.AnonymousProvider`. Any future provider
-implementing this same protocol swaps in here — no change to voting, results, or
-templates required.
-
-The seam is kept deliberately even though no second provider is in sight.
-FranceConnect is the one we want and cannot have: the arrêté of 8 November 2018
-opens it to private bodies only under an explicit statutory duty to verify user
-identity, which a civic-expression platform has no way to fall under. That is a
-legal condition on who runs the project, not a milestone the code can reach — so
-this file promises an interface, never a date. See CLAUDE.md, Authentication.
+Only `AnonymousProvider` exists today. FranceConnect isn't available to a
+private platform like this one (arrêté of 8 November 2018), which is a legal
+matter, not a technical one. See CLAUDE.md, Authentication.
 """
 
 from __future__ import annotations
@@ -23,58 +15,37 @@ from fastapi import Request, Response
 
 @runtime_checkable
 class AuthProvider(Protocol):
-    """Everything the application needs from an authentication backend."""
+    """What the app needs from an authentication backend."""
 
-    #: Human label for the connect button (e.g. "Se connecter", "FranceConnect").
+    # Label of the login button.
     login_label: str
-    #: Whether a real login flow exists yet. False ⇒ no connect control is
-    #: rendered at all. A disabled button reading "bientôt disponible" used to
-    #: stand in its place, and it read as « you need an account and cannot even
-    #: make one » — the exact opposite of the truth, on the one page whose job is
-    #: to say that voting needs nothing. Transparency is served by the prose
-    #: there, not by a control promising an availability nobody controls.
+    # When False, no login button is shown at all.
     login_enabled: bool
 
     def get_voter_token(self, request: Request, response: Response) -> str:
-        """Return a stable, anonymous, non-PII token identifying this voter.
+        """Return a stable anonymous token for this voter, creating it if needed.
 
-        Used solely to enforce one-vote-per-law. Must never be derivable from or
-        linkable to a real identity. ``response`` lets the provider persist the
-        token (e.g. set a signed cookie) when first issued.
-
-        Call this only when the visitor is actually voting: it *creates* an
-        identifier if none exists.
+        Only used to enforce one vote per law; must not be linkable to an
+        identity. ``response`` is used to set the cookie. Only call when
+        actually voting.
         """
         ...
 
     def peek_voter_token(self, request: Request) -> str | None:
-        """The token this browser already carries, or None — issuing nothing.
-
-        Reading a law page must not mint an identifier for someone who only
-        reads, so the read path asks with this and accepts "no token" as the
-        ordinary answer.
-        """
+        """The existing token, or None. Never creates one (for read-only pages)."""
         ...
 
     def login_url(self) -> str:
-        """Where the connect button points."""
+        """Target of the login button."""
         ...
 
 
 @lru_cache(maxsize=1)
 def get_auth_provider() -> AuthProvider:
-    """Return the process-wide auth provider (FastAPI dependency).
+    """The process-wide auth provider (FastAPI dependency).
 
-    Cached rather than assigned to a module global behind an ``if is None``. The
-    routes are sync ``def``, so Starlette runs each one on its own thread and two
-    requests arriving together could both find the global empty and each build a
-    provider — the same race ``app.drafting._executor`` takes a lock against, and
-    the reason that one takes a lock is that a second provider built and dropped
-    is a bug waiting for the object to start holding something.
-
-    ``lru_cache`` on a no-argument function is the whole fix: it does the
-    build-once itself, under its own lock, and « process-wide » becomes something
-    the code says rather than something the caller has to arrange.
+    lru_cache rather than a lazily set global, which two request threads could
+    both initialise.
     """
     from app.auth.anonymous import AnonymousProvider
 

@@ -2,14 +2,9 @@
 {% block title %}{{ law.title }} - Votations Françaises{% endblock %}
 {% block description %}{{ (law.summary_text or law.title)[:180] }}{% endblock %}
 {% block scripts %}<script src="{{ asset_url('htmx.min.js') }}" defer></script>{% endblock %}
-{# A reading column, not the full 880px the rest of the site uses: the prose of
-   a law ran to ~106 characters a line on a desktop, against the 45-75 that reads
-   comfortably. Scoped to `main`, so the header and footer keep the site's width
-   and only the article narrows. #}
+{# Narrower column for readability (lines were ~106 characters wide). #}
 {% block body_class %}reading{% endblock %}
-{# A closed law shows its tally on this page, so it carries the full warning like
-   the results page does. While the vote is open there is no figure here to
-   misread — the ballot is not a result — and the admission alone is enough. #}
+{# Full disclaimer once closed, since the tally is then shown. #}
 {% block disclaimer %}{% if voting_open %}{{ DISCLAIMER_SHORT }}{% else %}{{ DISCLAIMER }}{% endif %}{% endblock %}
 {% block content %}
 {% macro audience_paragraph(para) -%}
@@ -29,16 +24,8 @@
   {% endif %}
 </li>
 {%- endmacro %}
-{# One argument in view, the rest one click away — and the same treatment applied to
-   both columns, which is what keeps the symmetry the charter asks for. Symmetry is
-   in the *rule*, not in the count: quoting three speeches for and four against is
-   what the debate held, and evening the numbers by dropping one would be an
-   editorial act. What must never differ is how each side is shown.
-
-   Folding both sides entirely was the alternative and it was rejected: the
-   quotations are the only material on this page nobody here wrote, and a page that
-   opens with no argument visible at all lets someone vote without having read a
-   single one. #}
+{# One argument visible per side, the rest folded. Same treatment for both
+   sides; the counts may differ. #}
 {% macro arguments_block(args) -%}
   {%- if args %}
   <ul>{{ argument_item(args[0]) }}</ul>
@@ -63,43 +50,16 @@
   </p>
   {% endif %}
 
-  {# The encart: the one paragraph written to stand alone, and what the debate
-     turned on. Neither is new material — the first is the opening of « Ce que dit
-     la loi », lifted rather than copied (see `summary_split`), and the second is
-     a subject named from the arguments quoted further down, which a reader can
-     check against them without leaving the page.
-
-     It exists because both were invisible. The opening paragraph looked like
-     every other paragraph, and the debate had no summary at all: a reader had to
-     scroll past two blocks of prose to discover there was even a disagreement. #}
+  {# Top box: the first paragraph of the summary (see `summary_split`) and the
+     debate summary. #}
   {% set lede, reste = law.summary_text | summary_split %}
-  {# Whether this page may say anything at all about how Parliament voted, which
-     takes two conditions and not one.
-
-     `promulgated_on` means the text went through Parliament: a law written by
-     hand has none. `an_vote_checked` means somebody actually looked it up in the
-     scrutins export. Without the second, an empty set of counts reads as « adoptée
-     sans scrutin public » - which is true of a third of promulgated laws and was
-     also being said, wrongly, about every law that predated this feature and had
-     simply never been looked up.
-
-     Named once so the gate and the branch inside cannot disagree - they did, and
-     a law adopted without a public scrutin got no encart at all while the line
-     that would have said so sat unreachable inside it. #}
+  {# Only talk about the parliamentary vote if the law went through Parliament
+     (promulgated_on) and the scrutins were checked (an_vote_checked). #}
   {% set parlement = law.promulgated_on is not none and law.an_vote_checked %}
   {% if lede or law.debate_summary or parlement %}
   <aside class="encart" aria-label="L'essentiel">
     {% if lede %}<p class="encart-lede">{{ lede }}</p>{% endif %}
-    {# How Parliament settled it. Facts, published by the Assemblée, and the only
-       thing on this page that says whether the text was contested without anybody
-       having to characterise it: 269 voix contre 0 and 357 contre 177 do not read
-       the same way.
-
-       « à l'Assemblée nationale » is not decoration - the Sénat publishes its
-       scrutins elsewhere and they are not in the export this comes from. And a
-       law with no recorded count says so rather than showing nothing: a third of
-       promulgated laws are adopted without a public scrutin, and that is a fact
-       about the vote, not a hole in our data. #}
+    {# Assemblée vote counts (no Sénat data). Without a public scrutin, say so. #}
     {% if parlement and law.an_vote_for is not none %}
     <p class="encart-scrutin">
       Adoptée à l'Assemblée nationale par <strong>{{ law.an_vote_for }} voix
@@ -122,23 +82,10 @@
   </aside>
   {% endif %}
 
-  {# A route to the ballot from the top of the page, for a reader who arrives from a
-     shared link already knowing what they think. It sits under the encart and not
-     above it: what it skips is the presentation, not the one paragraph that says
-     what the law does, how Parliament settled it and what the disagreement was
-     about. Nothing is hidden from anyone — the presentation is still the page.
-
-     An anchor and not a floating bar: it scrolls the page a reader already has,
-     costs no script, and leaves the ballot where it belongs, after the arguments. #}
+  {# Link to the ballot, below the top box. #}
   <p class="aller-au-vote"><a href="#voter">{% if voting_open %}Aller au vote{% else %}Voir les résultats{% endif %}</a></p>
 
-  {# Folded when the encart carries the opening paragraph: the sentence a hesitating
-     reader most needs is already above, and the detail underneath it was 992 px on a
-     phone — a third of what stood between arriving and voting. Left open when there
-     is no lede to carry, because this block then holds the only summary there is.
-
-     `<details>` like the two folds already on this page: it opens with scripting
-     off, it is a real button to a screen reader, and find-in-page reaches inside. #}
+  {# Folded when the first paragraph is in the top box, open otherwise. #}
   <section class="block prose">
     {% if lede %}
     <details class="bloc-repliable">
@@ -153,34 +100,12 @@
 
   <section class="block prose">
     <h2>Ce que ça change en pratique</h2>
-    {# Most-concerned-first, so the publics above the fold are the ones that speak
-       to the most readers. A loi de programmation militaire or une loi agricole
-       concerne vingt publics distincts, and the charter forbids choosing which of
-       them goes unmentioned — so the block is not shortened, it is folded. The
-       count is in the summary because a reader must be able to see that something
-       is there before deciding not to read it. See `app.templating.practical_split`. #}
-    {# Each paragraph opens with the public it addresses; the label is set apart
-       so the block can be scanned rather than read. Navigation, never emphasis on
-       the substance - see `app.templating.audience_split`, which returns an empty
-       label for any paragraph not written in that shape, so nothing here depends
-       on the drafting having cooperated. #}
-    {# One row per public, opened by whoever recognises themselves in it. The block
-       is the longest on the page — 2 755 px on a phone for a law with nine publics —
-       and it is also the one a reader needs least of: they want their own situation,
-       not the eight others. So it stops being prose and becomes a list, with every
-       public named on the page and none of them behind a counter.
-
-       A paragraph the drafting left without a label renders plainly, in place. It is
-       not given an invented one: a wrong label is worse than none, and standing out
-       among the rows is exactly how the person reviewing the law before publication
-       finds out the drafting slipped. #}
+    {# Largest audiences first, the rest folded (see `practical_split`). #}
+    {# Audience label set apart (see `audience_split`). #}
+    {# One collapsible row per audience. Unlabelled paragraphs are shown as plain
+       text. #}
     {% set rows, folded = law.practical_changes | practical_layout %}
-    {# The count is announced only when it is exact - that is, when every paragraph
-       carries a label and the rows are the whole block. A paragraph the drafting
-       left unlabelled is still a public being addressed, so counting the rows alone
-       would publish « 7 publics concernés » above a block that speaks to nine. On a
-       page whose only claim is that its figures can be checked, a number that
-       quietly disagrees with what is under it costs more than it gives. #}
+    {# Only show the count when every paragraph has a label. #}
     {% set publics = rows | map(attribute=0) | select | list %}
     {% if publics | length == rows | length and publics | length > 2 %}
     <p class="meta publics-indice">{{ publics | length }} publics concernés. Ouvrez le vôtre.</p>
@@ -213,24 +138,8 @@
     </section>
   </div>
 
-  {# The charter asks that the platform's limitations be stated permanently and
-     prominently. The banner at the top of every page states the one about who
-     votes here; this is the one that had no home — who wrote the text you are
-     about to vote on, and how much that is worth. It sits after the presentation
-     and before the ballot on purpose: it is the last thing read before voting.
-
-     Collapsed, because three paragraphs between the arguments and the ballot is
-     a lot of page for something most readers will read once. `<details>` and not
-     JavaScript: it opens with scripting off, it is a real button to a screen
-     reader, and it is findable by the browser's own search.
-
-     The summary is the question and nothing else. A one-line summary of the
-     answer was tried and removed: « une IA, relue par une personne bénévole »
-     reads as though the whole page were machine-written, when the arguments are
-     quotations selected from real speeches and checked against them. Compressing
-     the answer misdescribed it, which is a worse failure here than asking the
-     reader for a click — and the question is plain enough that anyone wondering
-     who wrote this will open it. #}
+  {# Who wrote this presentation, just before the ballot. The summary is only the
+     question: a short answer made the whole page sound machine-written. #}
   <details class="provenance">
     <summary>Qui a écrit cette présentation ?</summary>
     <p>
@@ -279,9 +188,7 @@
     {% endif %}
   </section>
 
-  {# Both links point at the results page, which a preview has no business
-     reaching: on a law that is not saved yet there is nothing behind the URL, and
-     on one that is, following it would quietly leave the preview. #}
+  {# No links to the results page in a preview. #}
   {% if revision_count and not preview %}
   <p class="revised-note">
     Ce texte de présentation a été modifié {{ revision_count }} fois depuis sa

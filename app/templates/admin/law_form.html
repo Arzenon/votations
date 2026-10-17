@@ -3,9 +3,8 @@
 {% block title %}{% if law %}Éditer{% else %}Nouvelle loi{% endif %} - Administration{% endblock %}
 {% block scripts %}
 <script src="{{ asset_url('htmx.min.js') }}" defer></script>
-{# Administration only. The public pages stay usable with JavaScript off; this
-   one is edited by a handful of known people, for whom the argument editor is
-   worth enhancing. See static/admin.js — the form still works without it. #}
+{# Admin only: admin.js improves the argument editor, but the form works
+   without it. #}
 <script src="{{ asset_url('admin.js') }}" defer></script>
 {% endblock %}
 {% block content %}
@@ -14,13 +13,9 @@
   {% if prefill %} · <a href="/admin/imports">Lois promulguées</a>{% endif %}
 </p>
 {% if prefill and ai_enabled %}
-{# Above the fold: the draft is the first thing you want on a freshly imported law.
-
-   `form=` attaches these to the form below, so a plain submit still posts what is
-   already typed and the draft route can echo it back — that is the no-JavaScript
-   path. With htmx the request goes out in the background and only the status
-   banner is swapped: the page never navigates, so nothing typed is at risk and a
-   later refresh cannot replay the POST and bill a second generation. #}
+{# `form=` attaches these buttons to the form below, so without JS the typed
+   values are posted and shown back. With htmx only the banner is swapped, so a
+   refresh can't resubmit the POST (and pay for another draft). #}
 <div class="draft-actions">
   <button type="submit" class="secondary" form="law-form" formnovalidate
           formaction="/admin/imports/{{ prefill.id }}/brouillon"
@@ -35,18 +30,13 @@
             hx-post="/admin/imports/{{ prefill.id }}/brouillon"
             hx-vals='{"regenerer": "1"}'
             hx-target="#draft-state" hx-swap="outerHTML"
-            {# hx-confirm, not data-confirm: with JavaScript on, htmx handles the
-               click, and carrying both would prompt twice. With JavaScript off
-               neither runs — the plain POST is the fallback, and « Régénérer »
-               there is an explicit click on a button that says what it does. #}
+            {# hx-confirm only: with both, htmx would ask twice. #}
             hx-confirm="Régénérer appelle le modèle et sera facturé. Continuer ?">
       Régénérer
     </button>
   {% endif %}
-  {# Editing an existing law: the draft has to be poured into the form by hand,
-     because the fields already hold something worth not losing by accident. On
-     the creation form there is nothing to overwrite, so it is pre-filled and this
-     link would be noise. #}
+  {# On an existing law, the draft is only loaded on request, so saved text
+     isn't overwritten by accident. #}
   {% if law and has_draft %}
     <a class="button secondary" href="/admin/lois/{{ law.id }}?brouillon=1">
       Charger le brouillon dans le formulaire
@@ -65,9 +55,7 @@
 </p>
 {% endif %}
 
-{# The context already carries `draft_item` and the three booleans, built by the
-   same function the polling route uses — so this include re-derives nothing and
-   cannot fall out of step with it. #}
+{# Context from `draft_state_context`, as in the polling route. #}
 {% if prefill %}{% include "admin/_draft_state.html" %}{% endif %}
 
 <h1>{% if law %}Éditer la loi{% else %}Nouvelle loi{% endif %}</h1>
@@ -129,26 +117,19 @@
     <textarea name="practical_changes" rows="10">{{ values.practical_changes }}</textarea>
   </label>
 
-  {# Written by the AI from the arguments selected below, then relaid by a human
-     like every other block. It names the *subject* of the disagreement and never
-     a position on it - « le débat a porté sur… », jamais « cette loi pose un
-     problème de… ». C'est la seule phrase du site que la plateforme rédige à
-     propos du débat plutôt que de le citer : à relire avec ça en tête. #}
+  {# Drafted by the AI from the selected arguments, then reviewed. Names the
+     subject of the debate, never a position: "le débat a porté sur...", not
+     "cette loi pose un problème de...". #}
   <label>Ce qui a été débattu <span class="hint">(une ou deux phrases, affichées en haut de la page)</span>
     <textarea name="debate_summary" rows="3">{{ values.debate_summary }}</textarea>
   </label>
 
-  {# Two identical editors, so the markup is written once. The charter asks for
-     symmetry between the two sides; here that is literal. #}
+  {# Same editor for both sides. #}
   {% for side, legend in (('for', 'Arguments des partisans'), ('against', 'Arguments des opposants')) %}
   <fieldset class="arguments-editor" data-arguments="{{ side }}">
     <legend>{{ legend }}</legend>
     <div class="argument-list">
-      {# The stored arguments and nothing else. There used to be a blank row at
-         the end, so the form could still add one argument with JavaScript off —
-         but « Ajouter un argument » below does that job, and a permanent empty
-         row on a side that is complete reads as an unfinished entry rather than
-         as an offer. #}
+      {# Saved arguments only; "Ajouter un argument" adds rows. #}
       {% for arg in values['arguments_' + side] %}
         {% with text = arg.text, author = arg.author, source = arg.source %}
           {% include "admin/_argument_row.html" %}
@@ -161,8 +142,7 @@
   </fieldset>
   {% endfor %}
 
-  {# Cloned by admin.js for each new row. Inert until then: the browser does not
-     render a <template>, and its fields are not submitted with the form. #}
+  {# Cloned by admin.js for new rows. A <template> isn't rendered or submitted. #}
   <template id="argument-row-template">
     {% with text = '', author = '', source = '', side = '__SIDE__' %}
       {% include "admin/_argument_row.html" %}
@@ -184,22 +164,14 @@
   </label>
 
   {% if prefill %}<input type="hidden" name="import_id" value="{{ prefill.id }}">{% endif %}
-  {# Tells the preview which row is being edited, so it keeps that law's real
-     tally, history and URL while showing the unsaved prose. Absent on a new law,
-     which has none of those yet. Ignored by the save routes. #}
+  {# For the preview, to keep the law's tally, history and URL. Ignored on save. #}
   {% if law %}<input type="hidden" name="law_id" value="{{ law.id }}">{% endif %}
 
   <div class="form-actions">
     <button type="submit">Enregistrer</button>
-    {# A submit, not a link — and that is the whole point. A link can only ask for
-       what is already saved, so checking your own work meant saving it first, and
-       on a new law, creating it. Posting the form instead previews what is in the
-       textareas right now.
-
-       `formaction`/`formmethod`/`formtarget` are plain HTML: the new tab, the
-       different destination and the skipped validation all happen without a line
-       of JavaScript. `formnovalidate` because a preview must not be refused for a
-       missing title — you preview precisely to find out what is still missing. #}
+    {# A submit button rather than a link, so the preview shows the unsaved text.
+       formaction/formtarget open it in a new tab without JS; formnovalidate so
+       an incomplete form can still be previewed. #}
     <button type="submit" class="secondary" formnovalidate
             formaction="/admin/lois/apercu" formmethod="post" formtarget="_blank">
       Aperçu public ↗
@@ -243,9 +215,7 @@
       </tbody>
     </table>
   </div>
-  {# Only the most recent page is shown here. The complete history is the public
-     one, paginated, on the results page — this form is for editing, not for
-     auditing, and the audit belongs where a reader can perform it. #}
+  {# Latest changes only; the full history is on the public results page. #}
   {% if revision_total > revisions | length %}
   <p class="meta">
     {{ revisions | length }} modifications les plus récentes sur {{ revision_total }}.

@@ -1,15 +1,10 @@
-"""Generate the Open Graph share card, once.
+"""Generate the Open Graph image (app/static/og.png).
 
-Run by hand when the wording or the palette changes; the result is committed as
-`app/static/og.png` and served like any other static asset. Pillow is *not* a
-dependency of the application — it is a tool for making this file:
+Run by hand when the text or colours change; the PNG is committed. Pillow
+isn't an app dependency:
 
     python -m venv /tmp/img && /tmp/img/bin/pip install pillow
     /tmp/img/bin/python scripts/make_og_image.py
-
-The card carries the site name and what the site is for. Everything else is the
-tricolour ballot mark from the favicon, drawn large: a share card is seen at
-thumbnail size in a feed, so it has to survive being small.
 """
 
 from __future__ import annotations
@@ -41,18 +36,18 @@ def main() -> int:
     image = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
     draw = ImageDraw.Draw(image)
 
-    # Left band: the mark on republican blue, so the card reads at thumbnail size.
+    # Left band, blue.
     band = 360
     draw.rectangle([0, 0, band, HEIGHT], fill=BLUE)
 
-    # The ballot check from the favicon, scaled up and drawn with round joins.
+    # The check mark from the favicon.
     check = [(118, 322), (168, 372), (258, 258)]
     draw.line(check, fill=(255, 255, 255), width=26, joint="curve")
     for point in (check[0], check[-1]):
         r = 13
         draw.ellipse([point[0] - r, point[1] - r, point[0] + r, point[1] + r], fill=(255, 255, 255))
 
-    # Tricolour rule down the seam.
+    # Blue, white, red stripe.
     for i, colour in enumerate(TRICOLORE):
         top = HEIGHT * i // 3
         draw.rectangle([band, top, band + 10, HEIGHT * (i + 1) // 3], fill=colour)

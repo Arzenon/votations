@@ -45,11 +45,11 @@ def test_admin_requires_auth(client):
 
 
 def test_admin_challenge_carries_a_realm(client):
-    """RFC 7617 requires `realm`; without it Firefox never shows a login prompt."""
-    # No credentials at all — the challenge comes from FastAPI's HTTPBasic.
+    """The 401 has a realm, without which Firefox shows no login prompt."""
+    # No credentials: the challenge comes from FastAPI's HTTPBasic.
     r = client.get("/admin")
     assert r.headers["www-authenticate"] == 'Basic realm="Votations"'
-    # Wrong credentials — the challenge comes from require_admin.
+    # Wrong credentials: the challenge comes from require_admin.
     r = client.get("/admin", headers=_basic("admin", "definitely-wrong"))
     assert r.status_code == 401
     assert r.headers["www-authenticate"] == 'Basic realm="Votations"'
@@ -75,12 +75,7 @@ def test_admin_can_create_law(client, db_session):
 
 
 def test_connexion_leads_with_no_account_needed(client):
-    """The page must not read as a gate — voting needs nothing.
-
-    It used to end on a disabled « Se connecter - bientôt disponible » button,
-    which answered « do I need an account? » with the opposite of the truth. The
-    page still names FranceConnect, but as something wanted and unavailable.
-    """
+    """The page makes clear that no account is needed to vote."""
     r = client.get("/connexion")
     assert r.status_code == 200
     assert "Vous n'avez pas besoin de compte pour voter" in r.text
@@ -90,12 +85,12 @@ def test_connexion_leads_with_no_account_needed(client):
 
 
 def test_no_login_link_in_the_header(client, open_law):
-    """« Se connecter » in a nav advertises a gate this site does not have."""
+    """No "Se connecter" link in the header."""
     for path in ("/", "/connexion", f"/loi/{open_law.slug}"):
         r = client.get(path)
         assert r.status_code == 200
         assert "Se connecter" not in r.text, path
-        # The footer still reaches the same page, under its honest name.
+        # The footer still links to the page.
         assert "À propos de l'authentification" in r.text, path
 
 
@@ -117,14 +112,14 @@ def test_an_api_client_still_gets_a_plain_answer(client):
 
 
 def test_a_401_keeps_its_challenge_header(client):
-    """Turned into an HTML page, the browser would never show a login box."""
+    """A 401 stays plain text with its WWW-Authenticate header."""
     r = client.get("/admin", headers={"Accept": "text/html"})
     assert r.status_code == 401
     assert r.headers["www-authenticate"].startswith("Basic")
 
 
 def test_an_unreadable_form_field_is_a_page_not_json(client):
-    """FastAPI's own handler answers a browser form post with pydantic JSON."""
+    """An invalid form field gives an HTML page, not FastAPI's JSON."""
     r = client.post(
         "/admin/lois",
         headers={"Accept": "text/html", **admin_headers()},
@@ -133,7 +128,7 @@ def test_an_unreadable_form_field_is_a_page_not_json(client):
     assert r.status_code == 422
     assert "text/html" in r.headers["content-type"]
     assert "Saisie invalide" in r.text
-    # The pydantic detail names internal field paths; it must not be echoed.
+    # Pydantic details aren't shown.
     assert "import_id" not in r.text
 
 
@@ -153,16 +148,11 @@ def test_robots_and_favicon_exist(client):
     assert client.get("/favicon.ico").status_code == 200
 
 
-# --- C1: htmx only where it is used ------------------------------------------
+# --- htmx only where it is used ----------------------------------------------
 
 
 def _loads_htmx(page: str) -> bool:
-    """Whether the page pulls in the 50 kB library, not whether it mentions it.
-
-    Every page carries the `htmx-config` meta — it is in the shared base, so that
-    the two pages which *do* load htmx cannot be given it without its settings.
-    Matching on the bare word therefore stopped telling these two tests apart.
-    """
+    """Whether the page loads the htmx script (every page has the htmx-config meta)."""
     return "<script" in page and "htmx.min.js" in page
 
 
@@ -175,13 +165,9 @@ def test_the_law_page_does_load_htmx(client, open_law):
 
 
 def test_htmx_is_configured_not_to_evaluate_anything(client, open_law):
-    """Both switches off, on the page that loads the library.
+    """htmx eval and script execution are disabled.
 
-    The Content-Security-Policy already refuses what they permit, which is why
-    this is worth a test rather than a comment: the day somebody has to loosen
-    the CSP, nothing else would notice htmx quietly regaining the ability to
-    evaluate attribute expressions and run <script> tags out of a swapped
-    fragment.
+    The CSP already blocks them, but this still holds if the CSP is loosened.
     """
     page = client.get(f"/loi/{open_law.slug}").text
     assert '<meta name="htmx-config"' in page
@@ -207,12 +193,7 @@ def test_the_legal_pages_are_linked_from_every_page(client, open_law):
 
 
 def test_a_missing_host_is_shown_as_missing(client, monkeypatch):
-    """The host is the one item article 6-III still makes mandatory here.
-
-    The publisher's own name and address are not published — article 6-III-2
-    allows that for a non-professional publisher whose host holds them — so the
-    only thing left that can be *missing* is the host.
-    """
+    """A missing host (the only mandatory item) is shown as missing."""
     settings = get_settings()
     monkeypatch.setattr(settings, "legal_host", "", raising=False)
     page = client.get("/mentions-legales").text
@@ -230,12 +211,7 @@ def test_a_named_host_removes_the_warning(client, monkeypatch):
 
 
 def test_the_page_explains_why_the_publisher_is_not_named(client, monkeypatch):
-    """An unexplained blank reads as evasion on a transparency-first site.
-
-    The publisher's identity is withheld under article 6-III-2, which is a
-    permitted choice and not an omission — so the page says so, and says that the
-    host can identify the publisher if a court asks.
-    """
+    """The page explains why the publisher isn't named (article 6-III-2)."""
     settings = get_settings()
     monkeypatch.setattr(settings, "legal_host", "OVH SAS, Roubaix", raising=False)
     page = client.get("/mentions-legales").text
@@ -245,7 +221,7 @@ def test_the_page_explains_why_the_publisher_is_not_named(client, monkeypatch):
 
 
 def test_the_legal_page_never_invents_an_identity(client, monkeypatch):
-    """Nothing plausible may appear where a real name is missing."""
+    """No placeholder name is shown."""
     settings = get_settings()
     for field in ("legal_contact_email", "legal_host"):
         monkeypatch.setattr(settings, field, "", raising=False)
@@ -255,12 +231,7 @@ def test_the_legal_page_never_invents_an_identity(client, monkeypatch):
 
 
 def test_the_open_data_attribution_survives(client):
-    """Licence Ouverte requires the source to be credited.
-
-    This is not LCEN and does not go away with the identity fields: it is the
-    licence under which the Assemblée nationale, DILA and INSEE data may be used
-    at all, and this page is where it is credited.
-    """
+    """The data sources are credited, as the Licence Ouverte requires."""
     page = client.get("/mentions-legales").text
     for source in ("Assemblée nationale", "information légale et administrative", "INSEE"):
         assert source in page
@@ -292,7 +263,7 @@ def test_robots_points_at_the_sitemap(client):
 
 
 def test_the_share_card_is_declared_with_an_absolute_url(client):
-    """Open Graph ignores a relative image URL."""
+    """og:image is an absolute URL (relative ones are ignored)."""
     page = client.get("/").text
     assert 'property="og:image" content="http://testserver/static/og.png?v=' in page
     assert 'name="twitter:card" content="summary_large_image"' in page
@@ -315,16 +286,10 @@ def test_the_share_card_exists_and_is_the_right_size(client):
 
 
 def _stylesheet_selectors() -> list[str]:
-    """The top-level selectors of styles.css, read the way a browser reads them.
+    """Top-level selectors of styles.css, as a browser would parse them.
 
-    A browser does not parse CSS declaration by declaration: it takes everything
-    up to the next ``{`` as a selector, whatever that text happens to be. So a
-    rule that loses its selector — the residue of a deleted component — does not
-    fail loudly. Its orphaned declarations are silently glued onto the *next*
-    rule's selector, and that next rule is the one that disappears.
-
-    This returns what the browser would end up with, so the two assertions below
-    can be about that rather than about the source text.
+    Everything up to the next ``{`` is the selector, so orphaned declarations
+    end up glued to the next rule's selector.
     """
     from app.templating import STATIC_DIR
 
@@ -349,18 +314,9 @@ def _stylesheet_selectors() -> list[str]:
 
 
 def test_no_rule_in_the_stylesheet_has_lost_its_selector():
-    """Deleting a component must take its whole rule, braces included.
+    """No selector contains a ";" or "}" (leftover declarations).
 
-    Removing « les réserves » once left two declaration bodies and their closing
-    braces behind with no selector in front of them. Nothing failed: ruff does
-    not read CSS, no Python test touches it, and the page still rendered. What it
-    cost was the rule that happened to come next — the site-wide
-    ``:focus-visible`` ring, swallowed into an unusable selector and dropped, so
-    the whole site quietly lost its keyboard focus outline.
-
-    A stray declaration always shows up here as a selector carrying a ``;`` or a
-    ``}``, because that is exactly what the browser scooped up on its way to the
-    next ``{``.
+    This once silently broke the :focus-visible rule that followed.
     """
     for selector in _stylesheet_selectors():
         assert ";" not in selector and "}" not in selector, (
@@ -370,27 +326,22 @@ def test_no_rule_in_the_stylesheet_has_lost_its_selector():
 
 
 def test_the_keyboard_focus_ring_survives_parsing():
-    """The rule the orphaned declarations above happened to swallow.
-
-    Named on its own because the check above proves the file parses, not that
-    this particular rule is still in it — and this is the one whose loss nothing
-    else would report: a missing focus ring looks like the browser's default.
-    """
+    """The :focus-visible rule is present after parsing."""
     assert ":focus-visible" in _stylesheet_selectors()
 
 
-# --- « Ce que ça change en pratique » : replié plutôt que raccourci ------------
+# --- "Ce que ça change en pratique": folded rather than shortened -------------
 
 
 def _practical(n: int) -> str:
-    """A block addressing `n` publics, in the order the drafting prompt asks for."""
+    """A block with `n` audiences."""
     return "\n\n".join(
         f"Si vous êtes public numéro {i}, voici ce qui change." for i in range(1, n + 1)
     )
 
 
 def test_a_short_practical_block_is_shown_whole(client, db_session):
-    """Folding two paragraphs behind a click asks the reader to work for nothing."""
+    """A short block isn't folded."""
     law = make_law(db_session, slug="loi-courte", practical_changes=_practical(6))
     page = client.get(f"/loi/{law.slug}").text
     assert "public numéro 6" in page
@@ -399,14 +350,7 @@ def test_a_short_practical_block_is_shown_whole(client, db_session):
 
 
 def test_a_long_practical_block_keeps_the_broadest_publics_in_view(client, db_session):
-    """The wall this replaces: twenty publics, all of them above the fold.
-
-    A law amending sixty articles across one sector genuinely concerns that many
-    people, and the charter forbids choosing which of them goes unmentioned — so
-    the block cannot be made shorter by dropping anyone. It can stop being a wall.
-    The prompt orders the publics most-concerned-first, which is what makes taking
-    the first few from the top a principled cut rather than an arbitrary one.
-    """
+    """A long block shows the first (largest) audiences and folds the rest."""
     law = make_law(db_session, slug="loi-longue", practical_changes=_practical(20))
     page = client.get(f"/loi/{law.slug}").text
 
@@ -416,12 +360,7 @@ def test_a_long_practical_block_keeps_the_broadest_publics_in_view(client, db_se
 
 
 def test_nothing_is_dropped_by_the_fold(client, db_session):
-    """The whole basis on which folding is allowed at all.
-
-    Shortening the block would mean deciding whose situation goes unmentioned,
-    which is the one editorial act this platform exists not to make. Folding is
-    only defensible because every paragraph is still on the page.
-    """
+    """Every paragraph is still on the page."""
     law = make_law(db_session, slug="loi-repliee", practical_changes=_practical(20))
     page = client.get(f"/loi/{law.slug}").text
     for i in range(1, 21):
@@ -429,7 +368,7 @@ def test_nothing_is_dropped_by_the_fold(client, db_session):
 
 
 def test_the_fold_needs_no_javascript(client, db_session):
-    """`<details>` and not a script: the public side works with JS switched off."""
+    """The fold uses `<details>`, no JavaScript."""
     law = make_law(db_session, slug="loi-sans-js", practical_changes=_practical(20))
     page = client.get(f"/loi/{law.slug}").text
     start = page.index('<details class="more-audiences">')
@@ -439,21 +378,14 @@ def test_the_fold_needs_no_javascript(client, db_session):
 
 
 def _labelled(n: int) -> str:
-    """A block of `n` publics written in the shape the drafting prompt asks for."""
+    """A block with `n` labelled audiences."""
     return "\n\n".join(
         f"Pour le public {i} : voici ce qui change pour vous." for i in range(1, n + 1)
     )
 
 
 def test_labelled_publics_become_rows_and_none_is_hidden(client, db_session):
-    """The fold by count exists because a wall of prose cannot be scanned.
-
-    Once each paragraph carries the public it addresses, the wall is gone: every
-    public is named on the page, in one row, and the reader opens the one that is
-    theirs. Nothing sits behind « N autres publics concernés » any more — which is
-    the charter's own preference, since that counter was the last place where the
-    narrower publics were less visible than the broad ones.
-    """
+    """Labelled audiences become rows, all visible."""
     law = make_law(db_session, slug="loi-etiquetee", practical_changes=_labelled(12))
     page = client.get(f"/loi/{law.slug}").text
 
@@ -465,13 +397,7 @@ def test_labelled_publics_become_rows_and_none_is_hidden(client, db_session):
 
 
 def test_a_paragraph_without_a_label_stays_visible_among_the_rows(client, db_session):
-    """No label is ever invented, and the failure is left where a reviewer sees it.
-
-    A wrong label is worse than none: it would tell a reader « this one is not
-    about you » on the platform's authority. So the paragraph renders plainly, in
-    place, and looks different from its neighbours — which is how the person who
-    validates the law before publication finds out the drafting slipped.
-    """
+    """A paragraph without a label is shown as plain text among the rows."""
     law = make_law(
         db_session,
         slug="loi-mixte",
@@ -485,13 +411,12 @@ def test_a_paragraph_without_a_label_stays_visible_among_the_rows(client, db_ses
     assert page.count('<details class="public">') == 2
     assert "Si vous êtes locataire, propriétaire ou occupant" in page, "rien n'est perdu"
     assert "<summary>Si vous êtes locataire" not in page, "pas d'étiquette inventée"
-    # Two rows above a block that addresses three publics: the count would be wrong,
-    # so it is not published at all rather than published short.
+    # No audience count shown, since it would be wrong.
     assert "publics concernés" not in page
 
 
 def test_the_rows_need_no_javascript(client, db_session):
-    """`<details>`, like every other fold on this page."""
+    """The rows use `<details>`, no JavaScript."""
     law = make_law(db_session, slug="loi-lignes-sans-js", practical_changes=_labelled(6))
     page = client.get(f"/loi/{law.slug}").text
     start = page.index('<details class="public">')
@@ -501,10 +426,7 @@ def test_the_rows_need_no_javascript(client, db_session):
 
 
 def test_the_ballot_can_be_reached_from_the_top_of_the_page(client, db_session):
-    """A reader arriving from a shared link already knowing what they think.
-
-    The presentation stays the page — the link skips it, it does not shorten it.
-    """
+    """A link at the top jumps to the ballot."""
     law = make_law(db_session, slug="loi-ancre", practical_changes=_labelled(4))
     page = client.get(f"/loi/{law.slug}").text
     assert 'href="#voter"' in page
@@ -513,7 +435,7 @@ def test_the_ballot_can_be_reached_from_the_top_of_the_page(client, db_session):
 
 
 def test_what_the_law_says_folds_only_when_the_encart_carries_the_opening(client, db_session):
-    """Folding it on a one-paragraph summary would hide the only summary there is."""
+    """The summary isn't folded when it has a single paragraph."""
     long_law = make_law(
         db_session, slug="loi-deux-paras", summary_text="Premier.\n\nSecond paragraphe."
     )
@@ -526,7 +448,7 @@ def test_what_the_law_says_folds_only_when_the_encart_carries_the_opening(client
     assert "Tout tient ici." in plain
 
 
-# --- L'ordre de la page d'accueil ---------------------------------------------
+# --- Home page order ------------------------------------------------------------
 
 
 def _dated(db_session, slug, day, **kw):
@@ -542,13 +464,7 @@ def _dated(db_session, slug, day, **kw):
 
 
 def test_the_home_page_is_ordered_by_promulgation_not_by_data_entry(client, db_session):
-    """It used to be ordered by `created_at` — when the administrator pressed save.
-
-    Three laws entered in one evening therefore appeared in the order they were
-    typed, which is a fact about somebody's working schedule and not about the
-    legislation. The promulgation date was on the page all along, but only inside
-    `official_ref` as prose, where it could be printed and never sorted on.
-    """
+    """The home page is sorted by promulgation date, not by created_at."""
     _dated(db_session, "ancienne", "2026-01-15")
     _dated(db_session, "recente", "2026-08-20")
     _dated(db_session, "moyenne", "2026-04-02")
@@ -559,11 +475,7 @@ def test_the_home_page_is_ordered_by_promulgation_not_by_data_entry(client, db_s
 
 
 def test_a_law_with_no_promulgation_date_does_not_open_the_site(client, db_session):
-    """Postgres sorts nulls *first* descending, so this needs saying explicitly.
-
-    A law written by hand has no staged row and therefore no date. Without NULLS
-    LAST it would outrank every dated law and head the home page.
-    """
+    """A law without a date comes last (Postgres puts nulls first by default)."""
     _dated(db_session, "datee", "2026-03-01")
     _dated(db_session, "sans-date", None)
 
@@ -572,29 +484,25 @@ def test_a_law_with_no_promulgation_date_does_not_open_the_site(client, db_sessi
 
 
 def test_the_cards_carry_the_date_the_page_is_ordered_by(client, db_session):
-    """An order the reader cannot see reads as no order at all."""
+    """Cards show the promulgation date."""
     _dated(db_session, "loi-datee", "2026-06-24")
     page = client.get("/").text
     assert "Promulguée le 24 juin 2026" in page
 
 
 def test_the_cards_show_participation(client, db_session, open_law):
-    """Shown, and deliberately not sorted on — see the ordering test above."""
+    """Cards show participation (but aren't sorted by it)."""
     assert "Aucun vote" in client.get("/").text
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
     page = client.get("/").text
     assert "1 vote" in page and "1 votes" not in page
 
 
-# --- Les bandes ----------------------------------------------------------------
+# --- Home page sections -------------------------------------------------------
 
 
 def test_one_band_renders_as_a_plain_list(client, db_session):
-    """What launch looks like: a year-long window puts every votation in one band.
-
-    The grouping must not announce itself before it has anything to group — a
-    heading over the only section on the page is a line that says nothing.
-    """
+    """A single section is shown without a heading."""
     _dated(db_session, "ouverte-a", "2026-08-01")
     _dated(db_session, "ouverte-b", "2026-07-01")
     page = client.get("/").text
@@ -604,17 +512,9 @@ def test_one_band_renders_as_a_plain_list(client, db_session):
 
 
 def test_an_open_votation_is_never_crowded_out_by_closed_ones(client, db_session):
-    """The band limit is per band, and this is why it has to be.
+    """The limit applies per section, so closed laws can't push out open ones.
 
-    The page used to take the fifty most recently promulgated laws and group them
-    afterwards. That is one query instead of three, and it means that once fifty
-    laws are published, an open votation promulgated before the newest fifty
-    simply is not on the home page — not even under « Votations ouvertes », the
-    one band a visitor has something to do with. Fifty closed ones would be.
-
-    Asserted with a limit of two rather than fifty: the bug is about the limit
-    being reached, and reaching the real one takes fifty laws to say what three
-    say just as well.
+    Uses a limit of two instead of fifty to keep the test small.
     """
     from datetime import UTC, datetime, timedelta
 
@@ -622,7 +522,7 @@ def test_an_open_votation_is_never_crowded_out_by_closed_ones(client, db_session
 
     now = datetime.now(UTC)
     closed = {"opens_at": now - timedelta(days=30), "closes_at": now - timedelta(days=1)}
-    # Two recent closed votations, and one open one promulgated long before them.
+    # Two recent closed laws, and an older open one.
     _dated(db_session, "close-recent-a", "2026-08-20", **closed)
     _dated(db_session, "close-recent-b", "2026-08-19", **closed)
     _dated(
@@ -641,13 +541,9 @@ def test_an_open_votation_is_never_crowded_out_by_closed_ones(client, db_session
 
 
 def test_a_law_appears_in_exactly_one_band(client, db_session):
-    """Three queries, one instant — or a votation can be listed twice.
+    """A law appears in exactly one section, even if it closes right now.
 
-    The bands are derived from the voting window, so they partition the laws only
-    if all three are decided against the same "now". Three queries each reading
-    the clock would put a votation closing between the first and the third into
-    both « ouvertes » and « closes ». This pins the case that is easiest to get
-    wrong: a window that ends at this very moment.
+    The three queries share the same "now".
     """
     from datetime import UTC, datetime, timedelta
 
@@ -667,7 +563,7 @@ def test_a_law_appears_in_exactly_one_band(client, db_session):
 
 
 def test_several_bands_are_titled_and_ordered_by_what_you_can_do(client, db_session):
-    """Vote first, then what is coming, then what is decided."""
+    """Sections in order: open, upcoming, closed."""
     from datetime import UTC, datetime, timedelta
 
     now = datetime.now(UTC)
@@ -701,25 +597,22 @@ def test_several_bands_are_titled_and_ordered_by_what_you_can_do(client, db_sess
         < page.index("Bientôt ouvertes")
         < page.index("Votations closes")
     )
-    # And a law sits under its own band, not merely somewhere on the page.
+    # Each law is under its own section.
     assert page.index("Votations ouvertes") < page.index("/loi/ouverte") < page.index("Bientôt")
 
 
-# --- Découpe du texte d'une loi -------------------------------------------------
+# --- Splitting a law's text --------------------------------------------------
 
 
 def test_a_paragraph_that_is_not_addressed_to_anyone_is_left_alone():
-    """The filter has to be safe on prose that was not written in that shape."""
+    """Plain prose isn't split."""
     from app.templating import audience_split
 
     assert audience_split("Pour les employeurs : vous devez déclarer.") == (
         "Pour les employeurs",
         "vous devez déclarer.",
     )
-    # A public that covers several situations keeps its commas. This is what the
-    # comma used to cost: « Pour les établissements de santé, EHPAD et services
-    # médico-sociaux » is a public somebody recognises themselves in, and it was
-    # being rendered as prose in the middle of a list of rows.
+    # Labels may contain commas.
     enumeration = "Pour les établissements de santé, EHPAD et services médico-sociaux"
     assert audience_split(f"{enumeration} : vous ne pouvez pas vous y opposer.") == (
         enumeration,
@@ -741,15 +634,7 @@ def test_a_paragraph_that_is_not_addressed_to_anyone_is_left_alone():
 
 
 def test_a_long_public_is_still_a_public():
-    """The bound was set on a guess and the guess was measured to be wrong.
-
-    « Real labels run to twenty or thirty characters » was the reasoning behind the
-    original 45. Against the laws actually drafted, punctuation-free labels run to
-    55, and these three — all from the loi de programmation militaire — were being
-    dropped for length alone. None of them can be shortened without naming the
-    institution instead of the reader, and « a public is how somebody describes
-    themselves » is the rule the whole block is organised on.
-    """
+    """Real labels can be up to 55 characters (these come from the LPM)."""
     from app.templating import MAX_AUDIENCE_CHARS, audience_split
 
     for label in (
@@ -761,7 +646,7 @@ def test_a_long_public_is_still_a_public():
         assert audience_split(f"{label} : ce qui change.") == (label, "ce qui change."), label
         assert len(label) <= MAX_AUDIENCE_CHARS
 
-    # The bound is still a bound: a clause with no punctuation is not a label.
+    # A long clause without punctuation still isn't a label.
     clause = (
         "Les personnes qui exploitent une installation classée pour la "
         "protection de l'environnement"

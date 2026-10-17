@@ -1,36 +1,8 @@
-"""What each page says about itself, in schema.org's vocabulary.
+"""schema.org structured data (JSON-LD) for each page.
 
-Structured data is not a ranking trick and is not sold as one here. It changes
-how a result is *displayed*, and it makes a page eligible for particular
-surfaces — a breadcrumb line instead of a bare URL, and, for the open-data
-exports, Google Dataset Search, which is a real audience for this project and
-the one place a search engine can send somebody who wants the raw figures.
-
-Three things follow from the charter and shape everything below.
-
-**Nothing is asserted here that the page does not already show.** Every value is
-read off the law: its title, its official reference, the day Parliament acted,
-the link to the official text. Marking up something a reader cannot see is what
-search engines call spam and what this platform would call lying.
-
-**No licence is claimed.** The footer says the data is published « en accès
-libre », and that is not the same thing as naming a licence. A `Dataset` without
-a `license` is simply a dataset whose terms are unstated; one carrying a licence
-nobody chose would be a legal claim invented by a template. Worth deciding —
-Licence Ouverte would be the obvious fit, given that is what the Assemblée
-nationale and the DILA publish under — and worth deciding on purpose.
-
-**It is emitted as JSON-LD, which the Content-Security-Policy allows.** That is
-not an accident of configuration: `script-src 'self'` blocks inline *scripts*,
-and a `<script type="application/ld+json">` is a data block that no browser
-executes. Verified rather than assumed — under this exact policy a real inline
-script is refused while these blocks are read normally, with no violation
-reported. So the site's structured data costs nothing in security posture, and
-the CSP must not be loosened for it.
-
-The dicts built here are rendered with Jinja's ``tojson``, which escapes ``<``,
-``>``, ``&`` and ``'`` as unicode sequences — the reason a law title can be
-dropped into a ``<script>`` block without a way out of it.
+Only states what the page already shows. No licence is declared, since none
+has been chosen yet. JSON-LD blocks aren't executed, so the CSP doesn't need
+to change. Rendered with Jinja's ``tojson``, which escapes ``<`` and ``>``.
 """
 
 from __future__ import annotations
@@ -41,19 +13,15 @@ from app.labels import local_day
 from app.models import Law
 from app.security import safe_url
 
-#: What the site calls itself wherever it has to name itself.
 SITE_NAME = "Votations Françaises"
 
-#: Everything here is written and read in French.
 LANGUAGE = "fr-FR"
 
-#: How much of a summary is worth giving a search engine as a description. Well
-#: under what any of them display, and enough to be a sentence rather than a cut.
 _DESCRIPTION_CHARS = 300
 
 
 def _trimmed(text: str | None, limit: int = _DESCRIPTION_CHARS) -> str:
-    """The first ``limit`` characters of a block, cut on a word."""
+    """Truncate to ``limit`` characters on a word boundary."""
     cleaned = " ".join((text or "").split())
     if len(cleaned) <= limit:
         return cleaned
@@ -61,23 +29,12 @@ def _trimmed(text: str | None, limit: int = _DESCRIPTION_CHARS) -> str:
 
 
 def _pruned(node: dict[str, Any]) -> dict[str, Any]:
-    """Drop the keys with nothing behind them.
-
-    A law written by hand has no promulgation date and may have no official
-    reference; a `"legislationDate": null` is worse than an absent one, because
-    it states that the value is known to be nothing.
-    """
+    """Drop empty values rather than emit nulls."""
     return {key: value for key, value in node.items() if value not in (None, "", [], {})}
 
 
 def website(origin: str, *, description: str) -> dict:
-    """The site itself, and where to send a query typed at a search engine.
-
-    The ``SearchAction`` names `/recherche` as the place a search goes. That page
-    is `noindex` — deliberately, it is an unbounded space of thin pages — and the
-    two are not in tension: this describes where to send a *person*, not a page
-    to rank.
-    """
+    """The site, with a SearchAction pointing to /recherche."""
     return {
         "@type": "WebSite",
         "@id": f"{origin}/#site",
@@ -97,7 +54,7 @@ def website(origin: str, *, description: str) -> dict:
 
 
 def breadcrumb(origin: str, trail: list[tuple[str, str]]) -> dict:
-    """A trail of (label, path) pairs, as the crumb line shown under a result."""
+    """Breadcrumb from (label, path) pairs."""
     return {
         "@type": "BreadcrumbList",
         "itemListElement": [
@@ -108,25 +65,9 @@ def breadcrumb(origin: str, trail: list[tuple[str, str]]) -> dict:
 
 
 def legislation(origin: str, law: Law) -> dict:
-    """One law, as the thing it is rather than as a page that mentions it.
+    """A law as a schema.org `Legislation`, linked to Légifrance via ``sameAs``.
 
-    `Legislation` is a real schema.org type with properties that map onto exactly
-    what the Journal Officiel publishes and what the staged import already
-    stores — the number, the day of promulgation, the jurisdiction, the chamber
-    that passed it. This site had all of it and was saying none of it.
-
-    ``sameAs`` points at the official text on Légifrance: the same law, published
-    by the authority that publishes laws. It is the single most useful statement
-    in this block, because it ties a page nobody has heard of to a document
-    everybody trusts.
-
-    It goes through :func:`~app.security.safe_url` first, and that is not
-    belt-and-braces — the first version of this function did not, and
-    `test_a_stored_javascript_url_still_never_renders` failed on it immediately.
-    The template renders every href through the `safe_href` filter precisely
-    because a row can predate the admin form's check; a second place that reads
-    the same column has to make the same check, or the sanitising becomes a
-    property of one template rather than of the value.
+    The URL goes through `safe_url`, like every href in the templates.
     """
     return _pruned(
         {
@@ -146,22 +87,9 @@ def legislation(origin: str, law: Law) -> dict:
 
 
 def legislation_ref(origin: str, law: Law) -> dict:
-    """The same law, named only — for a page that talks *about* it.
+    """A minimal reference to the law, for the results page.
 
-    The results page shows a votation's figures, not the law's presentation: its
-    title is there, and a link, and nothing else. Emitting the full node from
-    :func:`legislation` there put « Ce que dit la loi » into the markup of a page
-    that does not display it, which breaks the rule this module opens with and is
-    what search engines mean by hidden content.
-
-    It broke something sharper too, and that is how it was caught rather than
-    reasoned about: the summary is also the newest value in the modification
-    history, so page *two* of that history suddenly carried page one's content —
-    `test_a_long_history_is_paginated_rather_than_shipped_whole` failed on the
-    spot. A public page had started shipping what pagination exists to withhold.
-
-    What is left is an identity: enough for the dataset's ``about`` to resolve
-    inside the document, and every word of it visible on the page.
+    The results page doesn't show the summary, so it mustn't be in its markup.
     """
     return {
         "@type": "Legislation",
@@ -172,26 +100,10 @@ def legislation_ref(origin: str, law: Law) -> dict:
 
 
 def votation_dataset(origin: str, law: Law) -> dict:
-    """The open-data export of one votation, as a dataset.
+    """A votation's open data export as a `Dataset` (for Google Dataset Search).
 
-    The charter's promise is that the raw figures are downloadable and checkable
-    by anybody; this is that promise written where a machine looking for datasets
-    can find it. The two distributions are the same two files the page offers.
-
-    No `license` — see the module docstring. `isAccessibleForFree` is a fact
-    about this deployment and is safe to state; a licence is a decision.
-
-    **The two `contentUrl`s are `Disallow`ed in robots.txt, and that is not the
-    contradiction it looks like.** `app.routes.public.pages.sitemap` refuses to
-    list `/recherche` precisely because asking for a page to be indexed while the
-    page itself says `noindex` is a contradiction search engines report as an
-    error. This is a different statement: a `DataDownload` says *where the data
-    is*, for a person or a client that wants it, and Dataset Search indexes this
-    markup rather than fetching the files. The `Disallow` says only that a crawler
-    walking the site should not pull a full scan of every votation's votes, which
-    is what the per-address rate limit and the concurrency cap exist to bound in
-    the first place. Both remain true at once, and the files remain one click away
-    on the page this node points at.
+    The export URLs are disallowed in robots.txt so crawlers don't download
+    them. Dataset Search reads this markup and doesn't need to fetch the files.
     """
     page = f"{origin}/loi/{law.slug}/resultats"
     return _pruned(
@@ -199,7 +111,7 @@ def votation_dataset(origin: str, law: Law) -> dict:
             "@type": "Dataset",
             "@id": f"{page}#donnees",
             "url": page,
-            "name": f"Votation citoyenne sur « {law.title} » — résultats bruts",
+            "name": f"Votation citoyenne sur « {law.title} » : résultats bruts",
             "description": (
                 "Résultats anonymisés de la votation citoyenne organisée sur cette loi : "
                 "une ligne par vote, sans aucun identifiant de votant·e. "
@@ -227,16 +139,9 @@ def votation_dataset(origin: str, law: Law) -> dict:
 
 
 def _coverage(law: Law) -> str:
-    """The voting window as an ISO 8601 interval, or "" if it is not bounded.
+    """Voting window as an ISO 8601 interval ("start/" if open-ended), or "".
 
-    Schema.org's open-ended form is a trailing slash — « opened on this day and
-    still running » — which is exactly what an open votation is.
-
-    Both ends go through :func:`~app.labels.local_day`, like every other date this
-    site publishes. ``.date()`` on the stored instant gives the *UTC* day, so a
-    votation opening at 00:30 Paris was declared to a search engine as having
-    opened the day before — the same off-by-one the home page's cards learned the
-    hard way, on a value nobody would ever have looked at.
+    Dates go through `local_day` to get the Paris day, not the UTC day.
     """
     if not law.opens_at:
         return ""
@@ -245,10 +150,5 @@ def _coverage(law: Law) -> str:
 
 
 def graph(*nodes: dict) -> dict:
-    """The nodes of one page, in the single block that page emits.
-
-    One `<script>` per page rather than one per node: the nodes reference each
-    other by `@id` (a dataset is `about` a law), and a search engine resolves
-    those references within a document.
-    """
+    """All of a page's nodes in one block, so @id references resolve."""
     return {"@context": "https://schema.org", "@graph": list(nodes)}

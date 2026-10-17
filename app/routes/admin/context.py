@@ -1,8 +1,4 @@
-"""Assembling the context for ``admin/law_form.html``.
-
-The template serves creation, editing and drafting; building its context in one
-place is what keeps those three call sites from drifting apart.
-"""
+"""Context for ``admin/law_form.html`` (creation, editing and drafting)."""
 
 from __future__ import annotations
 
@@ -35,10 +31,10 @@ def form_values(
     typed: dict | None = None,
     eli_url: str = "",
 ) -> dict:
-    """What each field of the law form should show.
+    """Values for each field of the law form.
 
-    Precedence is always: what the admin typed, then an AI draft, then the staged
-    import, then empty — so regenerating a draft never discards edits in progress.
+    Priority: what the admin typed, then the AI draft, then the staged import.
+    Regenerating a draft never discards edits in progress.
     """
     typed = {k: v for k, v in (typed or {}).items() if v not in (None, "", [])}
     if law is not None:
@@ -56,11 +52,7 @@ def form_values(
             "closes_at": dt_local(law.closes_at),
             "published": law.published,
         }
-        # Editing a law and explicitly asking to see the draft: the four written
-        # blocks come from the draft, everything else stays the law's own. The
-        # draft has nothing to say about a title, a voting window or a
-        # publication flag, and overwriting those with blanks would turn "show me
-        # the draft" into "lose my schedule".
+        # Showing the draft on an existing law: only the text blocks change.
         if draft is not None:
             base["summary_text"] = draft.summary_text
             base["practical_changes"] = draft.practical_changes
@@ -72,15 +64,13 @@ def form_values(
         base = {
             "title": prefill.title if prefill else "",
             "official_ref": official_ref(prefill) if prefill else "",
-            # The Journal Officiel's ELI link outlives the one the AN publishes.
+            # The JO's ELI link is more durable than the AN's.
             "legifrance_url": eli_url or (prefill.legifrance_url if prefill else "") or "",
             "summary_text": draft.summary_text if draft else "",
             "practical_changes": draft.practical_changes if draft else "",
             "arguments_for": arguments.pour if arguments else [],
             "arguments_against": arguments.contre if arguments else [],
             "debate_summary": arguments.sujet_debat if arguments else "",
-            # The staged row already knows it; nobody should retype what the
-            # daily import fetched from the Assemblée nationale.
             "promulgated_on": day_value(prefill.promulgated_on) if prefill else "",
             "opens_at": "",
             "closes_at": "",
@@ -91,22 +81,9 @@ def form_values(
 
 
 def draft_state_context(item: ImportedLaw | None) -> dict:
-    """What ``admin/_draft_state.html`` needs — for both pages that show it.
+    """Context for ``admin/_draft_state.html``.
 
-    The three booleans are decided here rather than by comparing ``draft_status``
-    against string literals in the template. The values are ``DRAFT_PENDING`` and
-    its siblings; a template that spells « en_cours » out is a copy of a constant
-    that no test reads and no rename would follow, and what breaks when they
-    drift is the polling banner — the one piece of the page whose entire job is
-    to say what happened.
-
-    ``draft_item`` rather than ``item`` because the law form has a ``prefill``
-    and no ``item``: naming the partial's own variable lets both callers spread
-    this into their context and include the partial with no ``{% with %}``
-    re-deriving anything.
-
-    ``None`` is a real argument here — the creation form renders before any
-    dossier is chosen — and reads as "nothing is being drafted".
+    ``item`` is None on the creation form before a dossier is chosen.
     """
     status = item.draft_status if item is not None else DRAFT_IDLE
     return {
@@ -168,16 +145,11 @@ def law_form_context(
         "drafted_at": prefill.drafted_at if prefill else None,
         "argument_notes": list(notes or []),
         "has_draft": bool(prefill and prefill.draft),
-        # True when the fields below are showing the draft rather than what is
-        # stored, so the page can say so — nothing is written until « Enregistrer ».
+        # The fields show the draft, not the saved values.
         "draft_loaded": law is not None and draft is not None,
-        # Everything the status banner needs, built the same way as on the pages
-        # that poll for it. See :func:`draft_state_context`.
         **draft_state_context(prefill),
         "ai_enabled": bool(prefill) and bool(get_settings().anthropic_api_key),
         "revisions": list(revisions or []),
-        # How many exist in all, against how many are shown: the form displays
-        # only the most recent page, and saying so beats a table that silently
-        # stops.
+        # The form only shows the latest ones.
         "revision_total": revision_total,
     }

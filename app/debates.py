@@ -1,41 +1,16 @@
-"""Attributed speeches from Assemblée nationale sitting records.
+"""Attributed speeches from the Assemblée nationale sitting records.
 
-Given the sittings recorded on a dossier, fetch the comptes rendus and return the
-speeches where positions are actually stated — presentation, motions, discussion
-générale, explications de vote — each carrying the speaker's name and a link back
-to the record.
+For each sitting of a dossier, fetch the réunion (~2 kB) then the compte rendu
+(~600 kB) and keep the speeches where positions are argued (presentation,
+motions, discussion générale, explications de vote). Speeches without an
+identifiable speaker are dropped.
 
-This exists to source the two argument blocks of a law's presentation. The
-charter requires arguments to be attributed, so a speech with no identifiable
-speaker is dropped rather than kept anonymously.
+A sitting can cover several bills. The agenda item is matched to a record
+point by subject, not by position: the two numberings often differ (on
+5 May 2026 the LPM was agenda item 7 and record point 5).
 
-Design notes:
-- The HTTP getter is injectable so the parsing is unit-testable offline.
-- Two small fetches per sitting: the réunion (~2 kB) names its compte rendu and
-  its agenda, then the compte rendu (~600 kB) carries the speeches. No corpus
-  download and nothing stored.
-- A sitting can debate several bills, so finding *ours* in the record is the
-  whole difficulty. The dossier's ``odj_ref`` names our agenda item; the compte
-  rendu tags every paragraph with a ``valeur_ptsodj``, and its ``sommaire`` says
-  which subject each of those numbers covers. We match our agenda item to a
-  record point **by subject**, and read only that point.
-
-  It used to match by *position* — the rank of our item in the réunion's agenda,
-  assumed equal to ``valeur_ptsodj``. That assumption is simply false, and
-  silently so in both directions. The two numbering schemes disagree whenever the
-  agenda carries something the record does not number the same way, which is
-  most sittings: on 5 May 2026 the loi de programmation militaire was agenda item
-  7 and record point 5, and the record's only argued section, number 4, was
-  « Lutte contre les fraudes sociales et fiscales » — a different bill, which the
-  old rule was one coincidence away from quoting. Matching on the subject drops
-  that risk and finds the speeches the position missed.
-
-- Some texts are debated **jointly** — « discussion générale commune » — and the
-  record then covers several agenda items under one number and one title, so no
-  subject matches ours. Those speeches are kept rather than lost, and every one
-  of them is marked :attr:`Speech.joint_debate` so the draft can warn that the
-  passages may concern a neighbouring text too. That is a deliberate trade: the
-  alternative was a law with twenty sittings and no arguments at all.
+In a joint debate ("discussion générale commune") no subject matches, so those
+speeches are kept but flagged `joint_debate`, and the draft warns about them.
 """
 
 from __future__ import annotations
@@ -56,37 +31,24 @@ log = get_logger("debates")
 OPENDATA_URL = "https://www.assemblee-nationale.fr/dyn/opendata/{uid}.json"
 SEANCE_URL = "https://www.assemblee-nationale.fr/dyn/{legislature}/comptes-rendus/seance/{uid}"
 
-#: Where the legislature sits inside the Assemblée's export URLs, e.g.
-#: ``…/repository/17/loi/dossiers_legislatifs/…``.
+# e.g. ".../repository/17/loi/dossiers_legislatifs/..."
 _LEGISLATURE_IN_URL = re.compile(r"/repository/(\d+)/")
 
 
 def configured_legislature() -> str:
-    """The legislature this deployment's import is pointed at, or "".
+    """The legislature number, read from ``AN_DOSSIERS_URL``, or "".
 
-    Read off ``AN_DOSSIERS_URL`` rather than held as a constant here. It was
-    ``DEFAULT_LEGISLATURE = "17"``, a third copy of a number that also sits inside
-    the two export URLs in `app.config` — and the copy an operator would never
-    see. The number changes once per legislature; correcting the two settings in
-    `.env` used to leave this one saying 17, and the only thing that reads it
-    builds the ``source`` href of a published argument. A link into the previous
-    legislature's URL space, on the one field whose promise is that a reader can
-    follow it and check the quote.
-
-    Empty when the URL is not shaped like the Assemblée's, which is a
-    misconfiguration rather than a legislature nobody thought of — and the caller
-    then publishes no link at all rather than a wrong one.
+    Used to build source links. Empty means no link rather than a wrong one.
     """
     match = _LEGISLATURE_IN_URL.search(get_settings().an_dossiers_url)
     return match.group(1) if match else ""
 
 
-# Agenda-item sections where members argue for or against the text as a whole.
-# Everything else — amendment-by-amendment discussion, points of order, voting
-# mechanics — is high volume and low argumentative content.
+# Sections where the text as a whole is argued. Amendment discussions, points
+# of order etc. are long and say little.
 ARGUMENT_SECTIONS = (
     "PRESENTATION",  # rapporteur and government presenting the text
-    "MOTION",  # motion de rejet préalable / renvoi — argued against
+    "MOTION",  # motion de rejet préalable / renvoi, argued against
     "DISC_GENERALE",  # discussion générale
     "DISC_ARTICLES_1_2",  # explications de vote (despite the name)
 )
@@ -102,7 +64,7 @@ MIN_SPEECH_CHARS = 200
 
 
 class DebatesFetchError(RuntimeError):
-    """Raised on network or parse failure; callers fall back to no arguments."""
+    """Network or parse failure; callers carry on without arguments."""
 
 
 @dataclass
@@ -111,45 +73,38 @@ class Speech:
 
     speech_id: str  # stable within a request, referenced by the model
     speaker: str  # "Mme Louise Morel"
-    quality: str  # "ministre délégué…", "rapporteure", "" for a deputy
+    quality: str  # "ministre délégué...", "rapporteure", "" for a deputy
     chamber: str  # "Assemblée nationale"
     section: str  # "Discussion générale"
     spoken_on: date | None
     text: str
     url: str
-    #: True when the record debated this text jointly with another, so the
-    #: passage may be arguing about the neighbouring one. Never guessed: it is
-    #: set only where the record itself says « commune ».
+    # Joint debate with another text, so the passage may be about the other
+    # one. Only set when the record says "commune".
     joint_debate: bool = False
 
     @property
     def attribution(self) -> str:
-        """The author line stored on the argument, built from our data only."""
+        """Author line for the argument, built from our data only."""
         who = f"{self.speaker} ({self.quality})" if self.quality else self.speaker
         when = f", séance du {self.spoken_on:%d/%m/%Y}" if self.spoken_on else ""
         return f"{who}{when} · {self.chamber}"
 
 
-# A compte rendu runs to ~600 kB and a réunion to a couple of kilobytes; the
-# ceiling is well clear of both and bounds what a single sitting can cost us.
+# Well above a compte rendu (~600 kB).
 MAX_RECORD_BYTES = 32 * 1024 * 1024
 
-#: Per-operation socket timeout, not a bound on a whole download — see
-#: :func:`bounded_getter` for the caller that needs one.
+# Per socket operation, not per download (see `bounded_getter`).
 TIMEOUT = 60.0
 
 _default_getter = getter(timeout=TIMEOUT, max_bytes=MAX_RECORD_BYTES, error=DebatesFetchError)
 
 
 def bounded_getter(remaining: Callable[[], float]) -> Getter:
-    """The default getter, with every request held to the caller's own budget.
+    """A getter limited by the caller's time budget.
 
-    A text debated twenty times costs forty requests here, and the drafting job
-    reaches this step having already spent part of a budget it promises to keep.
-    A spent budget raises :class:`~app.opendata.DeadlineExceeded`, which
-    :func:`fetch_speeches` deliberately does *not* catch — unlike
-    ``DebatesFetchError``, which it treats as "skip this sitting" — so the loop
-    stops instead of walking the remaining sittings to fail on each of them.
+    DeadlineExceeded isn't caught by `fetch_speeches` (unlike
+    DebatesFetchError), so the loop stops when time runs out.
     """
     return getter(
         timeout=TIMEOUT,
@@ -164,39 +119,28 @@ def _as_text(node: object) -> str:
     return node.strip() if isinstance(node, str) else ""
 
 
-# What an Assemblée nationale identifier looks like: "RUANR5L17S2026PO861108N4",
-# "CRSANR5L17S2026IDS31234". Letters, digits, and nothing that means anything to
-# a URL.
+# e.g. "RUANR5L17S2026PO861108N4", "CRSANR5L17S2026IDS31234".
 _UID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 
 def _get_json(get: Getter, uid: str) -> dict:
-    """Fetch and decode one open-data document, by identifier.
+    """Fetch and decode an open data document by id.
 
-    The identifier is checked against what an identifier can look like before it
-    is put in a URL. It arrives from the government export by way of our own
-    staging table, so this is not a suspicion about the Assemblée nationale — it
-    is that a value which reaches an outbound request should be a value we
-    recognise, whatever the path it took to get here. A `../` in this position
-    would aim the fetch at another document on that host.
+    The id is validated before going into the URL (a "../" would point
+    elsewhere).
     """
     if not _UID_RE.match(uid):
         raise DebatesFetchError(f"identifiant de séance inattendu : {uid!r}")
     try:
         return json.loads(get(OPENDATA_URL.format(uid=uid)))
     except (ValueError, RecursionError) as exc:
-        # `RecursionError`, because it is not a `ValueError`: a document nested
-        # deeply enough exhausts the stack inside `json.loads` rather than failing
-        # to parse, and `_collect` below would do the same walking it. Uncaught it
-        # escaped as something no caller expects from a fetch — the sitting loop
-        # skips a `DebatesFetchError` and carries on, which is the right answer
-        # for a record that cannot be read, whatever the reason.
+        # RecursionError: a deeply nested document can overflow json.loads.
         raise DebatesFetchError(f"réponse illisible pour {uid} : {exc}") from exc
 
 
 def _agenda_subject(reunion: dict, odj_ref: str) -> str:
-    """What the réunion's agenda says our item is about, e.g. « Suite de la
-    discussion du projet de loi actualisant la programmation militaire… »."""
+    """The agenda's subject for our item, e.g. "Suite de la discussion du projet
+    de loi actualisant la programmation militaire"."""
     points = as_list(((reunion.get("ODJ") or {}).get("pointsODJ") or {}).get("pointODJ"))
     for point in points:
         if isinstance(point, dict) and point.get("uid") == odj_ref:
@@ -204,8 +148,7 @@ def _agenda_subject(reunion: dict, odj_ref: str) -> str:
     return ""
 
 
-#: Words that appear in every agenda line and every record title — the procedural
-#: scaffolding of a sitting — and therefore tell two texts apart not at all.
+# Words that appear in every agenda line and record title, ignored when matching.
 _BOILERPLATE = frozenset(
     # articles and prepositions
     {
@@ -259,13 +202,10 @@ _BOILERPLATE = frozenset(
 
 
 def _significant(label: str) -> set[str]:
-    """The words of a title that actually identify a subject.
+    """Meaningful words of a title, without accents or boilerplate.
 
-    Accents folded and boilerplate removed, so « Suite de la discussion du projet
-    de loi actualisant la programmation militaire » and « Actualisation de la
-    programmation militaire » meet on {programmation, militaire, …} — which is
-    the whole point, since the agenda and the record word the same subject
-    differently.
+    Lets "Suite de la discussion du projet de loi actualisant la programmation
+    militaire" match "Actualisation de la programmation militaire".
     """
     folded = unicodedata.normalize("NFKD", label or "").encode("ascii", "ignore").decode()
     return {
@@ -273,19 +213,16 @@ def _significant(label: str) -> set[str]:
     }
 
 
-#: How much of the shorter of the two titles they must share, and how many words
-#: at the very least, before we call it the same subject. Measured against the
-#: corpus: real matches score 0.83 to 1.00 and everything else scores 0.
+# Required overlap, relative to the shorter title. In practice real matches
+# score 0.83 to 1.00 and others 0.
 _SUBJECT_OVERLAP = 0.6
 _SUBJECT_MIN_WORDS = 2
 
 
 def _record_points(compte_rendu: dict) -> dict[str, str]:
-    """``valeur_ptsodj`` → the subject the record's own summary gives it.
+    """Map ``valeur_ptsodj`` to its title in the record's summary.
 
-    The only place the two documents can be joined on meaning rather than on
-    rank. The record carries no agenda identifier anywhere — checked, across the
-    whole corpus — so this summary is what there is.
+    The record has no agenda id, so the summary is the only way to join.
     """
     points: dict[str, str] = {}
     summary = ((compte_rendu.get("metadonnees") or {}).get("sommaire") or {}).get("sommaire1")
@@ -316,10 +253,8 @@ def _our_point(compte_rendu: dict, subject: str) -> str | None:
     return best if best_score >= _SUBJECT_OVERLAP else None
 
 
-#: How a compte rendu says several texts were taken together: « Discussion
-#: générale commune », « Présentation commune ». Across 62 records it appears on
-#: exactly the one joint debate and nowhere else, which is what makes it usable
-#: as a signal rather than a guess.
+# "Discussion générale commune", "Présentation commune": several texts debated
+# together. Only seen on actual joint debates across 62 records.
 _JOINT_SECTION = re.compile(r"commune?s?\b", re.IGNORECASE)
 
 
@@ -328,14 +263,14 @@ def _seance_date(compte_rendu: dict) -> date | None:
     if len(raw) < 8:
         return None
     try:
-        # A calendar date with no time of day: the zone would be meaningless.
+        # Date only, no time zone needed.
         return datetime.strptime(raw[:8], "%Y%m%d").date()  # noqa: DTZ007
     except ValueError:
         return None
 
 
 def _speech_sections(compte_rendu: dict) -> dict[str, str]:
-    """Agenda position → the argumentative section title found under it."""
+    """Map agenda position to its argumentative section title."""
     titles: dict[str, str] = {}
 
     def walk(point: dict) -> None:
@@ -356,7 +291,7 @@ def _speech_sections(compte_rendu: dict) -> dict[str, str]:
 
 
 def _collect(node: object, out: list[dict], section_stack: list[str]) -> None:
-    """Walk the record, tracking the innermost argumentative section title."""
+    """Walk the record, tracking the current argumentative section."""
     if isinstance(node, list):
         for item in node:
             _collect(item, out, section_stack)
@@ -369,7 +304,6 @@ def _collect(node: object, out: list[dict], section_stack: list[str]) -> None:
     pushed = False
     text = _as_text(node.get("texte"))
 
-    # A point that opens an argumentative section names it for everything below.
     if text and code.startswith(ARGUMENT_SECTIONS):
         section_stack.append(text)
         pushed = True
@@ -411,29 +345,22 @@ def _clean(text: str) -> str:
 
 
 def speeches_from_record(compte_rendu: dict, *, subject: str, url: str) -> list[Speech]:
-    """Extract the argued positions this record holds about ``subject``.
+    """Extract the speeches about ``subject`` (the agenda's wording for our text).
 
-    ``subject`` is the réunion agenda's wording for our text. Everything hangs on
-    locating it among the record's own points: read the wrong one and the
-    presentation ends up quoting a debate about another bill, under this law's
-    name, on the one page whose promise is that the quotes are real.
+    Picking the wrong record point would mean quoting a debate on another bill.
     """
     sections = _speech_sections(compte_rendu)
     wanted = _our_point(compte_rendu, subject)
 
     if wanted is None:
-        # Our subject is nowhere in the record's summary. Either the sitting did
-        # not discuss this text at all, or it discussed it *jointly* with
-        # another, under a title naming neither or both. Only the second case is
-        # recoverable, and only when the record says so itself.
+        # Not in the summary: either not discussed, or debated jointly under
+        # another title. Only the latter can be recovered.
         joint = [tag for tag, title in sections.items() if _JOINT_SECTION.search(title)]
         if len(joint) != 1:
             return []
         wanted = joint[0]
     elif wanted not in sections:
-        # Found, and argued nowhere: our text was on the agenda that day for a
-        # vote or a procedural step. Not a failure, and emphatically not a reason
-        # to reach for somebody else's discussion.
+        # On the agenda but not argued (just a vote or a procedural step).
         return []
 
     from_joint = bool(_JOINT_SECTION.search(sections[wanted]))
@@ -457,7 +384,7 @@ def speeches_from_record(compte_rendu: dict, *, subject: str, url: str) -> list[
             continue
         speaker, quality = _speaker(item["orateurs"])
         if not speaker or speaker.lower().endswith("le président"):
-            continue  # unattributable, or the chair running the sitting
+            continue  # no speaker, or the chair
         text = _clean(item["texte"])
         if len(text) < MIN_SPEECH_CHARS:
             continue
@@ -478,27 +405,16 @@ def speeches_from_record(compte_rendu: dict, *, subject: str, url: str) -> list[
 
 
 def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speech]:
-    """Fetch every argued speech about this text, across its sittings.
+    """Fetch the argued speeches about this text across all its sittings.
 
-    A sitting that cannot be read is skipped rather than fatal — a partial set of
-    arguments is useful, and the admin sees how many sittings were covered. A
-    :class:`~app.opendata.DeadlineExceeded` is *not* skipped: see
-    :func:`bounded_getter`.
+    Unreadable sittings are skipped. DeadlineExceeded is not (see
+    `bounded_getter`).
     """
     get = get or _default_getter
-    # A dossier's sittings are agenda *items*, and one sitting can carry two of
-    # them — so the same réunion, and the same ~600 kB compte rendu, were fetched
-    # once per item. Cached for the length of this call only: nothing here is
-    # stored, and a second draft an hour later should see whatever the Assemblée
-    # nationale publishes then.
-    #
-    # Successes only. A failure stays uncached so it is retried for the next
-    # item, which is what the loop below already assumed; a spent budget makes
-    # that retry instantaneous rather than another timeout.
+    # One sitting can hold several agenda items: cache documents for this call.
+    # Failures aren't cached.
     documents: dict[str, dict] = {}
 
-    # Read once for the whole call rather than per sitting: it is a regex over a
-    # setting, and a text with twenty sittings would run it twenty times.
     fallback = configured_legislature()
     if not fallback:
         log.warning(
@@ -526,19 +442,11 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
             record = document(cr_ref)
         except DebatesFetchError:
             continue
-        # Checked before it is put in a URL, for the same reason `_get_json`
-        # checks the identifier it is given: this value is read out of a fetched
-        # document and ends up as the `source` href of a published argument, on
-        # the one page whose promise is that the quotes can be checked. A
-        # legislature is a small number; anything else falls back to the one this
-        # deployment imports from rather than being interpolated into a path.
+        # Validated before going into the source URL.
         legislature = str((record.get("metadonnees") or {}).get("legislature") or "")
         if not legislature.isdigit():
             legislature = fallback
-        # No legislature to build one from — see `configured_legislature`. The
-        # speeches are still worth having: they are verbatim and attributed by
-        # name and date, and the page drops a link it was given as empty. A wrong
-        # link would be worse than none on exactly this field.
+        # No legislature: keep the speeches, without a link.
         url = SEANCE_URL.format(legislature=legislature, uid=cr_ref) if legislature else ""
         out.extend(speeches_from_record(record, subject=subject, url=url))
     return out

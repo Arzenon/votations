@@ -1,7 +1,4 @@
-# The build context is everything Docker uploads before it starts. The Dockerfile
-# COPYs a handful of named directories, so anything here is excluded from the
-# upload rather than from the image — which is why the caches matter: .mypy_cache
-# alone is tens of megabytes sent on every build, to be thrown away.
+# Excluded from the build context (caches can be tens of MB).
 venv/
 .venv/
 __pycache__/
@@ -13,10 +10,9 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 *.egg-info/
-# Content snapshots written by the `content-export` service into a bind mount on
-# the host. They are data, sometimes large, and never belong in a build.
+.idea/
+# Content snapshots from the `content-export` service.
 exports/
 .env
-# Utilitaire personnel sans rapport avec le projet (voir .gitignore) : le
-# Dockerfile ne le copie pas, mais le contexte de construction est envoyé entier.
+# Utilitaire personnel sans rapport avec le projet (voir .gitignore).
 dmarc/

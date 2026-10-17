@@ -1,4 +1,4 @@
-"""Selecting arguments from sitting records — and refusing anything unverifiable."""
+"""Selecting arguments from sitting records, and rejecting unverifiable ones."""
 
 import contextlib
 from datetime import date
@@ -98,7 +98,7 @@ def test_keeps_a_verbatim_quote_and_attributes_it_from_our_record():
 
 
 def test_a_paraphrase_is_rejected():
-    """The whole design: a quote that is not in the speech cannot survive."""
+    """A quote that isn't in the speech is rejected."""
     invented = "Ce texte est une avancée majeure pour la santé publique française."
     assert invented not in FOR_TEXT
     client = _FakeClient(
@@ -116,7 +116,7 @@ def test_a_paraphrase_is_rejected():
 
 
 def test_a_real_quote_cannot_be_pinned_on_the_wrong_speaker():
-    """The model supplies no names, so misattribution is not expressible."""
+    """Attribution comes from the speech, not the model."""
     # Quote genuinely from cr-2, but claimed as cr-1.
     client = _FakeClient(
         _sel(
@@ -156,7 +156,7 @@ def test_whitespace_differences_do_not_break_a_genuine_quote():
 
 
 def test_a_unanimous_law_yields_an_empty_side_with_a_note():
-    """Manufactured balance is the worse failure — say so instead."""
+    """A unanimous law gives an empty side and a note, not invented balance."""
     client = _FakeClient(_sel([("cr-1", QUOTE_FOR)]))
     out = select_arguments(LAW, SPEECHES, client=client)
     assert out.pour and out.contre == []
@@ -165,13 +165,9 @@ def test_a_unanimous_law_yields_an_empty_side_with_a_note():
 
 
 def test_the_prompt_keeps_a_supporters_criticism_out_of_the_opposition_block():
-    """« Réserves » is gone from the page; the reason it existed is not.
+    """Criticism from a supporter isn't classed as an argument against.
 
-    It was a third bucket, so a speaker saying « nous voterons ce texte, mais il
-    manque les moyens » had somewhere to go other than « contre ». With the
-    bucket removed the instruction has to become an exclusion, or that sentence
-    lands in the opposition block and makes its author say the opposite of how
-    they voted — on the one page whose whole claim is not doing that.
+    E.g. "nous voterons ce texte, mais il manque les moyens".
     """
     system = ai.ARGUMENTS_SYSTEM_PROMPT
     assert "Ne mélange pas les camps" in system
@@ -207,7 +203,7 @@ def test_per_side_cap_is_enforced():
 
 
 def test_caps_default_to_the_configured_value():
-    """Arguments are a pool to curate from, not a quota to publish whole."""
+    """The per-side cap defaults to the setting."""
     settings = get_settings()
     client = _FakeClient(
         _sel(
@@ -221,7 +217,7 @@ def test_caps_default_to_the_configured_value():
 
 
 def test_the_model_is_told_the_numbers_are_ceilings_not_quotas():
-    """Padding to hit a quota is the failure this guards against."""
+    """The prompt says the numbers are maximums, not targets."""
     client = _FakeClient(_sel([("cr-1", QUOTE_FOR)]))
     select_arguments(LAW, SPEECHES, client=client, per_side=5)
     prompt = client.seen["messages"][0]["content"]
@@ -268,15 +264,10 @@ def test_api_failure_becomes_a_readable_error():
 
 
 def test_the_window_keeps_the_most_recent_sittings_not_the_first():
-    """Above the window, the cut is by position — and position is date.
+    """The window keeps the most recent sittings.
 
-    Sittings arrive oldest-first, so slicing from the front kept the earliest
-    readings and threw away the latest. That is backwards: the closer a debate is
-    to the vote, the closer the text being argued about is to the one adopted.
-
-    Built so the *oldest* speeches are also the longest, which is what the length
-    cuts would otherwise prefer — if the window is taken from the wrong end, they
-    dominate the pool and the failure is invisible.
+    The oldest speeches are also the longest here, so taking the wrong end
+    would be visible.
     """
     settings = get_settings()
     window = settings.ai_max_speeches * 4
@@ -297,8 +288,7 @@ def test_the_window_keeps_the_most_recent_sittings_not_the_first():
         )
 
     client = _FakeClient(_sel())
-    # Nothing verifiable comes back from an empty selection; the prompt is what
-    # this asserts on, and it is built before the model is ever called.
+    # We only check the prompt, built before the model call.
     with contextlib.suppress(AiDraftError):
         select_arguments(LAW, speeches, client=client)
     prompt = client.seen["messages"][0]["content"]
@@ -311,7 +301,7 @@ def test_the_window_keeps_the_most_recent_sittings_not_the_first():
 
 
 def test_a_debate_that_fits_is_never_trimmed_by_the_window():
-    """Below the window the position cut must not fire at all."""
+    """A debate that fits isn't trimmed."""
     settings = get_settings()
     speeches = [
         Speech(
@@ -333,19 +323,11 @@ def test_a_debate_that_fits_is_never_trimmed_by_the_window():
     assert all(f"[{s.speech_id}]" in prompt for s in speeches), "a fitting debate was cut"
 
 
-# --- Quotes taken from a joint discussion --------------------------------------
+# --- Quotes from a joint debate ------------------------------------------------
 
 
 def test_a_quote_from_a_joint_discussion_carries_a_warning():
-    """Verified, attributed — and possibly about the neighbouring text.
-
-    `app.debates` keeps the speeches of a « discussion générale commune » rather
-    than losing them, which is what gave « fin de vie » its arguments back. The
-    price is that a passage may be arguing about the text debated alongside ours,
-    and no amount of checking downstream can tell. So the note has to reach the
-    person who proofreads before publication — that is the entire basis on which
-    keeping them is defensible.
-    """
+    """A quote from a joint debate comes with a warning (it may be about the other text)."""
     joint = [
         Speech(**{**vars(SPEECHES[0]), "joint_debate": True}),
         Speech(**vars(SPEECHES[1])),
@@ -361,7 +343,7 @@ def test_a_quote_from_a_joint_discussion_carries_a_warning():
 
 
 def test_an_ordinary_discussion_raises_no_such_warning():
-    """Or the warning would be noise, and get read as noise."""
+    """A normal debate gives no such warning."""
     client = _FakeClient(_sel([("cr-1", QUOTE_FOR)], [("cr-2", QUOTE_AGAINST)]))
     out = select_arguments(LAW, SPEECHES, client=client)
     assert not any("discussion commune" in n for n in out.notes)

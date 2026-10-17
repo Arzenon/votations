@@ -1,11 +1,5 @@
-{# Polled while a draft runs in the background. Stops polling on its own once the
-   job reaches a terminal state — HTMX only re-triggers what it swaps back in.
-
-   Every branch reads a boolean the server computed, never a status string: the
-   values are `DRAFT_PENDING` and its siblings, and a template that spells them
-   out is a copy of a constant nothing would keep in step. See
-   `app.routes.admin.context.draft_state_context`, which builds this for both the
-   pages that include it. #}
+{# Polled while a draft runs. Polling stops once the job is finished.
+   Context from `draft_state_context`. #}
 <div id="draft-state"
      {% if draft_pending %}hx-get="/admin/imports/{{ draft_item.id }}/brouillon/etat"
      hx-trigger="every 3s" hx-target="#draft-state" hx-swap="outerHTML"{% endif %}>
@@ -22,9 +16,7 @@
       <strong>Brouillon impossible.</strong> {{ draft_error }}
       <br>Les blocs sont à rédiger à la main, ou à réessayer plus tard.
     </p>
-    {# Dismissed by an explicit POST, never by the act of opening the page: this
-       banner is the only record of why the draft did not happen, and a GET that
-       cleared it lost the message to a browser prefetch. #}
+    {# Dismissed with a POST, so a prefetch can't clear it. #}
     <form action="/admin/imports/{{ draft_item.id }}/brouillon/masquer" method="post"
           hx-post="/admin/imports/{{ draft_item.id }}/brouillon/masquer"
           hx-target="#draft-state" hx-swap="outerHTML">
@@ -34,12 +26,8 @@
   {% elif draft_ready %}
   <p class="disclaimer" role="status">
     <strong>Le brouillon est prêt.</strong>
-    {# Where "open it" leads depends on whether this dossier has already produced
-       a law. This banner used to appear only on the creation form, so it always
-       pointed at the creation form — then it started being shown on the edit form
-       too, and kept pointing there. Following it after « Régénérer » gave you a
-       *blank* creation form holding the new draft, and saving it created a second
-       copy of the law you were editing. #}
+    {# Link to the edit form if a law already exists, otherwise to the creation
+       form (which would create a duplicate). #}
     {% if draft_item.law_id %}
     <a href="/admin/lois/{{ draft_item.law_id }}?brouillon=1">Charger le brouillon dans le formulaire</a>
     {% else %}

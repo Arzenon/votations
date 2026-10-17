@@ -1,19 +1,10 @@
-"""index the questions actually asked: covering votes, one revisions index, drop two dead ones
+"""index the actual queries: covering votes index, one revisions index, drop two unused
 
-Three separate things, all of them the same thing: the indexes had drifted away
-from the queries.
-
-* ``votes`` is only ever read one law at a time and grouped — the tally, the
-  evolution curve, the open-data export. A bare ``law_id`` index answered the
-  WHERE and sent Postgres to the heap once per vote for the columns. The
-  replacement carries them in its own leaves, so all three are answered from the
-  index alone.
-* ``law_revisions`` had one index for the filter and another for the order, so
-  the public history sorted a law's whole history to show twenty rows. One
-  composite in the order the page reads them replaces both.
-* ``demographic_tallies.law_id`` and ``imported_laws.dossier_uid`` were each a
-  second index on the leading column of an existing unique constraint. The
-  planner never chose either; both cost writes.
+- votes: covering index on (law_id, choice) including the other columns read,
+  so the tally, curve and export don't touch the table.
+- law_revisions: one composite index for filter and order, replacing two.
+- demographic_tallies.law_id and imported_laws.dossier_uid duplicated the
+  leading column of a unique constraint and were never used.
 
 Revision ID: e2b6d4a09f13
 Revises: b7419fd0c8a2
@@ -31,9 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # --- votes: cover the three per-law aggregations -------------------------
-    # `law_id` leads, so this also serves the ON DELETE CASCADE that `purge`
-    # relies on — which is what makes dropping the old index safe rather than
-    # merely tidy.
+    # Starts with law_id, so it also serves the ON DELETE CASCADE.
     op.execute(
         "CREATE INDEX ix_votes_law_choice ON votes (law_id, choice) "
         "INCLUDE (created_at, demographics_recorded)"

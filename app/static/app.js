@@ -1,19 +1,10 @@
-/* Progressive enhancement, kept tiny and dependency-free.
- *
- * This exists so the pages need no inline scripts and no inline styles, which is
- * what lets the Content-Security-Policy stay strict (`script-src 'self'`, no
- * 'unsafe-inline'). Without JavaScript the site still works: the bars simply
- * render at their default width, and every percentage is written out in text
- * beside them anyway.
- *
- * Confirmations used to live here too, behind a `data-confirm` attribute. They
- * do not any more: a confirmation that only exists in JavaScript is not a
- * confirmation, and archiving or deleting a votation now goes through a page the
- * server renders. What remains is presentation. */
+/* Small progressive enhancement, so pages need no inline scripts or styles
+ * (strict CSP). Without JavaScript the bars keep their default width and the
+ * percentages are still in the text. */
 (function () {
   "use strict";
 
-  /* Results bars carry their width as data-pct rather than style="width:…". */
+  /* Bar widths come from data-pct (no inline style). */
   function paintBars(root) {
     var bars = (root || document).querySelectorAll(".bar-fill[data-pct]");
     Array.prototype.forEach.call(bars, function (bar) {
@@ -28,10 +19,7 @@
     paintBars(document);
   });
 
-  /* No fragment swapped in today carries bars — the ballot and the draft banner
-   * do not. Keeping the hook means the invariant "a bar is always painted" holds
-   * for whatever fragment is added next, which is cheaper than the afternoon
-   * spent finding out it did not. */
+  /* No swapped fragment has bars yet, but future ones will be handled. */
   document.addEventListener("htmx:afterSwap", function (event) {
     paintBars(event.target);
   });

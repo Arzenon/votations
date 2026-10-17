@@ -1,13 +1,10 @@
-{# Simple, manipulation-resistant results: three percentages + total.
-   Bar widths ride on a data attribute rather than an inline style, so the page
-   needs no 'unsafe-inline' in its Content-Security-Policy (see /static/app.js). #}
+{# Three percentages and the total. Bar widths are in a data attribute, set by
+   app.js, since the CSP forbids inline styles. #}
 <div class="results">
   {% for key, label in CHOICE_LABELS.items() %}
   <div class="bar-row">
     <span class="bar-label">{{ label }}</span>
-    {# The bar is a picture of the number beside it, and its width is painted by
-       app.js. Hidden from assistive technology so the figure is announced once,
-       from the text — which is also what a reader gets with JavaScript off. #}
+    {# Hidden from screen readers: the number is in the text. #}
     <span class="bar" aria-hidden="true"><span class="bar-fill {{ key }}" data-pct="{{ tally.percentages[key] }}"></span></span>
     <span class="bar-pct">{{ tally.percentages[key] }}% ({{ tally.counts[key] }} votes)</span>
   </div>

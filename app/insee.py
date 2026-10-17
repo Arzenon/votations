@@ -1,21 +1,10 @@
-"""Fetch national reference shares from the open INSEE Melodi API.
+"""National reference shares (age, sex, region) from the INSEE Melodi API.
 
-Produces all three reference distributions — ``age``, ``sexe`` and ``region`` —
-from the ``DS_ESTIMATION_POPULATION`` dataset (population au 1ᵉʳ janvier),
-normalised to percentages.
-
-Age is the one that takes work. The dataset publishes quinquennal groups, not
-this application's brackets, so they are summed into ours by
-:data:`AGE_BRACKET_COMPOSITION` — an exact union in every case but one: 18-24
-straddles the 15-19 group, of which two fifths are taken (see the note there).
-Every bracket is then normalised over the adult total, because the reference the
-results page shows is a share of the population that may vote, not of everybody.
-
-Design notes:
-- The HTTP getter is injectable so the parsing/mapping is unit-testable offline.
-- Any failure raises :class:`InseeFetchError`; callers leave cached values intact.
-- The geography référentiel year prefix (e.g. ``2026-REG-11``) is discovered at
-  runtime so the job keeps working after the yearly rollover.
+Uses ``DS_ESTIMATION_POPULATION`` (population on 1 January). INSEE publishes
+five-year age groups, summed into our brackets by `AGE_BRACKET_COMPOSITION`
+and normalised over adults only. Failures raise `InseeFetchError` and cached
+values are kept. The geography year prefix (e.g. ``2026-REG-11``) is detected
+at runtime.
 """
 
 from __future__ import annotations
@@ -29,9 +18,8 @@ from app.config import get_settings
 from app.models import DIMENSION_AGE, DIMENSION_REGION, DIMENSION_SEXE
 from app.opendata import Getter, getter
 
-# App age brackets as (weighted) sums of INSEE quinquennal groups, restricted to
-# adults. Only 18-24 is approximate: ages 18-19 are taken as 2/5 of the 15-19
-# group (uniform-within-band assumption). All other brackets are exact unions.
+# Our age brackets as weighted sums of INSEE five-year groups. Only 18-24 is
+# approximate: 18-19 year olds are taken as 2/5 of the 15-19 group.
 AGE_BRACKET_COMPOSITION = {
     "18-24": [("Y15T19", 0.4), ("Y20T24", 1.0)],
     "25-34": [("Y25T29", 1.0), ("Y30T34", 1.0)],
@@ -48,7 +36,7 @@ AGE_BRACKET_COMPOSITION = {
     ],
 }
 
-# INSEE région code → app Region label. Overseas (01,02,03,04,06) fold into "Outre-mer".
+# INSEE region code to our label. Overseas (01-04, 06) are grouped as "Outre-mer".
 REGION_CODE_TO_LABEL = {
     "11": "Île-de-France",
     "24": "Centre-Val de Loire",
@@ -69,17 +57,17 @@ OVERSEAS_LABEL = "Outre-mer"
 
 
 class InseeFetchError(RuntimeError):
-    """Raised on any network/HTTP/parse problem so callers can keep old values."""
+    """Network or parse failure. Callers keep the cached values."""
 
 
 @dataclass
 class InseeData:
     source_year: int
-    values: dict[str, dict[str, float]]  # {"sexe": {...}, "region": {...}}
+    values: dict[str, dict[str, float]]  # {"age": {...}, "sexe": {...}, "region": {...}}
 
 
 def _headers() -> dict[str, str]:
-    """The key is optional — the estimation-population dataset is open."""
+    """Request headers. The API key is optional."""
     settings = get_settings()
     headers = {"Accept": "application/json"}
     if settings.insee_api_key:
@@ -87,7 +75,7 @@ def _headers() -> dict[str, str]:
     return headers
 
 
-# Melodi answers a small JSON document per query — kilobytes, not megabytes.
+# Responses are a few kB.
 MAX_PAYLOAD_BYTES = 16 * 1024 * 1024
 _default_getter = getter(
     timeout=30.0, max_bytes=MAX_PAYLOAD_BYTES, error=InseeFetchError, headers=_headers
@@ -95,12 +83,7 @@ _default_getter = getter(
 
 
 def _payload(get: Getter, url: str) -> dict:
-    """Fetch and decode one Melodi response.
-
-    Melodi answers JSON, but the getter returns bytes like every other source in
-    the app: one seam, one signature, so an injected getter is the same kind of
-    thing everywhere.
-    """
+    """Fetch and decode one Melodi response."""
     try:
         return json.loads(get(url))
     except ValueError as exc:
@@ -122,15 +105,9 @@ def _observations(payload: dict) -> list[dict]:
 
 
 def _dimension(o: object, name: str) -> str:
-    """One observation's value for a dimension, or "" when it does not carry it.
+    """An observation's value for a dimension, or "".
 
-    Every reach into a fetched document goes through this or :func:`_value`.
-    Indexing straight — ``o["dimensions"]["SEX"]`` — made this module's contract
-    (« Any failure raises InseeFetchError ») false for the failure most likely to
-    actually happen: the day INSEE changes the shape of a response. The caller
-    then got a `KeyError` traceback rather than the one-line message
-    `scripts/refresh_insee` is written to print, on a job whose whole design is
-    to fail quietly and leave the cached values alone.
+    Tolerates shape changes so they surface as InseeFetchError, not KeyError.
     """
     dimensions = o.get("dimensions") if isinstance(o, dict) else None
     value = dimensions.get(name) if isinstance(dimensions, dict) else None
@@ -138,7 +115,7 @@ def _dimension(o: object, name: str) -> str:
 
 
 def _year(o: dict) -> int:
-    """One observation's TIME_PERIOD as a number."""
+    """An observation's TIME_PERIOD as an int."""
     raw = _dimension(o, "TIME_PERIOD")
     try:
         return int(raw)
@@ -156,7 +133,7 @@ def _latest(obs: list[dict], pick: Callable[[dict], bool]) -> tuple[int, list[di
 
 
 def _value(o: dict) -> float:
-    """One observation's measured value. Guarded like :func:`_year`, and why."""
+    """An observation's value. Raises InseeFetchError if missing."""
     try:
         return float(o["measures"]["OBS_VALUE_NIVEAU"]["value"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -178,7 +155,7 @@ def _discover_prefix(get: Getter) -> str:
 
 
 def fetch_reference(get: Getter | None = None) -> InseeData:
-    """Fetch sexe + region reference shares. Raises InseeFetchError on failure."""
+    """Fetch age, sex and region shares. Raises InseeFetchError on failure."""
     get = get or _default_getter
     prefix = _discover_prefix(get)
 
@@ -196,7 +173,7 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
         "homme": round(100 * by_sex["M"] / total_sex, 1),
     }
 
-    # --- Age: quinquennal counts (France, total sex) → app brackets, adults only. ---
+    # --- Age: five-year groups (France, both sexes) into our adult brackets. ---
     age_obs = _observations(
         _payload(get, _data_url(f"{prefix}-FRANCE-F", SEX="_T", EP_MEASURE="POP_JAN_1ST"))
     )
@@ -210,13 +187,9 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
         url = _data_url(f"{prefix}-REG-{code}", AGE="_T", SEX="_T", EP_MEASURE="POP_JAN_1ST")
         try:
             year, obs = _latest(_observations(_payload(get, url)), lambda o: True)
-            # Inside the guard, not after it: a région whose observation carries
-            # no readable value is exactly as missing as one the API did not
-            # answer for, and the comment below has always said what to do
-            # about that.
             population = _value(obs[0])
         except InseeFetchError:
-            continue  # a missing région must not abort the whole refresh
+            continue  # skip a missing region
         region_year = max(region_year, year)
         if code in OVERSEAS_CODES:
             overseas += population
@@ -237,10 +210,8 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
 
 
 def _age_reference(obs: list[dict]) -> tuple[int, dict[str, float]]:
-    """Aggregate quinquennal counts into the app's adult brackets, normalised."""
-    # Not `!= "_T"`: an observation carrying no AGE at all would pass that, and
-    # `_dimension` answers "" for it. The total row and the missing row are both
-    # things this must not aggregate.
+    """Sum five-year groups into our adult brackets, as percentages."""
+    # Exclude the total row ("_T") and rows without an AGE ("").
     year, rows = _latest(obs, lambda o: _dimension(o, "AGE") not in ("_T", ""))
     by_age = {_dimension(o, "AGE"): _value(o) for o in rows}
     brackets = {

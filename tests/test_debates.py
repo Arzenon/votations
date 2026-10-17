@@ -30,11 +30,9 @@ def _para(ptsodj, code, name, text, quality=None, role=None):
 
 
 def _record(points, uid="CRSANR5L17S2026O1N195", legislature="17", sommaire=None):
-    """A compte rendu. `sommaire` maps valeur_ptsodj -> the subject that point covers.
+    """A compte rendu. `sommaire` maps valeur_ptsodj to its subject.
 
-    It is not decoration: the record's summary is the only place the two
-    documents can be joined on meaning, so a fixture without one is a record the
-    extractor cannot place. See `app.debates._record_points`.
+    Needed to match the agenda item (see `app.debates._record_points`).
     """
     sommaire = sommaire or {"1": "Dépistage précoce des maladies cardio-neuro-vasculaires"}
     return {
@@ -54,9 +52,8 @@ def _record(points, uid="CRSANR5L17S2026O1N195", legislature="17", sommaire=None
     }
 
 
-#: What the réunion's agenda calls the text the ONE_BILL fixture is about. Worded
-#: differently from the record's own title on purpose — that difference is the
-#: thing the subject match exists to bridge.
+# The agenda's wording for the ONE_BILL text, deliberately different from the
+# record's title.
 OURS = (
     "Discussion de la proposition de loi visant à accélérer le dépistage "
     "précoce des maladies cardio-neuro-vasculaires"
@@ -144,7 +141,7 @@ TWO_BILLS = _record(
 
 
 def test_a_sitting_debating_two_bills_never_mixes_them():
-    """The subject, not the rank, is what keeps another bill's arguments out."""
+    """Matching on subject keeps the other bill's speeches out."""
     ours = speeches_from_record(TWO_BILLS, subject=OURS, url="u")
     assert [s.speaker for s in ours] == ["M. Notre Loi"]
 
@@ -157,13 +154,9 @@ def test_a_sitting_debating_two_bills_never_mixes_them():
 
 
 def test_the_rank_in_the_agenda_is_never_used_as_the_record_s_number():
-    """The bug this replaces, in one assertion.
+    """The agenda position is never used as the record's point number.
 
-    Our text was agenda item 2 and the record numbers it 2 here — but the record
-    is free to number it anything, and did: on 5 May 2026 the loi de programmation
-    militaire was agenda item 7, record point 5, and the record's only argued
-    section was number 4 — a debate on social-security fraud. Reading by rank was
-    one coincidence away from quoting the wrong bill under this law's name.
+    On 5 May 2026 the LPM was agenda item 7 but record point 5.
     """
     shifted = _record(
         [
@@ -181,11 +174,7 @@ def test_the_rank_in_the_agenda_is_never_used_as_the_record_s_number():
 
 
 def test_a_text_on_the_agenda_but_not_argued_takes_nobody_else_s_speeches():
-    """Present for a vote, discussed by nobody: the honest answer is nothing.
-
-    The tempting failure is to fall back on whatever single discussion the
-    sitting did hold — which, on the real records, belonged to another bill.
-    """
+    """A text on the agenda but not debated gets no speeches (not another bill's)."""
     others_only = _record(
         [
             _titled(
@@ -204,7 +193,7 @@ def test_a_text_on_the_agenda_but_not_argued_takes_nobody_else_s_speeches():
 
 
 def test_refuses_to_guess_when_the_subject_is_nowhere_in_the_record():
-    """No match and no joint discussion means no safe answer."""
+    """No match and no joint debate: nothing is returned."""
     unrelated = _record(
         [
             _titled(
@@ -219,14 +208,10 @@ def test_refuses_to_guess_when_the_subject_is_nowhere_in_the_record():
     assert speeches_from_record(unrelated, subject=OURS, url="u") == []
 
 
-# --- Discussions communes -----------------------------------------------------
+# --- Joint debates ---------------------------------------------------------------
 #
-# The Assemblée regularly takes several texts together: one presentation, one
-# discussion générale, one record point covering them all. The record then names
-# the joint subject and not ours, so nothing matches — which used to mean a law
-# with twenty sittings and not one argument. The real case: « fin de vie »,
-# debated with « soins palliatifs » on 12 May 2025, 46 attributed speeches
-# discarded.
+# Several texts debated together under one record point, whose title doesn't
+# match ours. E.g. "fin de vie" with "soins palliatifs" on 12 May 2025.
 
 
 JOINT = _record(
@@ -243,7 +228,7 @@ JOINT = _record(
 
 
 def test_a_joint_discussion_is_kept_rather_than_lost():
-    """Neither title names our text, so only « commune » can rescue these."""
+    """Speeches from a joint debate are kept."""
     out = speeches_from_record(
         JOINT, subject="Proposition de loi relative à la fin de vie", url="u"
     )
@@ -251,23 +236,17 @@ def test_a_joint_discussion_is_kept_rather_than_lost():
 
 
 def test_a_speech_from_a_joint_discussion_says_so():
-    """The flag is the whole basis on which keeping them is defensible.
-
-    A verified quote from a joint debate is genuinely what its author said, on a
-    day this text was discussed — but they may have been arguing about the
-    neighbouring one. Nothing downstream can tell, so the draft has to warn the
-    person who can.
-    """
+    """Speeches from a joint debate are flagged, since they may be about the other text."""
     out = speeches_from_record(
         JOINT, subject="Proposition de loi relative à la fin de vie", url="u"
     )
     assert all(s.joint_debate for s in out)
-    # And an ordinary discussion is not flagged, or the warning would mean nothing.
+    # A normal debate isn't flagged.
     assert not any(s.joint_debate for s in speeches_from_record(ONE_BILL, subject=OURS, url="u"))
 
 
 def test_a_joint_discussion_is_not_a_licence_to_take_any_debate():
-    """« commune » is a claim the record makes; without it, nothing is taken."""
+    """Without "commune" in the record, nothing is taken."""
     not_joint = _record(
         [
             _titled(
@@ -283,7 +262,7 @@ def test_a_joint_discussion_is_not_a_licence_to_take_any_debate():
 
 
 def test_two_joint_discussions_in_one_sitting_are_still_refused():
-    """Two candidates and no way to choose is exactly when to take nothing."""
+    """Two joint debates in one sitting: nothing is taken."""
     ambiguous = _record(
         [
             _titled(
@@ -352,14 +331,13 @@ SEANCES = [{"reunion_ref": "RUANR5L17S2026IDS30539", "odj_ref": "RUANR5L17S2026I
 def test_resolves_sitting_then_record_and_picks_our_bill():
     get = _getter({"RUANR5L17S2026IDS30539": REUNION, "CRSANR5L17S2026O1N195": TWO_BILLS})
     out = fetch_speeches(SEANCES, get=get)
-    # PT2's subject is found in the record's own summary — our bill, not the other,
-    # and regardless of where either sits in the agenda.
+    # PT2's subject matches our bill in the record's summary.
     assert [s.speaker for s in out] == ["M. Notre Loi"]
     assert out[0].url.endswith("/comptes-rendus/seance/CRSANR5L17S2026O1N195")
 
 
 def test_an_unreadable_sitting_is_skipped_not_fatal():
-    """Partial coverage beats no arguments at all."""
+    """An unreadable sitting is skipped."""
     good = dict(REUNION, uid="RUANR5L17S2026IDS30540", compteRenduRef="CRSANR5L17S2026O1N195")
     get = _getter({"RUANR5L17S2026IDS30540": good, "CRSANR5L17S2026O1N195": TWO_BILLS})
     seances = [
@@ -370,13 +348,7 @@ def test_an_unreadable_sitting_is_skipped_not_fatal():
 
 
 def test_a_record_is_downloaded_once_however_many_agenda_items_point_at_it():
-    """A compte rendu is ~600 kB, and a sitting can carry two of our agenda items.
-
-    The dossier records those as two sittings — they are two agenda items, and
-    the pair (réunion, point) is what identifies them — so the loop fetched the
-    same réunion and the same record twice, over a link the drafting job is
-    already racing a deadline on.
-    """
+    """A record (~600 kB) is downloaded once even if two agenda items point to it."""
     fetched: list[str] = []
     inner = _getter({"RUANR5L17S2026IDS30539": REUNION, "CRSANR5L17S2026O1N195": TWO_BILLS})
 
@@ -395,7 +367,7 @@ def test_a_record_is_downloaded_once_however_many_agenda_items_point_at_it():
 
 
 def test_a_sitting_that_fails_is_retried_for_the_next_item():
-    """Only successes are remembered — a failure must not be cached as one."""
+    """Failures aren't cached."""
     attempts: list[str] = []
 
     def flaky(url: str) -> bytes:
@@ -416,14 +388,7 @@ def test_a_sitting_that_fails_is_retried_for_the_next_item():
 
 
 def test_a_spent_budget_stops_the_loop_rather_than_skipping_every_sitting():
-    """A missing record is skipped; a spent clock is not — the two differ.
-
-    ``DebatesFetchError`` means "this sitting could not be read", and carrying on
-    is right. ``DeadlineExceeded`` means every remaining request will fail
-    instantly, so carrying on walks twenty sittings to arrive nowhere. It is
-    deliberately not the module's own error class, which is what makes the
-    `except DebatesFetchError` below it not catch it.
-    """
+    """DeadlineExceeded stops the loop, unlike DebatesFetchError which skips a sitting."""
     from app.opendata import DeadlineExceeded
 
     def spent(url: str) -> bytes:
@@ -452,13 +417,7 @@ def test_speech_is_the_shape_the_selector_expects():
 
 
 def test_an_identifier_that_is_not_one_is_never_fetched():
-    """The uid goes into a URL, so it must look like a uid before it gets there.
-
-    It reaches us from the government export by way of our own staging table.
-    This is not a suspicion about the Assemblée nationale: it is that a value
-    which ends up in an outbound request should be one we recognise, whatever
-    path it took. A `../` here would aim the fetch at another document.
-    """
+    """An invalid uid (e.g. "../") is never put in a URL."""
     asked: list[str] = []
 
     def get(url: str) -> bytes:
@@ -484,19 +443,14 @@ def test_an_ordinary_identifier_still_goes_through():
 
 
 def _with_legislature(value):
-    """The two-bill record, restated as coming from a given legislature."""
+    """The two-bill record, with the given legislature."""
     record = json.loads(json.dumps(TWO_BILLS))
     record.setdefault("metadonnees", {})["legislature"] = value
     return _getter({"RUANR5L17S2026IDS30539": REUNION, "CRSANR5L17S2026O1N195": record})
 
 
 def test_a_legislature_that_is_not_one_never_reaches_the_source_url():
-    """The sitting identifier is checked before it goes in a URL; so is this one.
-
-    `legislature` is read out of a fetched document and lands in the `source`
-    href of a published argument — the one field on the page whose whole promise
-    is that a reader can follow it and check the quote.
-    """
+    """An invalid legislature never ends up in the source URL."""
     out = fetch_speeches(SEANCES, get=_with_legislature("../../ailleurs"))
     assert out, "the speeches themselves must still be found"
     for speech in out:
@@ -507,12 +461,7 @@ def test_a_legislature_that_is_not_one_never_reaches_the_source_url():
 
 
 def test_the_fallback_legislature_follows_the_configured_export():
-    """It was a third copy of a number that also lives in two settings.
-
-    The one an operator moving to the next legislature would never see: they
-    correct `AN_DOSSIERS_URL` and `AN_SCRUTINS_URL`, and this stayed at 17 —
-    building `source` links into the previous legislature's URL space.
-    """
+    """The fallback legislature comes from AN_DOSSIERS_URL."""
     from app.config import get_settings
 
     settings = get_settings()
@@ -521,7 +470,7 @@ def test_the_fallback_legislature_follows_the_configured_export():
 
 
 def test_an_export_url_of_another_shape_publishes_no_link_rather_than_a_wrong_one(monkeypatch):
-    """A misconfiguration must not invent a legislature to interpolate."""
+    """An unexpected URL shape gives no link rather than a wrong one."""
     from app.config import get_settings
 
     settings = get_settings()
@@ -534,7 +483,7 @@ def test_an_export_url_of_another_shape_publishes_no_link_rather_than_a_wrong_on
 
 
 def test_an_ordinary_legislature_is_still_used():
-    """The check refuses what is not a legislature; it does not pin the value."""
+    """A valid legislature from the record is used."""
     out = fetch_speeches(SEANCES, get=_with_legislature("18"))
     assert out
     assert all("/dyn/18/" in s.url for s in out)

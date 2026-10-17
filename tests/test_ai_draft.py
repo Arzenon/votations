@@ -51,7 +51,7 @@ DRAFT = LawDraft(
 
 
 class _FakeClient:
-    """Stands in for anthropic.Anthropic, recording what it was asked."""
+    """Fake anthropic.Anthropic that records its calls."""
 
     def __init__(self, tokens=5000, draft=DRAFT, fail=None):
         self.tokens, self.draft, self.fail = tokens, draft, fail
@@ -88,7 +88,7 @@ def test_generates_the_two_factual_blocks():
 
 
 def test_prompt_forbids_invention_and_position_taking():
-    """The charter's neutrality rules must reach the model, not just the docs."""
+    """The neutrality rules are in the prompt."""
     system = ai.SYSTEM_PROMPT
     assert "N'invente aucun fait" in system
     assert "Aucune prise de position" in system
@@ -97,30 +97,20 @@ def test_prompt_forbids_invention_and_position_taking():
 
 
 def test_the_second_block_is_asked_for_something_the_first_cannot_say():
-    """« Ce que ça change » must not be « Ce que dit la loi » in plainer French.
+    """The second block answers a different question, not the first one rephrased.
 
-    The first version of this prompt asked only for a change of *register* —
-    « en langage accessible, sans jargon juridique » — and got what it asked
-    for: on a real draft, every one of the six facts in the second block was
-    already in the first. The reader paid twice for one payload, on the page
-    that also carries the arguments and the ballot.
-
-    So the prompt now asks the second block a different question, and says what
-    to do when the honest answer is nothing.
+    Asking only for simpler wording gave a second block that repeated all the
+    facts of the first.
     """
     system = ai.SYSTEM_PROMPT
     assert "pas le premier bloc" in system, "the restatement must be forbidden outright"
     assert "N'y répète pas ce qui est déjà dans summary_text" in system
     assert "laisse ce bloc vide" in system, "an empty block must be an allowed answer"
-    # But allowed for one reason only. Left as "nothing remains to say once the
-    # repetitions are removed", it fired on a law that plainly changed things for
-    # farmers: the first block had been made concrete enough to cover the ground,
-    # the no-repeat rule pointed the same way, and « ce que ça change en pratique »
-    # came back as an empty string on a 61-article agriculture act.
+    # Empty only when the law creates no obligation. A looser rule once gave an
+    # empty block on a 61-article agriculture law.
     assert "Ne laisse ce bloc vide que si la loi ne crée d'obligation" in system
     assert "il est à écrire" in system, "an empty block must not be reachable by attrition"
-    # And the tie-break that makes the no-repeat rule survivable: the reader's
-    # side wins, so overlap shortens block 1 rather than emptying block 2.
+    # On overlap, block 1 gets shorter rather than block 2 empty.
     assert "elle appartient au \\\n second" in system or "elle appartient au" in system
     # Framed by who is affected, rather than by the shape of the text.
     assert "personnes concernées" in system
@@ -128,161 +118,91 @@ def test_the_second_block_is_asked_for_something_the_first_cannot_say():
 
 
 def test_the_two_blocks_are_told_to_divide_the_work_both_ways():
-    """The no-repeat rule has to run in both directions, or it only moves the problem.
+    """The no-repeat rule applies both ways.
 
-    Telling the second block not to restate the first left the first free to walk
-    through the obligations the second was now covering — from the reader's side,
-    and better. On a real draft, two of the first block's four paragraphs were
-    what the second block already said.
-
-    So the first block is asked for the law seen from outside — subject,
-    mechanism, texts modified, scope, what is not in force — and told to leave the
-    resulting duties alone.
+    Block 1 describes the law from outside and leaves obligations to block 2.
     """
     system = ai.SYSTEM_PROMPT
     assert "l'idée de la loi, pas son plan" in system
     assert "N'y détaille pas les obligations" in system, "block 1 must defer the duties"
     assert "Les deux blocs ne se recouvrent pas" in system
-    # But a law that binds nobody still has to be presentable in one block.
+    # A law with no obligations is presented in block 1 alone.
     assert "sera vide" in system
 
 
 def test_the_second_block_is_held_short_per_audience_not_capped_in_audiences():
-    """The brake belongs on each paragraph, not on how many people are named.
+    """Length is limited per paragraph, not by capping the number of audiences.
 
-    Given a division of labour and no length rule, the second block grew to 21
-    paragraphs and 3.7× the first — a law amending fifteen codes really does
-    concern that many people. Capping the *number* would mean choosing whose
-    situation goes unmentioned, which is the one editorial act this platform
-    exists not to make. So the length is held per audience.
-
-    And the constraint has to say what it is for. A model told only "be shorter"
-    hedges everything into vagueness; this one is told to drop what matters least
-    and keep the rest exact, because the reader who is affected needs the
-    threshold and the date, not a gentler sentence.
+    Capping the count would mean choosing who goes unmentioned. Each
+    paragraph stays short but precise.
     """
     system = ai.SYSTEM_PROMPT
     assert "Un paragraphe court par public concerné" in system
     assert "n'est pas plafonné" in system, "the number of audiences must stay free"
-    # The count follows readers, not provisions — see the granularity test below,
-    # which is how a sector-specific law stops producing nineteen paragraphs.
+    # The count follows readers, not provisions (see the granularity test).
     assert "nombre de **lecteurs** concernés" in system
 
-    # The cap must not be argued with in the same breath. It used to be: nine words
-    # setting the limit, then ninety walking it back — « chacun portant beaucoup »,
-    # « jamais pour te faire rester vague », « garde le seuil, la date ou le
-    # montant », « Trois faits exacts valent mieux qu'une phrase floue sur dix ».
-    # The model weighed the two sides and wrote longer: paragraphs went from 540 to
-    # 747 characters on average, and those over 800 from one to seven.
-    #
-    # The tell is in this same prompt. Block 1's brevity rule carries no
-    # counterweight and lands exactly — three paragraphs, on both laws, on every
-    # run. So the fix was subtraction, plus somewhere for the overflow to go.
+    # The limit must not be followed by caveats: they made paragraphs longer
+    # (540 to 747 characters on average).
     for undercut in (
         "chacun portant beaucoup",
         "jamais pour te faire rester vague",
         "Trois faits exacts valent mieux",
     ):
         assert undercut not in system, f"the cap is undercut again by: {undercut}"
-    # One clause of anti-vagueness survives — it was the load-bearing half. There
-    # was briefly a second clause here sending the overflow to the official text;
-    # it drew no uptake at all — zero mentions across a 16 000-character block — so
-    # it went the way of any instruction nothing acts on.
+    # One anti-vagueness clause remains.
     assert "va au texte officiel" not in system
     assert "sans jamais remplacer un fait précis par une formule générale" in system
 
 
 def test_the_prompt_says_each_thing_once():
-    """Duplicated rules drift, and the loosest wording wins.
-
-    Measured on the real prompt: brevity was stated seven times in seven wordings,
-    and an empty second block was licensed four times under two incompatible
-    conditions — the permissive one (« si le texte ne permet pas de rédiger
-    honnêtement un bloc ») sitting in final position, thirty lines after the strict
-    one that was supposed to have replaced it. « Ce que ça change en pratique » then
-    came back empty on a 61-article agriculture act.
-    """
+    """Each rule is stated once: duplicated rules drift and the loosest one wins."""
     system = ai.SYSTEM_PROMPT
     # The loose licence is gone; the precise one remains.
     assert "laisse-le vide plutôt que de le combler" not in system
     assert "Ne laisse ce bloc vide que si la loi ne crée d'obligation" in system
-    # The ratification case is stated twice, and twice is right: once to say block 1
-    # may then run longer, once to say block 2 may then be empty. Same condition,
-    # two different consequences — that is working redundancy, not drift. What was
-    # removed is the third statement, which carried no consequence of its own.
+    # The ratification case appears twice, with a different consequence each time.
     assert system.count("ratification d'un accord") == 2
     assert "Si la loi se borne à ratifier un accord international" not in system
-    # And block 1 no longer asks for the very thing its next rule forbids: it used
-    # to want « par quels moyens elle agit » and then « pas la règle qu'elle y
-    # produit », and the draft duly opened on a list of moyens.
+    # Block 1 no longer asks for "par quels moyens elle agit", which contradicted
+    # the next rule.
     assert "par quels moyens elle agit" not in system
     assert "Nomme le domaine sur lequel la loi intervient" in system
 
 
 def test_an_audience_is_how_someone_describes_themselves():
-    """Granularity, not a cap — and the difference is the whole point.
+    """An audience is how people describe themselves ("agriculteur", not "irrigant").
 
-    Measured on two real drafts: the loi de programmation militaire produced 22
-    audiences and read well, because they are things people are — « un jeune
-    Français », « si vous déménagez », « pour les communes ». The loi
-    d'urgence agricole produced 19 and read as a specialist circular, because
-    they are things articles address — « betteravier », « irrigant », « éleveur
-    d'ovins », « si vous siégez en commission locale de l'eau ». Same length,
-    same paragraph count, opposite usefulness: a reader outside farming appeared
-    in none of the nineteen, and a farmer in two or three.
-
-    So the fix cannot be a cap on the count. It is a rule about what counts as an
-    audience — the word someone would use for themselves — with the specifics
-    kept inside the paragraph.
+    Details like thresholds go inside the paragraph.
     """
     system = ai.SYSTEM_PROMPT
     assert "façon dont quelqu'un se décrit lui-même" in system
     assert "ça, c'est moi" in system, "the test the model applies must be the reader's"
-    # Regrouping must never become dropping: that is the editorial act the
-    # platform exists not to make, and the reason the count stays uncapped.
+    # Grouping, never dropping.
     assert "Ne supprime jamais la mesure" in system
     assert "l'écarter parce que peu de gens sont concernés, jamais" in system
-    # Most-concerned first, so stopping early still leaves you informed.
+    # Largest audiences first.
     assert "Commence par les publics les plus nombreux" in system
 
 
 def test_the_first_block_is_written_for_someone_who_never_opened_a_code():
-    """Three habits measured on the real drafts, each costing the reader.
-
-    In the three drafts reviewed, the *last* paragraph of every « Ce que dit la
-    loi » was administrative plumbing — decrees still to come, ordonnances
-    extending the law overseas, transfers between administrations — and it ran to
-    roughly a third of the block (1031 of 3046 characters on one, 932 of 2626 on
-    another). Add a ten-code enumeration in a single 1272-character sentence, and
-    article numbers a voter cannot use, and the block that decides whether
-    someone keeps reading is the one written for a lawyer.
-    """
+    """Block 1 has no article numbers and no lists of codes."""
     system = ai.SYSTEM_PROMPT
     assert "Ne cite aucun numéro d'article ni de code" in system
     assert "N'énumère pas les codes modifiés" in system
-    # But the censure itself is news a voter needs — only its numbering is not.
+    # What was censured is still mentioned, just not the article numbers.
     assert "Dis *ce que* le Conseil" in system
 
 
 def test_the_first_block_may_still_describe_how_power_is_allocated():
-    """The third lever was withdrawn, and this records why so it stays withdrawn.
+    """Block 1 may still describe who decides what.
 
-    « Ne consacre pas de paragraphe à la mécanique administrative » was meant to
-    cut decree timetables and outre-mer ordonnances. It also cut the machinery
-    that says who decides: on the loi de programmation militaire the draft went
-    from « la prorogation au-delà de deux mois doit être autorisée par la loi » —
-    a mechanism a reader can weigh — to « sous contrôle du Parlement », which is
-    the conclusion of the very dispute the arguments below the block are about,
-    asserted by the platform in its own voice.
-
-    Parliament is *informed without delay* and may *request* information; it
-    authorises nothing for the first two months. Calling that "under parliamentary
-    control" adopts one side's characterisation, and breaks this prompt's own
-    « aucune appréciation » rule.
+    A rule against "administrative mechanics" once turned "la prorogation
+    au-delà de deux mois doit être autorisée par la loi" into "sous contrôle
+    du Parlement", which takes a side in the debate.
     """
     system = ai.SYSTEM_PROMPT
     assert "mécanique administrative" not in system
-    # The rule that made the substitution wrong is still there to catch it.
     assert "Aucune prise de position" in system
 
 
@@ -378,7 +298,7 @@ def test_draft_button_hidden_without_a_key(client, db_session):
 
 
 def test_draft_button_is_on_the_law_form_not_the_import_list(client, db_session):
-    """The admin drafts from the form they are about to edit."""
+    """The draft button is on the law form."""
     item = _stage(db_session)
     settings, previous = _with_key("sk-test")
     try:
@@ -392,7 +312,7 @@ def test_draft_button_is_on_the_law_form_not_the_import_list(client, db_session)
 
 
 def test_law_form_carries_the_source_links(client, db_session):
-    """Both links are on the form, so no navigating back to the list."""
+    """The form shows both source links."""
     item = _stage(db_session)
     r = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin_auth())
     assert item.dossier_url in r.text
@@ -402,12 +322,9 @@ def test_law_form_carries_the_source_links(client, db_session):
 
 
 def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=None, speeches=("s",)):
-    """Point the background drafting job at fakes instead of the network."""
+    """Replace the network calls of the drafting job with fakes."""
 
-    # Both fakes take the getter the job now hands down — it carries the job's
-    # remaining budget, so that every download is bounded by the same clock as
-    # the rest of the run. Mirroring the real signature is what keeps that
-    # plumbing honest: a fake that ignored the argument would hide its removal.
+    # Same signature as the real functions, including the getter.
     def fetch(nor, jo_date, get=None):
         if fail:
             raise fail
@@ -426,11 +343,9 @@ def _patch_job(monkeypatch, *, draft=DRAFT, calls=None, fail=None, arguments=Non
 
 
 def _draft(client, item_id, **data):
-    """Ask for a draft, then run the job the request queued.
+    """Request a draft, then run the queued job.
 
-    The route only schedules: it answers straight away and the form polls for the
-    outcome. So the response below is what the administrator sees *while the job
-    is still pending*, and the drain afterwards is the pool getting to it.
+    The response is what the admin sees while the job is pending.
     """
     response = client.post(
         f"/admin/imports/{item_id}/brouillon", headers=_admin_auth(), data=data or None
@@ -444,13 +359,13 @@ def _form(client, item_id):
 
 
 def test_drafting_is_scheduled_not_awaited(client, db_session, background_db, monkeypatch):
-    """Downloading JO archives and calling a model twice cannot happen in a request."""
+    """The draft is scheduled, not run during the request."""
     item = _stage(db_session)
     _patch_job(monkeypatch)
 
     r = _draft(client, item.id)
     assert r.status_code == 200
-    # The answer comes back immediately, announcing work in progress...
+    # Immediate response, showing the job in progress...
     assert "Brouillon en cours de génération" in r.text
     # ...and says where to watch for the outcome.
     assert f'hx-get="/admin/imports/{item.id}/brouillon/etat"' in r.text
@@ -480,7 +395,7 @@ def test_the_state_endpoint_reports_the_outcome(client, db_session, background_d
     r = client.get(f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth())
     assert r.status_code == 200
     assert "Le brouillon est prêt" in r.text
-    # Terminal state ⇒ the fragment no longer asks to be polled.
+    # Finished: no more polling.
     assert "hx-trigger" not in r.text
 
 
@@ -502,12 +417,7 @@ def test_the_draft_lands_in_the_editable_form(client, db_session, background_db,
 
 
 def test_the_creation_form_prefills_the_promulgation_date(client, db_session):
-    """The date the home page is ordered by, taken from the row that already holds it.
-
-    The daily import fetches it from the Assemblée nationale; asking an
-    administrator to read it back off the reference and retype it is how a
-    listing acquires a wrong date.
-    """
+    """The promulgation date is pre-filled from the staged row."""
     item = _stage(db_session)
     form = _form(client, item.id).text
     assert 'name="promulgated_on"' in form
@@ -517,7 +427,7 @@ def test_the_creation_form_prefills_the_promulgation_date(client, db_session):
 def test_opening_the_form_shows_a_draft_already_paid_for(
     client, db_session, background_db, monkeypatch
 ):
-    """No extra click to see work that has already been billed."""
+    """An existing draft is shown right away."""
     item = _stage(db_session)
     _patch_job(monkeypatch)
     _draft(client, item.id)
@@ -531,7 +441,7 @@ def test_opening_the_form_shows_a_draft_already_paid_for(
 def test_a_cached_draft_is_reused_without_calling_the_model(
     client, db_session, background_db, monkeypatch
 ):
-    """Generating is billable; reopening must be free."""
+    """A stored draft is reused without calling the model."""
     item = _stage(db_session)
     calls = []
     _patch_job(monkeypatch, calls=calls)
@@ -546,7 +456,7 @@ def test_a_cached_draft_is_reused_without_calling_the_model(
 
 
 def test_a_cached_draft_survives_a_restart(client, db_session, background_db, monkeypatch):
-    """The cache is a database column, not process state."""
+    """The stored draft survives a restart (it's in the database)."""
     item = _stage(db_session)
     _patch_job(monkeypatch)
     _draft(client, item.id)
@@ -555,7 +465,7 @@ def test_a_cached_draft_survives_a_restart(client, db_session, background_db, mo
     stored = db_session.get(ImportedLaw, item.id)
     assert stored.draft["practical_changes"] == DRAFT.practical_changes
 
-    # No model available at all now — the draft must still come back.
+    # No model available: the draft must still be shown.
     def gone(law, *, client=None):
         raise AssertionError("must not call the model for a cached draft")
 
@@ -585,14 +495,14 @@ def test_a_draft_never_overwrites_what_the_admin_typed(
     assert str(escape(mine)) in r.text
     assert "Mon titre" in r.text
 
-    # And still after the job lands: the cached draft fills only empty blocks.
+    # Still true after the job: the draft only fills empty blocks.
     again = _draft(client, item.id, summary_text=mine, title="Mon titre")
     assert str(escape(mine)) in again.text
     assert str(escape(DRAFT.practical_changes)) in again.text
 
 
 def test_the_published_checkbox_survives_a_draft(client, db_session, background_db, monkeypatch):
-    """Asking for a draft used to silently unpublish the law being prepared."""
+    """Requesting a draft keeps the published checkbox."""
     item = _stage(db_session)
     _patch_job(monkeypatch)
     r = _draft(client, item.id, published="1", title="Mon titre")
@@ -632,16 +542,7 @@ def test_a_draft_without_a_nor_fails_cleanly(client, db_session, background_db, 
 
 
 def test_the_job_holds_no_database_session_while_it_waits(db_session, background_db, monkeypatch):
-    """The long steps must not sit on a connection — nor on a snapshot.
-
-    A ``Session`` that has read anything keeps its transaction open until it
-    commits or closes, and this job then spends minutes on Journal Officiel
-    archives and two model calls. Two of them at once used to leave two backends
-    idle in transaction for as long as the deadline allows, which is enough to
-    stop autovacuum reclaiming dead rows across the whole database — including
-    ``votes``, the one table being written to continuously — and to make the
-    ``ALTER TABLE`` of a redeploy queue behind a model call.
-    """
+    """No session is held open during the slow steps (idle transactions)."""
     from app import drafting
 
     item = _stage(db_session)
@@ -692,7 +593,7 @@ def test_the_job_holds_no_database_session_while_it_waits(db_session, background
 
 
 def test_the_job_gives_up_rather_than_hanging(db_session, background_db, monkeypatch):
-    """A whole-job deadline keeps a slow source from pinning a worker forever."""
+    """The job gives up when its deadline passes."""
     from app import drafting
 
     item = _stage(db_session)
@@ -708,21 +609,16 @@ def test_the_job_gives_up_rather_than_hanging(db_session, background_db, monkeyp
 
 
 def _deadline_of(get) -> float | None:
-    """What total budget this getter would give one request, or None if unbounded.
+    """The deadline this getter would pass to a request, or None.
 
-    The deadline is not a value a getter exposes — it is the one it passes on —
-    so this stands in for the transport and reads it there.
-
-    Restores by hand rather than through the `monkeypatch` fixture: this is
-    called from inside a job whose own fakes that fixture is holding, and
-    ``monkeypatch.undo()`` reverts *all* of them, not the last one.
+    Restores by hand: monkeypatch.undo() would also revert the job's fakes.
     """
     from contextlib import suppress
 
     from app import opendata
 
     if get is None:
-        return None  # no getter handed down at all: nothing bounds the fetch
+        return None  # no getter: unbounded
     captured: list[float | None] = []
 
     def spy(url, **kwargs):
@@ -739,28 +635,16 @@ def _deadline_of(get) -> float | None:
 
 
 class _Stop(Exception):
-    """Ends a fetch the instant its arguments have been read."""
+    """Stops a fetch once its arguments are captured."""
 
 
 def test_the_budget_reaches_the_downloads_themselves(db_session, background_db, monkeypatch):
-    """The deadline is what every fetch is bounded by, not a gate between steps.
-
-    Checking it only between steps made it a budget in name: locating one law is
-    up to seven downloads at a 180-second socket timeout apiece, and a socket
-    timeout is per read — a server dribbling bytes resets it for ever. Ten
-    minutes of budget could take hours, on the one setting that promises not to.
-
-    So the job hands both fetchers a getter carrying what is left of the clock.
-    This checks the wiring: that the getter arrives, and that what it carries is
-    the budget rather than nothing.
-    """
+    """Each download gets the remaining budget as its deadline."""
     from app import drafting
     from app.ai import SelectedArguments
 
     item = _stage(db_session)
-    # A sitting, so the second half of the job runs at all: with none, the
-    # arguments step is skipped by design and the getter it is handed never
-    # exists to be checked.
+    # Needs a sitting, otherwise the arguments step is skipped.
     item.seances = [{"reunion_ref": "RUANR5L17S2026PO1", "odj_ref": "ODJ1", "date": "2026-07-01"}]
     db_session.commit()
     monkeypatch.setattr(get_settings(), "ai_draft_deadline_seconds", 600, raising=False)
@@ -791,11 +675,9 @@ def test_the_budget_reaches_the_downloads_themselves(db_session, background_db, 
 
 
 def test_a_download_that_never_ends_is_cut_at_the_budget(monkeypatch):
-    """The bound a socket timeout cannot give: total time, not time per read.
+    """A server sending one byte at a time is cut off at the deadline.
 
-    A server that sends one byte every hundredth of a second never trips an httpx
-    timeout — each read succeeds — so before this the download simply did not
-    end, and neither did the draft holding a worker for it.
+    httpx's timeout is per read, so it never fires in that case.
     """
     import time
     from contextlib import contextmanager
@@ -830,16 +712,13 @@ def test_a_download_that_never_ends_is_cut_at_the_budget(monkeypatch):
 
 
 def test_a_spent_budget_refuses_before_opening_a_connection(monkeypatch):
-    """And says so as a deadline, not as "this source is unreachable".
+    """A spent budget raises DeadlineExceeded, not the source's own error.
 
-    The distinction is what stops the loops: `fetch_speeches` treats its own
-    error as "skip this sitting and try the next", which is right for one missing
-    record and wrong for a clock that has run out — every remaining sitting would
-    fail the same way.
+    `fetch_speeches` skips a sitting on its own error but stops on this one.
     """
     from app import opendata
 
-    def never_called(*args, **kwargs):  # pragma: no cover - the point is that it is not
+    def never_called(*args, **kwargs):  # pragma: no cover - must not be called
         raise AssertionError("a connection was opened on a spent budget")
 
     monkeypatch.setattr(opendata.httpx, "stream", never_called)
@@ -862,11 +741,11 @@ def test_draft_route_404_for_unknown_import(client, db_session):
     assert client.post("/admin/imports/999/brouillon", headers=_admin_auth()).status_code == 404
 
 
-# --- The AI corpus is measured, not just trimmed ------------------------------
+# --- The AI input is measured, not just trimmed --------------------------------
 
 
 def test_an_oversized_debate_corpus_is_refused_before_it_is_billed():
-    """`generate_draft` measured its input; `select_arguments` only guessed."""
+    """An oversized debate corpus is refused before calling the model."""
     from app.ai import AiDraftError, select_arguments
     from app.debates import Speech
     from app.legifrance import LawText
@@ -909,13 +788,9 @@ def test_an_oversized_debate_corpus_is_refused_before_it_is_billed():
 
 
 def test_a_draft_interrupted_by_a_restart_is_released(client, db_session):
-    """`en_cours` means "a thread here is on it", and no thread outlives the process.
+    """A draft left "en cours" by a restart is marked as failed at startup.
 
-    A redeploy cancels what is queued and a crash takes it with it, leaving rows
-    claiming a run nobody was performing — with every exit closed: the banner
-    polls for an outcome that will never be written, « masquer » only clears a
-    *failed* draft, and « Régénérer » refuses to reschedule a row it believes is
-    already running.
+    Otherwise the row would be stuck: nothing in the UI can clear it.
     """
     item = _stage(db_session)
     imports_crud.mark_draft_pending(db_session, item)
@@ -928,7 +803,7 @@ def test_a_draft_interrupted_by_a_restart_is_released(client, db_session):
     assert item.draft_status == DRAFT_FAILED
     assert item.draft_error == imports_crud.INTERRUPTED_MESSAGE
 
-    # And now the administrator can act on it again: the banner is dismissible…
+    # The banner can be dismissed again...
     r = client.post(f"/admin/imports/{item.id}/brouillon/masquer", headers=_admin_auth())
     assert r.status_code in (200, 303)
     db_session.refresh(item)
@@ -936,7 +811,7 @@ def test_a_draft_interrupted_by_a_restart_is_released(client, db_session):
 
 
 def test_releasing_leaves_finished_drafts_alone(db_session):
-    """Only a run that was in flight is a run that was interrupted."""
+    """Finished drafts aren't touched."""
     ready = _stage(db_session, uid="DLR5L17N901")
     imports_crud.save_draft(db_session, ready, draft={"summary_text": "x"})
     idle = _stage(db_session, uid="DLR5L17N902")
@@ -950,7 +825,7 @@ def test_releasing_leaves_finished_drafts_alone(db_session):
 
 
 def test_the_draft_claim_is_won_once(db_session):
-    """Two clicks in the same second must schedule — and bill — exactly one run."""
+    """Two simultaneous clicks schedule a single run."""
     item = _stage(db_session)
 
     assert imports_crud.mark_draft_pending(db_session, item) is True
@@ -961,7 +836,7 @@ def test_the_draft_claim_is_won_once(db_session):
 
 
 def test_a_second_click_does_not_queue_a_second_job(client, db_session, background_db, monkeypatch):
-    """The route's gate is the claim, so the queue never grows a duplicate."""
+    """A second click doesn't queue a second job."""
     calls: list[int] = []
     _patch_job(monkeypatch, calls=calls)
     item = _stage(db_session)
@@ -979,7 +854,7 @@ def test_a_second_click_does_not_queue_a_second_job(client, db_session, backgrou
 
 
 def _imported_law(db_session, uid="DLR5L17N910"):
-    """A law created from a staged import, linked as the create route links them."""
+    """A law created from a staged import, linked like the create route does."""
     item = _stage(db_session, uid=uid)
     imports_crud.save_draft(
         db_session,
@@ -1005,12 +880,7 @@ def _imported_law(db_session, uid="DLR5L17N910"):
 
 
 def test_the_edit_form_of_an_imported_law_still_offers_the_draft(client, db_session):
-    """It offered nothing at all: the AI actions were on the creation form only.
-
-    So a presentation could be drafted exactly once, before the law existed, and
-    never again — « Régénérer » included. The cached draft, already paid for,
-    became unreachable the moment the law was saved.
-    """
+    """The edit form of an imported law offers the draft too."""
     _item, law = _imported_law(db_session)
     settings, previous = _with_key("sk-test")
     try:
@@ -1023,7 +893,7 @@ def test_the_edit_form_of_an_imported_law_still_offers_the_draft(client, db_sess
 
 
 def test_a_law_that_came_from_nowhere_offers_no_draft(client, db_session):
-    """Only a law with a staged row behind it has anything to redraft from."""
+    """A law without a staged row has no draft."""
     law = make_law(db_session, slug="loi-manuelle", title="Saisie à la main")
     settings, previous = _with_key("sk-test")
     try:
@@ -1035,23 +905,19 @@ def test_a_law_that_came_from_nowhere_offers_no_draft(client, db_session):
 
 
 def test_loading_the_draft_fills_the_blocks_and_keeps_the_rest(client, db_session):
-    """The draft has nothing to say about a title or a voting window.
-
-    Overwriting those with its silence would turn "show me the draft" into "lose
-    my schedule".
-    """
+    """Loading the draft fills the text blocks and keeps the other fields."""
     _item, law = _imported_law(db_session)
     page = client.get(f"/admin/lois/{law.id}?brouillon=1", headers=_admin_auth()).text
 
     assert escape("Résumé proposé par le modèle.") in page, "the draft is not shown"
     assert "Texte enregistré." not in page, "the stored text should be replaced in the field"
     assert escape("Titre enregistré") in page, "the title must survive"
-    # And it is still the *edit* form: saving must not create a second law.
+    # Still the edit form, so saving won't create a second law.
     assert f'action="/admin/lois/{law.id}"' in page
 
 
 def test_loading_the_draft_writes_nothing(client, db_session):
-    """Looking is not saving; « Enregistrer » is."""
+    """Loading the draft doesn't save anything."""
     _item, law = _imported_law(db_session)
     client.get(f"/admin/lois/{law.id}?brouillon=1", headers=_admin_auth())
 
@@ -1064,18 +930,16 @@ def test_loading_the_draft_writes_nothing(client, db_session):
 def test_the_edit_form_says_the_draft_is_not_saved_yet(client, db_session):
     _item, law = _imported_law(db_session)
     page = client.get(f"/admin/lois/{law.id}?brouillon=1", headers=_admin_auth()).text
-    # Not `escape()`: this is literal text in the template, which Jinja emits
-    # verbatim. Only `{{ ... }}` expressions are escaped on the way out.
+    # Literal template text, so not escaped.
     assert "Rien n'est enregistré" in page
 
 
 def test_without_javascript_drafting_returns_to_the_law_it_belongs_to(
     client, db_session, background_db, monkeypatch
 ):
-    """The plain POST used to answer with the *creation* form for an existing law.
+    """Without JS, drafting for an existing law redirects to its edit form.
 
-    Its « Enregistrer » posts to /admin/lois, so following it made a second copy
-    of a law that already existed.
+    The creation form would create a duplicate.
     """
     _patch_job(monkeypatch)
     item, law = _imported_law(db_session)
@@ -1091,14 +955,7 @@ def test_without_javascript_drafting_returns_to_the_law_it_belongs_to(
 
 
 def test_the_ready_banner_points_at_the_law_when_there_is_one(client, db_session):
-    """« Le brouillon est prêt » must not send you to the *creation* form.
-
-    This banner was written for the creation flow and always linked there. Once
-    it started appearing on the edit form too, following it after « Régénérer »
-    gave you a blank creation form holding the new draft — and saving that made a
-    second copy of the law you were editing, while re-pointing the import at the
-    copy.
-    """
+    """The "brouillon prêt" banner links to the existing law, not the creation form."""
     item, law = _imported_law(db_session)
     banner = client.get(f"/admin/imports/{item.id}/brouillon/etat", headers=_admin_auth()).text
 
@@ -1114,12 +971,7 @@ def test_the_ready_banner_still_points_at_creation_before_a_law_exists(client, d
 
 
 def test_one_dossier_cannot_produce_a_second_votation(client, db_session):
-    """The guard behind the link: the route must refuse on its own.
-
-    Creating a second law from a staged row that already has one does not merely
-    duplicate it — `set_status` re-points the import at the newcomer, so the
-    original silently loses the link to its own draft.
-    """
+    """Creating a second law from the same dossier is refused."""
     item, law = _imported_law(db_session)
     before = db_session.query(Law).count()
 
@@ -1137,7 +989,7 @@ def test_one_dossier_cannot_produce_a_second_votation(client, db_session):
 
 
 def test_a_dossier_without_a_law_still_creates_one(client, db_session):
-    """The guard must not block the ordinary path it was added to protect."""
+    """A dossier without a law can still create one."""
     item = _stage(db_session, uid="DLR5L17N912")
     r = client.post(
         "/admin/lois",

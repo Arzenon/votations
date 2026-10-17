@@ -1,9 +1,6 @@
-"""The editorial content survives a move to another database.
+"""Editorial content export: round trips to another database.
 
-The export is only worth having if it restores, so every test here is a round
-trip rather than an assertion about the file's shape. Ids deliberately do not
-travel: the second database allocates its own, and everything is keyed on the
-slug and the dossier uid instead.
+Ids aren't carried over; laws are keyed by slug, imports by dossier uid.
 """
 
 from __future__ import annotations
@@ -43,7 +40,7 @@ def _stage(db, *, uid: str, status: str = "nouveau", law_id: int | None = None) 
 
 
 def _wipe(db) -> None:
-    """Everything the export is supposed to be able to put back."""
+    """Delete everything the export should restore."""
     db.query(LawRevision).delete()
     db.query(Vote).delete()
     db.query(ImportedLaw).delete()
@@ -93,13 +90,7 @@ def test_the_voting_window_keeps_its_instants(db_session):
 
 
 def test_the_promulgation_date_travels(db_session):
-    """It is what the home page is ordered by, so losing it reorders the site.
-
-    The column was added, the form learned to write it and the listings learned
-    to sort on it — and the snapshot was not told, so a move to another host put
-    every law's date back as empty and the new home page fell back to the order
-    the rows happened to be inserted in.
-    """
+    """The promulgation date is exported (the home page is sorted by it)."""
     make_law(db_session, slug="loi-datee", promulgated_on=date(2026, 6, 24))
     document = build_document(db_session)
     _wipe(db_session)
@@ -110,13 +101,9 @@ def test_the_promulgation_date_travels(db_session):
 
 
 def test_every_column_of_a_law_is_carried_or_deliberately_left_out(db_session):
-    """The guard the missing promulgation date needed and did not have.
+    """Every column is either exported or explicitly excluded.
 
-    An omission here is invisible: the export runs, the import runs, and the
-    column simply comes back empty. So every column has to be *named* — either as
-    something that travels or as something explicitly left behind — and adding
-    one to the model without deciding which fails this test rather than a
-    restore, six months later, on another host.
+    Otherwise a new column would silently come back empty after a restore.
     """
     columns = {column.name for column in Law.__table__.c}
     undecided = columns - set(LAW_FIELDS) - _NOT_CARRIED
@@ -126,19 +113,12 @@ def test_every_column_of_a_law_is_carried_or_deliberately_left_out(db_session):
     )
     # And nothing names a column that no longer exists.
     assert set(LAW_FIELDS) <= columns
-    # Everything whose change is published must survive the move: the results page
-    # states what moved since publication, and it cannot do that about a value the
-    # snapshot dropped.
+    # Every tracked field must be exported.
     assert set(TRACKED_FIELDS) <= set(LAW_FIELDS)
 
 
 def test_a_slug_from_the_file_is_re_derived_not_trusted(db_session):
-    """This file is the one input that arrives as a whole document from outside.
-
-    A slug is a URL segment and reaches a `Content-Disposition` header on the
-    export routes, so it goes through `slugify` on the way in like every slug the
-    application makes itself — rather than being taken on faith from a JSON file.
-    """
+    """Slugs from the file go through slugify (they end up in URLs and headers)."""
     make_law(db_session, slug="loi-propre")
     document = build_document(db_session)
     _wipe(db_session)
@@ -152,7 +132,7 @@ def test_a_slug_from_the_file_is_re_derived_not_trusted(db_session):
 
 
 def test_drafts_and_archived_laws_travel_too(db_session):
-    """A presentation in progress is exactly what costs a day to rewrite."""
+    """Drafts and archived laws are exported too."""
     make_law(db_session, slug="loi-brouillon", title="Brouillon", published=False)
     make_law(
         db_session,
@@ -172,7 +152,7 @@ def test_drafts_and_archived_laws_travel_too(db_session):
 
 
 def test_the_history_of_changes_travels_with_the_law(client, db_session):
-    """Without it the new site would claim a modified text was never touched."""
+    """The revision history is exported with the law."""
     law = make_law(db_session, slug="loi-modifiee", title="Loi modifiée", published=True)
     for version in ("première version", "seconde version"):
         client.post(
@@ -192,7 +172,7 @@ def test_the_history_of_changes_travels_with_the_law(client, db_session):
     after = db_session.query(LawRevision).filter_by(law_id=restored.id).all()
     assert len(after) == before
     assert {r.field for r in after} == {"summary_text", "opens_at", "closes_at"}
-    # And the page that reads them says so rather than claiming nothing moved.
+    # And the results page shows it.
     page = client.get("/loi/loi-modifiee/resultats").text
     assert "Aucune modification depuis la publication" not in page
 
@@ -201,11 +181,11 @@ def test_the_history_of_changes_travels_with_the_law(client, db_session):
 
 
 def test_an_ignored_import_stays_ignored(db_session):
-    """The daily job rebuilds the facts but never touches the decision."""
+    """An ignored import stays ignored after restore."""
     _stage(db_session, uid="DLR5L17N1", status="ignore")
     document = build_document(db_session)
 
-    # A fresh instance: the import job has re-seen the dossier, as "nouveau".
+    # New instance: the import job has seen the dossier again, as "nouveau".
     _wipe(db_session)
     _stage(db_session, uid="DLR5L17N1", status="nouveau")
     import_content_from(db_session, document)
@@ -214,13 +194,13 @@ def test_an_ignored_import_stays_ignored(db_session):
 
 
 def test_a_decision_is_relinked_to_the_law_by_slug_not_by_id(db_session):
-    """Ids are allocated afresh on the other side; the slug is what carries."""
+    """Decisions are linked to the law by slug, not id."""
     law = make_law(db_session, slug="loi-issue-d-un-import")
     _stage(db_session, uid="DLR5L17N2", status="importe", law_id=law.id)
     document = build_document(db_session)
 
     _wipe(db_session)
-    # Burn some ids so the law cannot land on the same one by luck.
+    # Use up some ids so the law can't get the same one by chance.
     for n in range(3):
         make_law(db_session, slug=f"remplissage-{n}")
     _stage(db_session, uid="DLR5L17N2", status="nouveau")
@@ -234,7 +214,7 @@ def test_a_decision_is_relinked_to_the_law_by_slug_not_by_id(db_session):
 
 
 def test_a_decision_for_a_dossier_not_yet_imported_is_reported_not_invented(db_session):
-    """The staged row's factual columns come from the AN export, never from here."""
+    """A decision for a dossier not imported yet is reported as pending."""
     _stage(db_session, uid="DLR5L17N3", status="ignore")
     document = build_document(db_session)
     _wipe(db_session)
@@ -249,7 +229,7 @@ def test_a_decision_for_a_dossier_not_yet_imported_is_reported_not_invented(db_s
 
 
 def test_the_export_carries_no_vote_and_no_token(client, db_session, open_law):
-    """The votes are the dump's job; a reduced copy here would be mistaken for one."""
+    """The export contains no votes and no tokens."""
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for", "age_bracket": "18-24"})
     blob = json.dumps(build_document(db_session), ensure_ascii=False)
     assert "voter_token" not in blob
@@ -297,12 +277,7 @@ def test_export_writes_a_readable_file_and_prunes_old_ones(db_session, tmp_path,
 
 
 def test_the_wreckage_of_a_killed_export_is_collected(db_session, tmp_path, monkeypatch):
-    """A `.json.partial` is not a snapshot, so the retention sweep never saw one.
-
-    An export killed mid-write therefore left a full-size file in the bind mount
-    for ever, on the same disk as PostgreSQL — the failure `backup.sh` already
-    guards against with `clean_partials`.
-    """
+    """Old .json.partial files left by interrupted exports are deleted."""
     import os
 
     monkeypatch.setattr("scripts.content.SessionLocal", lambda: _NoClose(db_session))
@@ -313,7 +288,7 @@ def test_the_wreckage_of_a_killed_export_is_collected(db_session, tmp_path, monk
     old = (datetime.now(UTC) - timedelta(days=2)).timestamp()
     os.utime(wreck, (old, old))
 
-    # A run that started a moment ago is somebody else's work in progress.
+    # A recent one may be an export in progress.
     fresh = tmp_path / "votations-contenu-20990101-000000.json.partial"
     fresh.write_text("{en cours", encoding="utf-8")
 
@@ -341,7 +316,7 @@ def test_something_that_is_not_an_export_at_all_is_refused(tmp_path):
 
 
 class _NoClose:
-    """Hands the test's own session to code that opens and closes its own."""
+    """Gives the test session to code that opens and closes its own."""
 
     def __init__(self, inner):
         self._inner = inner
@@ -354,7 +329,7 @@ class _NoClose:
 
 
 def import_content_from(db, document: dict, *, replace: bool = False) -> dict[str, int]:
-    """Import an in-memory document through the real code path, via a temp file."""
+    """Import a document through the real code path, via a temp file."""
     import tempfile
     from pathlib import Path
     from unittest.mock import patch
@@ -373,13 +348,7 @@ def import_content_from(db, document: dict, *, replace: bool = False) -> dict[st
 
 
 def test_replacing_a_published_law_is_refused(db_session):
-    """`--replace` writes straight to the columns and records no revision.
-
-    On a published law that means rewriting the text people voted on while the
-    public history keeps saying nothing moved — the transparency claim made false
-    in one command. Editing a published law goes through /admin, where it is
-    recorded.
-    """
+    """--replace on a published law is refused (it wouldn't record a revision)."""
     make_law(db_session, slug="loi-en-cours", title="Titre publié", published=True)
     document = build_document(db_session)
     law = db_session.query(Law).filter_by(slug="loi-en-cours").one()
@@ -395,7 +364,7 @@ def test_replacing_a_published_law_is_refused(db_session):
 
 
 def test_replacing_an_unpublished_draft_is_fine(db_session):
-    """Nobody has voted on a draft, so there is no record to falsify."""
+    """--replace on a draft is allowed."""
     make_law(db_session, slug="loi-brouillon-2", title="Titre d'origine", published=False)
     document = build_document(db_session)
     law = db_session.query(Law).filter_by(slug="loi-brouillon-2").one()
@@ -407,7 +376,7 @@ def test_replacing_an_unpublished_draft_is_fine(db_session):
 
 
 def test_a_published_law_is_still_skipped_without_replace(db_session):
-    """The default path is untouched by the guard: it never reaches it."""
+    """Without --replace, a published law is just skipped."""
     make_law(db_session, slug="loi-publiee-3", title="Titre publié", published=True)
     document = build_document(db_session)
     counts = import_content_from(db_session, document)
@@ -418,7 +387,7 @@ def test_a_published_law_is_still_skipped_without_replace(db_session):
 
 
 def test_an_unwritable_export_directory_names_the_fix(db_session, tmp_path, monkeypatch):
-    """The predictable failure of a bind mount deserves better than a traceback."""
+    """An unwritable export directory gives a clear message, not a traceback."""
     monkeypatch.setattr("scripts.content.SessionLocal", lambda: _NoClose(db_session))
     locked = tmp_path / "verrouille"
     locked.mkdir()

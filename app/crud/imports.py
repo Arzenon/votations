@@ -1,9 +1,8 @@
 """CRUD for laws staged by the Assemblée nationale import job.
 
-The import job owns the factual columns; the administrator owns ``status`` and
-``law_id``. :func:`sync` therefore refreshes the former on every run and never
-touches the latter, so a row set aside as "ignoré" stays ignored no matter how
-many times the daily job sees it again.
+The import job owns the factual columns; the admin owns ``status`` and
+``law_id``. `sync` refreshes the former and never touches the latter, so an
+ignored row stays ignored.
 """
 
 from __future__ import annotations
@@ -30,20 +29,8 @@ from app.models import (
     Law,
 )
 
-#: The Assemblée's own record of a text: how it voted, whether the two chambers
-#: needed a commission mixte paritaire, and whether anybody has looked.
-#:
-#: Facts, not presentation. Nothing here is editable in the administration and
-#: nothing here is tracked in the public history of changes, because an
-#: administrator correcting a parliamentary vote count is not an operation this
-#: platform should offer.
-#:
-#: **Named once, and read from here by everything that copies these columns** —
-#: the daily refresh below, the nightly propagation onto votations already
-#: created, and the administration's own create route. It was three hand-written
-#: lists of the same five names, which is three chances for a sixth column to
-#: reach two of them: a law created after that would take the new value a day
-#: late, from the propagation, and nothing anywhere would have said so.
+# The Assemblée's record of the vote. Not editable in the admin and not tracked
+# in revisions. Everything that copies these columns reads this tuple.
 PARLIAMENT_RECORD = (
     "an_vote_for",
     "an_vote_against",
@@ -52,8 +39,7 @@ PARLIAMENT_RECORD = (
     "an_vote_checked",
 )
 
-# Columns the import job refreshes on every run. `status` and `law_id` are
-# deliberately absent: they record the admin's decision, not the source data.
+# Columns refreshed on every import. `status` and `law_id` are the admin's.
 _REFRESHED = (
     "legislature",
     "procedure",
@@ -69,19 +55,14 @@ _REFRESHED = (
     *PARLIAMENT_RECORD,
 )
 
-# Sentinel telling `set_status` to leave `law_id` exactly as it is.
+# Sentinel: `set_status` leaves `law_id` unchanged.
 _KEEP = object()
 
 log = get_logger("imports")
 
 
 def _text_limits() -> dict[str, int]:
-    """The declared width of every ``String`` column :func:`sync` writes.
-
-    Read off the model rather than copied from it, for the same reason the admin
-    form reads its own limits off ``laws``: a copy is correct exactly until
-    somebody widens a column.
-    """
+    """Max length of each String column, read from the model."""
     columns = ImportedLaw.__table__.c
     return {
         name: column.type.length
@@ -94,7 +75,7 @@ _TEXT_LIMITS = _text_limits()
 
 
 def _too_long(row: dict) -> str | None:
-    """The first field this row could not fit in its column, or None."""
+    """The first field too long for its column, or None."""
     for name, limit in _TEXT_LIMITS.items():
         value = row.get(name)
         if isinstance(value, str) and len(value) > limit:
@@ -107,16 +88,8 @@ def sync(
 ) -> tuple[int, int]:
     """Upsert the export into the staging table. Returns (created, refreshed).
 
-    Rows the columns cannot hold are skipped and logged rather than sent to the
-    database. The whole export goes in one statement — which is what makes the
-    daily job a single round trip — and that is exactly why a single over-long
-    title could not be allowed through: Postgres refuses the *statement*, not the
-    row, so one malformed dossier would have thrown away every good one with it.
-    The job then exits non-zero and the container retries, so a value the source
-    is not going to change on our account would have stopped the import for good.
-
-    Skipping is the honest repair. The row is named in the logs, the other few
-    hundred laws land, and an administrator can create that one by hand.
+    Everything goes in a single statement, so one oversized value would make
+    Postgres reject the whole import. Such rows are skipped and logged instead.
     """
     if not records:
         return 0, 0
@@ -149,7 +122,6 @@ def sync(
     if not rows:
         return 0, 0
 
-    # One statement for the whole export rather than one round trip per law.
     stmt = pg_insert(ImportedLaw)
     stmt = stmt.on_conflict_do_update(
         constraint="uq_imported_law_source_uid",
@@ -165,17 +137,11 @@ def sync(
     return created, len(accepted) - created
 
 
-#: How many public sittings a staged law was debated in, computed in SQL.
-#:
-#: `seances` is a deferred JSON column and must stay that way — see
-#: :func:`list_by_status` — so the count is asked of the database rather than
-#: taken by loading the list into Python. `json_array_length`, not the `jsonb`
-#: form: the column is `json`, and casting every row to `jsonb` to count its
-#: entries would parse the very payload the deferral exists to avoid.
+# Number of sittings, computed in SQL so the deferred `seances` column isn't
+# loaded. json_array_length because the column is json, not jsonb.
 _SEANCE_COUNT = func.coalesce(func.json_array_length(ImportedLaw.seances), 0)
 
-#: Sorts the administration offers. Keyed by the value in the URL so an unknown
-#: one falls back rather than 500s.
+# Sort orders offered in the admin (URL values).
 ORDER_BY_DATE = "date"
 ORDER_BY_SEANCES = "seances"
 
@@ -191,16 +157,9 @@ def list_by_status(
 ) -> Page[ImportedLaw]:
     """Staged laws, most recently promulgated first.
 
-    ``draft`` and ``seances`` are deferred: a stored draft is a whole AI
-    presentation — two prose blocks and up to a dozen quotes — and the list shows
-    neither. Fetching them for every row made the "tous" view megabytes of JSON to
-    render a table of titles and dates.
-
-    ``procedure`` and ``order`` exist for triage. Seventy staged laws is not a
-    to-do list, it is a corpus to choose from: seventeen of them are treaty
-    ratifications nobody would put to a vote, and the ones worth a votation are
-    the ones that were argued over. Filtering by procedure collapses the first
-    group into one screen to clear; ordering by sitting count surfaces the second.
+    ``draft`` and ``seances`` are deferred because the list shows neither.
+    Filtering by procedure helps clear out treaty ratifications; sorting by
+    sitting count brings up the most debated laws.
     """
     stmt = select(ImportedLaw)
     if status:
@@ -213,7 +172,6 @@ def list_by_status(
 
     ordering: tuple[ColumnElement[Any], ...]
     if order == ORDER_BY_SEANCES:
-        # Most debated first, then most recent — a stable order for equal counts.
         ordering = (_SEANCE_COUNT.desc(), ImportedLaw.promulgated_on.desc())
     else:
         ordering = (ImportedLaw.promulgated_on.desc(), ImportedLaw.law_code.desc())
@@ -230,12 +188,9 @@ def list_by_status(
 
 
 def procedures(db: Session, *, status: str | None = None) -> list[tuple[str, int]]:
-    """Every procedure present, with how many rows carry it, commonest first.
+    """Procedures present in the data with their counts, most common first.
 
-    Read from the data rather than hard-coded: the labels come from the Assemblée
-    nationale's export and are theirs to change. Counted under the same status
-    filter as the listing, so the number beside each option is what choosing it
-    will actually show.
+    Counted with the same status filter as the listing.
     """
     stmt = select(ImportedLaw.procedure, func.count()).group_by(ImportedLaw.procedure)
     if status:
@@ -245,12 +200,7 @@ def procedures(db: Session, *, status: str | None = None) -> list[tuple[str, int
 
 
 def seance_counts(db: Session, item_ids: list[int]) -> dict[int, int]:
-    """How many public sittings each of these laws was debated in, in one query.
-
-    Separate from :func:`list_by_status` so the listing keeps returning plain
-    ``ImportedLaw`` rows and every caller of it stays unchanged — the same shape
-    as ``results.tallies_for``.
-    """
+    """Number of sittings for each of these staged laws, in one query."""
     if not item_ids:
         return {}
     rows = db.execute(
@@ -260,7 +210,7 @@ def seance_counts(db: Session, item_ids: list[int]) -> dict[int, int]:
 
 
 def count_new(db: Session) -> int:
-    """How many staged laws still await a decision (for the admin badge)."""
+    """Staged laws awaiting a decision (admin badge)."""
     return (
         db.scalar(
             select(func.count()).select_from(ImportedLaw).where(ImportedLaw.status == STATUS_NEW)
@@ -272,37 +222,18 @@ def count_new(db: Session) -> int:
 def last_import_at(db: Session) -> datetime | None:
     """When the import job last saw the export.
 
-    The job runs in its own container and retries forever on failure, so a source
-    that moves — the export URL carries the legislature number and changes once
-    per legislature — would otherwise stop the imports silently. The dashboard
-    shows this so the silence is visible.
+    Shown on the dashboard so a silently failing import gets noticed (the
+    export URL changes with each legislature).
     """
     return db.scalar(select(func.max(ImportedLaw.last_seen_at)))
 
 
 def propagate_parliament_record(db: Session) -> int:
-    """Bring every created votation's vote record up to date. Returns how many moved.
+    """Copy the latest vote record onto existing laws. Returns rows updated.
 
-    The copy used to happen once, when an administrator turned a staged row into
-    a votation, and never again. Two things follow from that and both are wrong:
-
-    * a law created before this data existed kept empty counts **for ever**, and
-      the page read that emptiness as « adoptée sans scrutin public » - a claim
-      about how Parliament voted, made from never having looked;
-    * the Assemblée can publish a scrutin *after* a votation was created. The
-      export is rebuilt daily and a late vote is ordinary; it simply never
-      reached the page.
-
-    Safe to run every night because it is idempotent and because of the
-    ``IS DISTINCT FROM`` below: a row whose values already match is not written
-    at all. That matters beyond the wasted write - `laws.updated_at` carries an
-    ``onupdate``, and it is what the sitemap publishes as ``lastmod``. Touching
-    every law nightly would tell search engines the whole site changes daily.
-
-    Writing to a published law outside the administration is deliberate here and
-    would not be for anything else: these columns hold what the Assemblée
-    recorded, nobody here composes them, and a figure that has become available
-    is not an edit to somebody's text.
+    The Assemblée can publish a scrutin after the law was created here, so this
+    runs nightly. IS DISTINCT FROM skips unchanged rows, which matters because
+    `laws.updated_at` feeds the sitemap's lastmod.
     """
     changed = or_(
         *(
@@ -310,8 +241,7 @@ def propagate_parliament_record(db: Session) -> int:
             for name in PARLIAMENT_RECORD
         )
     )
-    # `Session.execute` is typed as returning a plain `Result`; an ORM-enabled
-    # UPDATE really returns a `CursorResult`, which is the one that counts rows.
+    # An ORM UPDATE returns a CursorResult, but execute() is typed as Result.
     result = cast(
         CursorResult,
         db.execute(
@@ -329,25 +259,14 @@ def get_by_id(db: Session, item_id: int) -> ImportedLaw | None:
 
 
 def get_by_law_id(db: Session, law_id: int) -> ImportedLaw | None:
-    """The staged row a law was created from, if it came from one.
-
-    The link is set once, when the law is created (see the admin's create
-    route), and is what lets the edit form still offer the AI draft. Without it
-    the whole drafting feature was reachable only from the creation form and
-    disappeared the moment the law was saved — including the cached draft that
-    had already been paid for.
-    """
+    """The staged row a law was created from, if any (for the AI draft on edit)."""
     return db.scalar(select(ImportedLaw).where(ImportedLaw.law_id == law_id))
 
 
 def set_status(
     db: Session, item: ImportedLaw, *, status: str, law_id: int | object | None = _KEEP
 ) -> ImportedLaw:
-    """Set the review state. ``law_id`` is left untouched unless given explicitly.
-
-    Ignoring and then restoring a row used to clear its link to the law it had
-    produced, leaving an "importée" row with nothing to point at.
-    """
+    """Set the review status. ``law_id`` only changes if passed explicitly."""
     item.status = status
     if law_id is not _KEEP:
         item.law_id = law_id  # type: ignore[assignment]
@@ -357,18 +276,10 @@ def set_status(
 
 
 def mark_draft_pending(db: Session, item: ImportedLaw) -> bool:
-    """Claim this row for a background draft run. True if this caller won it.
+    """Claim this row for a draft run. Returns True if this caller got it.
 
-    The claim is the ``WHERE``, not a read followed by a write. Checking the
-    status in Python and then setting it let two administrators clicking in the
-    same second — or one double-click, or a retried POST — each see a row at rest
-    and each schedule a run. Both would then download the Journal Officiel
-    archives and call the model, and the second would overwrite the first's
-    draft: a billed request nobody asked for, on the one feature that costs money
-    per press.
-
-    Losing the claim is not an error. It means the run this caller wanted is
-    already happening, which is what they wanted.
+    The check is in the UPDATE's WHERE so that two clicks can't both start a
+    (paid) model call.
     """
     claimed = db.execute(
         update(ImportedLaw)
@@ -377,14 +288,13 @@ def mark_draft_pending(db: Session, item: ImportedLaw) -> bool:
         .returning(ImportedLaw.id)
     ).scalar_one_or_none()
     db.commit()
-    # Refreshed either way: the caller renders the banner from this object, and
-    # it must show the run that is happening whether or not this caller started it.
+    # Refresh either way: the caller renders the current state.
     db.refresh(item)
     return claimed is not None
 
 
 def save_draft(db: Session, item: ImportedLaw, *, draft: dict) -> ImportedLaw:
-    """Keep a generated draft so reopening it never bills a second time."""
+    """Store a generated draft so it isn't paid for twice."""
     item.draft = draft
     item.drafted_at = utcnow()
     item.draft_status = DRAFT_READY
@@ -395,7 +305,7 @@ def save_draft(db: Session, item: ImportedLaw, *, draft: dict) -> ImportedLaw:
 
 
 def fail_draft(db: Session, item: ImportedLaw, *, message: str) -> ImportedLaw:
-    """Record why a background draft run gave up, for display on the form."""
+    """Record why a draft run failed, for display on the form."""
     item.draft_status = DRAFT_FAILED
     item.draft_error = message[:2000]
     db.commit()
@@ -404,7 +314,7 @@ def fail_draft(db: Session, item: ImportedLaw, *, message: str) -> ImportedLaw:
 
 
 def clear_draft_state(db: Session, item: ImportedLaw) -> ImportedLaw:
-    """Return a row to rest once its outcome has been shown."""
+    """Reset the draft status once its outcome has been shown."""
     item.draft_status = DRAFT_READY if item.draft else DRAFT_IDLE
     item.draft_error = None
     db.commit()
@@ -412,7 +322,6 @@ def clear_draft_state(db: Session, item: ImportedLaw) -> ImportedLaw:
     return item
 
 
-#: Shown on a row whose draft the process was still running when it stopped.
 INTERRUPTED_MESSAGE = (
     "La génération a été interrompue par un redémarrage du service. "
     "Relancez-la, ou rédigez les blocs à la main."
@@ -420,22 +329,11 @@ INTERRUPTED_MESSAGE = (
 
 
 def release_interrupted_drafts(db: Session) -> int:
-    """Fail every draft still marked as running. Returns how many were released.
+    """Mark drafts still "running" as failed. Returns how many.
 
-    ``en_cours`` means "a thread in *this* process is working on it", and no
-    thread survives the process. A redeploy — `shutdown_drafting` refuses what is
-    queued and abandons what is already inside a download or a model call, which
-    is the deliberate trade that lets the container stop at once — or a crash
-    therefore leaves rows claiming a run that nobody is performing. Every exit
-    from that state is closed from the outside: the banner polls for
-    an outcome that will never be written, « masquer » only clears a *failed*
-    draft, and « Régénérer » refuses to reschedule a row it believes is already
-    running. The row was stuck for good, on the one screen whose whole job is to
-    tell the administrator what happened.
-
-    Called once at startup, before the first request, which is the only moment
-    the answer is unambiguous: nothing can be running yet, so anything marked as
-    running belongs to a process that is gone.
+    A restart kills the drafting threads and leaves rows stuck in the pending
+    state, which the UI can't get out of. Called once at startup, when nothing
+    can be running yet.
     """
     interrupted = list(
         db.scalars(select(ImportedLaw).where(ImportedLaw.draft_status == DRAFT_PENDING))

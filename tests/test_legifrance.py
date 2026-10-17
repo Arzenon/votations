@@ -12,7 +12,7 @@ BASE = get_settings().jorf_dumps_url
 
 
 def _jorf_xml(nor: str, num: str, nature: str = "LOI", articles: int = 2) -> bytes:
-    """A JORFTEXT document in the shape the DILA archives publish."""
+    """A JORFTEXT document like the DILA archives contain."""
     body = "".join(
         f"""<ARTICLE><ID>JORFARTI{i}</ID><NUM>{i}</NUM>
         <BLOC_TEXTUEL><CONTENU><p>Contenu de l'article {i}.</p></CONTENU></BLOC_TEXTUEL>
@@ -39,11 +39,10 @@ def _jorf_xml(nor: str, num: str, nature: str = "LOI", articles: int = 2) -> byt
 
 
 def _tar(texts: dict[str, bytes]) -> bytes:
-    """An archive laid out like a real one: texts plus versions.xml noise."""
+    """An archive like the real ones: texts plus versions.xml files."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as archive:
-        # The real archives are ~97% versions.xml bookkeeping; the fetcher must
-        # filter those out by name rather than parse them.
+        # Real archives are ~97% versions.xml, filtered by name.
         for i in range(3):
             noise = b"<VERSIONS/>"
             info = tarfile.TarInfo(f"d/jorf/simple/JORF/CONT/00/{i}/versions.xml")
@@ -57,7 +56,7 @@ def _tar(texts: dict[str, bytes]) -> bytes:
 
 
 def _index(*names: str) -> bytes:
-    """The directory listing, which names each archive twice (href + label)."""
+    """The directory listing (each archive appears twice: href and label)."""
     rows = "".join(f'<tr><td><a href="{n}">{n}</a></td><td>1.2M</td></tr>' for n in names)
     return f"<html><body><table>{rows}</table></body></html>".encode()
 
@@ -70,7 +69,7 @@ OTHER_LAW = _jorf_xml("XXXX1234567L", "2026-999")
 
 
 def _getter(archives: dict[str, bytes], index: bytes | None = None):
-    """Route the index URL and each archive name, like the real server."""
+    """Serve the index and the archives like the real server."""
     listing = index if index is not None else _index(*archives)
 
     def get(url: str) -> bytes:
@@ -103,7 +102,7 @@ def test_fetches_the_law_by_nor():
 
 
 def test_tries_archives_oldest_first_and_falls_through():
-    """The morning archive is tried first; a miss falls through to the evening one."""
+    """The morning archive is tried first, then the evening one."""
     get = _getter(
         {
             MORNING: _tar({"JORFTEXT01.xml": OTHER_LAW}),
@@ -115,7 +114,7 @@ def test_tries_archives_oldest_first_and_falls_through():
 
 
 def test_falls_through_to_the_next_day():
-    """A text published late can only appear in the following day's archive."""
+    """Falls back to the next day's archive."""
     get = _getter(
         {
             MORNING: _tar({"JORFTEXT01.xml": OTHER_LAW}),
@@ -127,7 +126,7 @@ def test_falls_through_to_the_next_day():
 
 
 def test_ignores_a_different_text_carrying_the_same_nor():
-    """A rectificatif or decree with our NOR is not the law we asked for."""
+    """A rectificatif or decree with the same NOR is ignored."""
     decree = _jorf_xml("SFHX2609544L", "2026-668", nature="DECRET")
     get = _getter({MORNING: _tar({"JORFTEXT01.xml": decree})})
     try:
@@ -147,7 +146,7 @@ def test_raises_when_the_law_is_absent():
 
 
 def test_raises_when_no_archive_covers_the_date():
-    """Only ~13 months of daily archives are retained — say so plainly."""
+    """No archive for the date: the error mentions the ~13 month retention."""
     get = _getter({MORNING: _tar({"JORFTEXT01.xml": OUR_LAW})})
     try:
         fetch_law_text("SFHX2609544L", date(2019, 1, 1), get=get)
@@ -185,7 +184,7 @@ def test_raises_on_missing_nor():
 
 
 def test_list_dumps_dedupes_and_orders():
-    """The real index names each archive twice; ordering must stay chronological."""
+    """Archives are deduplicated and in chronological order."""
     get = _getter({}, index=_index(EVENING, EVENING, MORNING, MORNING, NEXT_DAY))
     dumps = legifrance.list_dumps(get)
     assert dumps["20260728"] == [MORNING, EVENING]

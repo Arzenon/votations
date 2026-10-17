@@ -1,24 +1,11 @@
-"""Recording optional demographics into aggregate counters, and reading them
-back with cell suppression (k-anonymity).
+"""Optional demographics: aggregate counters and suppressed breakdowns.
 
-Two responsibilities:
+``record`` adds a voter's optional age/sex/region to per-law counters, once,
+without storing anything per voter. ``all_breakdowns`` reads them back with
+cell suppression, and from a snapshot while the vote is open (see
+``refresh_snapshot``).
 
-1. ``record`` — fold a voter's optional age/sexe/région into the counters,
-   **once**, with no per-voter row and no token. Concurrency-safe: each cell moves
-   by an upsert, and the vote row is locked by :func:`app.crud.votes.cast_vote`
-   for the whole ballot, so two simultaneous ballots from one browser cannot both
-   believe they are the first.
-2. ``all_breakdowns`` — build a demographic × choice table for display/export,
-   applying whole-table suppression so small cells can never be read or
-   differenced out, and reading a *snapshot* of the counters rather than the
-   counters themselves for as long as the difference between two readings could
-   name a person. ``refresh_snapshot`` moves that snapshot forward while the vote
-   is open and ``publishes_live_counters`` decides when it may finally be dropped;
-   see the two of them for what they defend against together.
-
-Nothing here commits. The ballot is one transaction, opened by ``cast_vote`` and
-closed by the route: a vote and the counters it moves are written together or
-neither is.
+Nothing here commits: the route commits the vote and its counters together.
 """
 
 from __future__ import annotations
@@ -52,12 +39,7 @@ from app.models import (
 
 
 def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, delta: int) -> None:
-    """Atomically move a counter cell by ``delta`` (INSERT … ON CONFLICT DO UPDATE).
-
-    Counters never go below zero: a decrement for a cell that somehow does not
-    exist is clamped rather than creating a negative total that would then be
-    published.
-    """
+    """Atomically add ``delta`` to a counter (upsert). Never goes below zero."""
     stmt = pg_insert(DemographicTally).values(
         law_id=law_id,
         dimension=dimension,
@@ -73,7 +55,7 @@ def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, d
 
 
 def _requested(age_bracket: str | None, sexe: str | None, region: str | None) -> list[tuple]:
-    """The (dimension, category) pairs actually supplied and valid."""
+    """The valid (dimension, category) pairs that were supplied."""
     candidates = {
         DIMENSION_AGE: age_bracket,
         DIMENSION_SEXE: sexe,
@@ -83,7 +65,7 @@ def _requested(age_bracket: str | None, sexe: str | None, region: str | None) ->
 
 
 def _known(categories: dict[str, str] | None) -> dict[str, str]:
-    """Keep only the (dimension, category) pairs this application recognises."""
+    """Drop unknown (dimension, category) pairs."""
     return {
         dimension: category
         for dimension, category in (categories or {}).items()
@@ -102,25 +84,14 @@ def record(
     region: str | None = None,
     previous_categories: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Fold this voter's optional demographics into the counters, exactly once.
+    """Add the voter's optional profile to the counters, once.
 
-    Invalid or empty values are ignored. A voter contributes their profile a
-    single time; if they later change their vote, the contribution is *moved* to
-    the new choice rather than left counted under the old one, so a breakdown
-    always describes the votes as they currently stand.
+    If the voter later changes their vote, the contribution moves to the new
+    choice. The vote row doesn't store the categories: they come back from the
+    voter's cookie as ``previous_categories`` (see `app.profile_cookie`).
+    ``previous_choice`` comes from `cast_vote`.
 
-    Moving it needs two things the vote row deliberately does not hold:
-
-    * **which categories** — they come back from the voter's own browser as
-      ``previous_categories`` (see :mod:`app.profile_cookie`);
-    * **under which choice they were filed** — that is ``previous_choice``, the
-      value the vote held a moment ago, read under the lock ``cast_vote`` takes.
-      It used to be a column on the vote, which meant a row could sit there
-      stating both the choice somebody had made *and* the one they made before —
-      a record of a changed mind that nothing on this platform needs.
-
-    Returns the categories now on file for this voter, for the caller to persist
-    on the device. An empty mapping means there is nothing to remember.
+    Returns the categories to store back in the cookie (empty if none).
     """
     if vote.demographics_recorded:
         return _move(
@@ -149,20 +120,14 @@ def _move(
     previous_choice: str | None,
     categories: dict[str, str],
 ) -> dict[str, str]:
-    """Re-file an existing contribution under a changed vote."""
+    """Move an existing contribution to the new choice."""
     if previous_choice is None or previous_choice == choice.value:
-        # The ballot did not change the choice, so the contribution is already
-        # filed where it belongs.
         return categories
 
     if not categories:
-        # The device no longer remembers what it gave, so nothing can be moved:
-        # the contribution stays under the earlier choice. It stays there for
-        # good, and that is what makes it safe to keep no record of where it
-        # sits. The ballot stops offering the profile fields once a contribution
-        # exists, and the cookie is only ever written back from categories it
-        # already held — so a browser that has forgotten a law can never learn it
-        # again, and no later change can decrement a cell chosen by guesswork.
+        # The cookie is gone, so we can't know which cells to move. The
+        # contribution stays under the old choice for good: the profile fields
+        # are no longer offered, so it can't be counted twice.
         return {}
 
     for dimension, category in categories.items():
@@ -177,16 +142,12 @@ class BreakdownRow:
     counts: dict[str, int]
     total: int
     percentages: dict[str, float]
-    # Representativeness: this category's share of participants who gave a profile
-    # for this dimension, vs the approximate national reference share.
+    # Share of this category among profiled voters, vs the national reference.
     share: float = 0.0
     reference: float | None = None
 
 
-#: Why a breakdown is withheld. Named, because the results page branches on all
-#: three and was doing it by writing the strings out again — a copy of a value
-#: whose only definition was here, that no rename would have followed and whose
-#: drifting would have shown up as the page quietly taking the last branch.
+# Why a breakdown is hidden.
 REASON_NONE = ""
 REASON_EMPTY = "empty"
 REASON_BELOW_THRESHOLD = "below_threshold"
@@ -199,13 +160,8 @@ class Breakdown:
     label: str
     shown: bool
     threshold: int
-    #: One of the REASON_* values above.
-    #:
-    #: « pending » is the one that is not about the data: the votation is open and
-    #: has not yet reached its first published snapshot, so there may well be
-    #: figures — they are simply not publishable yet. Telling it apart from
-    #: « empty » matters, because the page would otherwise say « aucune donnée
-    #: renseignée » about a law people have been filling the fields in on.
+    # A REASON_* value. "pending" means the vote is open and no snapshot has
+    # been published yet, which is different from having no data.
     reason: str = REASON_NONE
 
     @property
@@ -222,7 +178,7 @@ class Breakdown:
 
 
 def all_references(db: Session) -> dict[str, tuple[dict[str, float], int | None]]:
-    """Every dimension's reference shares, in one query."""
+    """Reference shares for every dimension, in one query."""
     rows = db.execute(
         select(
             InseeReference.dimension,
@@ -254,12 +210,10 @@ def _build(
     reference: dict[str, float],
     reference_year: int | None,
 ) -> Breakdown:
-    """Assemble one dimension's table, applying the suppression rule.
+    """Build one dimension's table.
 
-    Suppression rule (whole-table gate): if **any** populated cell holds fewer
-    than ``k`` votes, the entire breakdown is withheld. Nothing partial is ever
-    returned, so a small cell can neither be read directly nor reconstructed by
-    differencing against shown cells, totals, or another dimension's table.
+    If any non-empty cell has fewer than ``k`` votes, the whole table is
+    hidden, so a small cell can't be recovered by subtraction.
     """
     label = DIMENSION_LABELS.get(dimension, dimension)
     populated = [n for cat in cells.values() for n in cat.values() if n > 0]
@@ -269,14 +223,8 @@ def _build(
         return Breakdown(dimension, label, shown=False, threshold=k, reason=REASON_BELOW_THRESHOLD)
 
     dimension_total = sum(populated)
-    # Categories that hold nothing are dropped, not drawn as a row of zeros.
-    #
-    # A cell row is created the moment somebody votes in that category, and its
-    # `published_count` starts at zero — so a category nobody had used before
-    # appeared on the page as « 65+ · 0 · 0 · 0 » the instant one person chose it.
-    # That is the leak the snapshot exists to close, wearing a different hat: the
-    # *arrival* of a row says as much as a number moving in it. Filtering on the
-    # published total closes both, and a row of zeros was never worth drawing.
+    # Skip empty categories. A row of zeros would reveal that someone just
+    # picked that category, before the snapshot catches up.
     ordered = [
         c
         for c in DIMENSION_ORDER.get(dimension, sorted(cells))
@@ -310,47 +258,24 @@ def _build(
     )
 
 
-#: The shortest interval between two moves of a law's published breakdown.
-#:
-#: Not the guarantee — that is the volume rule below, and this is what keeps its
-#: cost down: the check that enforces it counts rows, and this is what stops that
-#: count happening on every single ballot. An hour is short enough that a busy
-#: votation's figures stay recognisably current and long enough that the count
-#: runs once per law per hour whatever the traffic.
+# Minimum time between two snapshots. Mostly limits how often the profiled
+# votes get counted; the volume rule is what protects voters.
 _SNAPSHOT_INTERVAL = timedelta(hours=1)
 
 
 def refresh_snapshot(db: Session, law: Law) -> bool:
-    """Move this law's published breakdown forward if it is due. True if it moved.
+    """Update the published breakdown if it's due. Returns True if it moved.
 
-    **What this exists to prevent.** The counters this module keeps are marginal
-    and never joint, and :func:`_build` withholds a whole dimension unless every
-    populated cell clears ``MIN_CELL_COUNT``. Both of those protect one reading of
-    the results page. A *sequence* of readings defeats them completely: the page
-    is public and unthrottled, so two fetches thirty seconds apart could be
-    subtracted, and the difference was a single ballot — naming that voter's
-    choice together with their age bracket, their sex and their région, which is
-    precisely the joint cell the schema refuses to store. No knowledge of when
-    anybody voted was needed; polling in a loop enumerated them one at a time.
+    Without a snapshot, comparing the public page before and after a single
+    ballot would reveal that voter's choice along with their age, sex and
+    region. So while the vote is open the page shows ``published_count``,
+    which only moves when:
 
-    **The rule.** What the page publishes while the vote is open is
-    ``published_count``, and it may only move when both hold:
+    * at least ``_SNAPSHOT_INTERVAL`` has passed since the last move, and
+    * at least ``min_bucket_volume`` profiled votes have arrived since.
 
-    * at least :data:`_SNAPSHOT_INTERVAL` has passed since it last moved, and
-    * at least ``MIN_BUCKET_VOLUME`` **profiled** votes have arrived since then.
-
-    The second is the one that does the work, and it counts profiled votes rather
-    than votes on purpose. A window of fifty ballots containing a single filled-in
-    profile would otherwise hand that one person's categories over intact — the
-    step has to be large in the quantity it actually discloses.
-
-    A closed votation is left alone: no ballot can arrive to trigger a step, and
-    whether its live counters may be published is decided at read time instead —
-    see :func:`publishes_live_counters`.
-
-    Called from the ballot transaction, before this voter's own contribution is
-    folded in, so nobody can trigger a step and read themselves in it. Commits
-    nothing — the caller owns the transaction, as everywhere else here.
+    Called during the ballot transaction, before the voter's own contribution
+    is added. Does not commit.
     """
     if not law.is_open():
         return False
@@ -375,34 +300,14 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
 
 
 def publishes_live_counters(db: Session, law: Law, *, profiled: int | None = None) -> bool:
-    """Whether this law's breakdowns may be read from ``count`` rather than the snapshot.
+    """Whether breakdowns may use the live counters instead of the snapshot.
 
-    **The closing of a votation is a step like any other, and it is the one that
-    was not held to the rule.** :func:`refresh_snapshot` guarantees the published
-    figures never move by fewer than ``MIN_BUCKET_VOLUME`` profiled votes — and
-    then closing swapped them for the live counters in one go, moving them by
-    whatever remainder happened to be there. Between the last snapshot and the
-    close there may be a single profiled ballot; subtracting the page as it stood
-    an hour before closing from the page as it stands after gives that voter's
-    choice, age bracket, sex and région together, which is exactly the joint cell
-    the whole snapshot mechanism exists to withhold. Nothing had to be timed: the
-    two readings are a public page fetched twice.
+    Closing the vote is one more step and follows the same volume rule:
+    otherwise a single ballot cast after the last snapshot could be recovered
+    by comparing the page before and after closing. If no snapshot was ever
+    published there is nothing to compare against, so live counters are fine.
 
-    So the same volume rule decides the last step too. A closed votation publishes
-    its live counters only when the residual since the last snapshot is a step
-    large enough to be one, and otherwise keeps publishing the snapshot — dated,
-    on a page that says so.
-
-    **A votation that never took a snapshot is the exception, and it is not a
-    hole.** The leak needs an earlier *published* reading to subtract; if nothing
-    was ever published while the vote was open, closing reveals a set rather than
-    a difference, and there is nothing to hold back. That is also the ordinary
-    case for a small votation, where withholding the figures for ever would be
-    the wrong answer to a risk that is not there.
-
-    ``profiled`` is the same optional-argument idiom the rest of the aggregation
-    uses: it is ``Tally.with_profile``, which both pages that ask this have
-    already counted, so the answer costs no query of its own.
+    ``profiled`` is ``Tally.with_profile``, to save a query.
     """
     if law.is_open():
         return False
@@ -414,12 +319,9 @@ def publishes_live_counters(db: Session, law: Law, *, profiled: int | None = Non
 
 
 def published_as_of(db: Session, law: Law, *, profiled: int | None = None) -> datetime | None:
-    """When the breakdowns on offer were arrested, or None if they are live.
+    """Date of the snapshot being shown, or None if the figures are live.
 
-    What the results page and the JSON export both label their figures with. A
-    figure that is deliberately behind is only honest if it says by how much and
-    since when, and both surfaces have to say the same thing — which they did not
-    while each decided for itself by asking whether the votation was open.
+    Shared by the results page and the JSON export so they say the same thing.
     """
     if publishes_live_counters(db, law, profiled=profiled):
         return None
@@ -429,11 +331,9 @@ def published_as_of(db: Session, law: Law, *, profiled: int | None = None) -> da
 def _cells_by_dimension(
     db: Session, law_id: int, *, live: bool
 ) -> dict[str, dict[str, dict[str, int]]]:
-    """Every counter for a law, in one query, as {dimension: {category: {choice: n}}}.
+    """All counters for a law as {dimension: {category: {choice: n}}}.
 
-    ``live`` picks the column: the counters themselves once the vote has closed
-    and nothing can move any more, the published snapshot while it is open. See
-    :func:`refresh_snapshot`.
+    ``live`` reads ``count``, otherwise the ``published_count`` snapshot.
     """
     counter = DemographicTally.count if live else DemographicTally.published_count
     rows = db.execute(
@@ -454,23 +354,11 @@ def _cells_by_dimension(
 def all_breakdowns(
     db: Session, law: Law, *, min_cell: int | None = None, profiled: int | None = None
 ) -> list[Breakdown]:
-    """Every dimension's breakdown — two queries in total, not two per dimension.
-
-    Takes the law rather than its id because *which* numbers may be published is
-    a fact about the votation, not about the counters. See
-    :func:`publishes_live_counters` for what decides it, and ``profiled`` for the
-    figure that lets it be decided without a query.
-    """
+    """Breakdowns for every dimension, in two queries."""
     k = min_cell if min_cell is not None else get_settings().min_cell_count
     live = publishes_live_counters(db, law, profiled=profiled)
     if law.demographics_snapshot_at is None and law.is_open():
-        # Open, and no snapshot taken yet. Every dimension is withheld — but as
-        # "not published yet", never as "nothing to show": people may well have
-        # been filling the optional fields in all along.
-        #
-        # Spelled out rather than read off `live` being false: a *closed* law
-        # holding its snapshot back is now the other way for that to happen, and
-        # it has figures to show — the ones from its last step.
+        # Open with no snapshot yet: everything is "pending", not "empty".
         return [
             Breakdown(
                 dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason=REASON_PENDING
@@ -503,16 +391,7 @@ class ProvisionRate:
 
 
 def provision_rate(db: Session, law_id: int, *, tally: Tally | None = None) -> ProvisionRate:
-    """How many voters chose to share a profile — context for reading breakdowns.
-
-    Derived from the existing ``demographics_recorded`` flag on votes; no extra
-    storage, and no per-voter profile anywhere.
-
-    ``tally`` is the same optional-argument idiom the rest of the aggregation
-    uses: both numbers here come out of the scan :func:`~app.crud.results.tally`
-    already performs, so a caller that has one hands it over instead of walking
-    every vote on the law a second time to answer a question about the same rows.
-    """
+    """Share of voters who gave a profile. Pass ``tally`` to avoid a query."""
     if tally is None:
         tally = results.tally(db, law_id)
     pct = round(100 * tally.with_profile / tally.total, 1) if tally.total else 0.0

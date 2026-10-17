@@ -1,7 +1,5 @@
-# Development stack. Named `.dev` on purpose: `docker compose` picks up a bare
-# `docker-compose.yml` with no `-f`, and this one builds the `dev` image — tests,
-# pytest, ruff — and will seed sample laws if asked to. Neither belongs on a live
-# civic platform, so production must be an explicit `-f docker-compose.prod.yml`.
+# Development stack. Not named docker-compose.yml, so that a bare
+# `docker compose up` never starts it by mistake in production.
 #
 #   docker compose -f docker-compose.dev.yml up --build
 services:
@@ -22,33 +20,17 @@ services:
       retries: 5
 
   app:
-    # Built once, under a name, and reused by the two job services below — the
-    # same arrangement as production, for the same reason: `build: .` on each of
-    # them produced three identical images under three names and left room for
-    # them to drift apart on a partial rebuild.
+    # Built once and reused by the job services below.
     image: votations-app:dev
     build:
       context: .
-      # The test suite and its tooling live in the `dev` stage only, so the
-      # image that ships to production carries neither.
+      # Tests and dev tools are only in the `dev` stage.
       target: dev
     depends_on:
       db:
         condition: service_healthy
-    # Your own `.env`, read exactly as the production stack reads it. Without it,
-    # every setting that lives *only* there — les mentions légales, le fuseau
-    # d'affichage, la résolution de l'horodatage des exports, les URL des données
-    # ouvertes — was silently absent locally while being honoured in production:
-    # you could fill `LEGAL_CONTACT_EMAIL` in, restart, and watch the page go on
-    # saying it was unset, because the file reached the container by no path at
-    # all. The project root is not bind-mounted below and `.env` is in
-    # `.dockerignore`, so it was neither mounted nor baked in.
-    #
-    # `environment` below still wins over this (Compose precedence), which is what
-    # keeps the local database, the throwaway credentials and the anonymity
-    # thresholds pinned to this file whatever your `.env` says.
-    #
-    # `required: false` so a fresh clone with no `.env` still starts.
+    # Your `.env`, as in production. `environment` below takes precedence.
+    # Optional, so a fresh clone starts without one.
     env_file:
       - path: .env
         required: false
@@ -60,18 +42,16 @@ services:
       ADMIN_PASSWORD: change-me
       MIN_BUCKET_VOLUME: "50"
       MIN_CELL_COUNT: "10"
-      # No proxy in front locally: read the client address from the connection
-      # itself and ignore X-Forwarded-For, which anyone could set.
+      # No proxy locally: ignore X-Forwarded-For.
       TRUSTED_PROXY_HOPS: "0"
-      # Optional: enables the AI draft button in the admin. Read from your .env
-      # (or the host environment); with no key the feature is simply absent.
+      # Optional: enables AI drafts in the admin.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       # Seed sample laws on startup (set to 0 to disable).
       SEED_ON_START: "0"
     ports:
       - "8000:8000"
     volumes:
-      # Live code reload in development; remove for an immutable production image.
+      # Live code reload.
       - ./app:/app/app
       - ./alembic:/app/alembic
       - ./scripts:/app/scripts
@@ -79,67 +59,39 @@ services:
     command:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-  # Annual refresh of INSEE reference shares (containerised cron). Reuses the app
-  # image but bypasses the app entrypoint (no migrations/seed) — it only loops the
-  # refresh job. Writes into the shared DB; the app reads the cached values.
+  # INSEE reference refresh. Same image, without the app entrypoint (no
+  # migrations or seed).
   insee-refresh:
     image: votations-app:dev
-    # Built by `app`, never fetched: without this, a registry lookup for a tag
-    # that only exists on this host is the first thing `up` would try.
+    # Built by `app`, not pulled from a registry.
     pull_policy: never
     depends_on:
       db:
         condition: service_healthy
-    # Your own `.env`, read exactly as the production stack reads it. Without it,
-    # every setting that lives *only* there — les mentions légales, le fuseau
-    # d'affichage, la résolution de l'horodatage des exports, les URL des données
-    # ouvertes — was silently absent locally while being honoured in production:
-    # you could fill `LEGAL_CONTACT_EMAIL` in, restart, and watch the page go on
-    # saying it was unset, because the file reached the container by no path at
-    # all. The project root is not bind-mounted below and `.env` is in
-    # `.dockerignore`, so it was neither mounted nor baked in.
-    #
-    # `environment` below still wins over this (Compose precedence), which is what
-    # keeps the local database, the throwaway credentials and the anonymity
-    # thresholds pinned to this file whatever your `.env` says.
-    #
-    # `required: false` so a fresh clone with no `.env` still starts.
+    # Your `.env`, as in production. `environment` below takes precedence.
+    # Optional, so a fresh clone starts without one.
     env_file:
       - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+psycopg://votations:votations@db:5432/votations
       INSEE_REFRESH_INTERVAL: "2592000"   # 30 days
-      # INSEE_API_KEY: ""                 # optional; the dataset is open
+      # INSEE_API_KEY: ""                 # optional, the dataset is open
     entrypoint: ["./docker/insee_cron.sh"]
     volumes:
       - ./app:/app/app
       - ./scripts:/app/scripts
 
-  # Daily import of newly promulgated laws from the Assemblée nationale open data
-  # (containerised cron). Reuses the app image but bypasses the app entrypoint (no
-  # migrations/seed) — it only loops the import job. Rows land in a staging table
-  # and are never published without an admin action.
+  # Daily import from the Assemblée nationale. Same image, without the app
+  # entrypoint. Imported laws need an admin action to be published.
   assemblee-refresh:
     image: votations-app:dev
     pull_policy: never
     depends_on:
       db:
         condition: service_healthy
-    # Your own `.env`, read exactly as the production stack reads it. Without it,
-    # every setting that lives *only* there — les mentions légales, le fuseau
-    # d'affichage, la résolution de l'horodatage des exports, les URL des données
-    # ouvertes — was silently absent locally while being honoured in production:
-    # you could fill `LEGAL_CONTACT_EMAIL` in, restart, and watch the page go on
-    # saying it was unset, because the file reached the container by no path at
-    # all. The project root is not bind-mounted below and `.env` is in
-    # `.dockerignore`, so it was neither mounted nor baked in.
-    #
-    # `environment` below still wins over this (Compose precedence), which is what
-    # keeps the local database, the throwaway credentials and the anonymity
-    # thresholds pinned to this file whatever your `.env` says.
-    #
-    # `required: false` so a fresh clone with no `.env` still starts.
+    # Your `.env`, as in production. `environment` below takes precedence.
+    # Optional, so a fresh clone starts without one.
     env_file:
       - path: .env
         required: false

@@ -1,8 +1,7 @@
-"""One law: reading it, voting on it, and reading the result.
+"""Law page, voting and results.
 
-The three URLs that carry a slug and are about the votation itself. The ballot
-lives here too — it is rendered both as part of the law page and on its own, as
-the fragment HTMX swaps back after a vote, and the two must tell the same story.
+The ballot is rendered both inside the law page and alone, as the fragment
+HTMX swaps in after a vote.
 """
 
 from __future__ import annotations
@@ -43,17 +42,10 @@ router = APIRouter()
 
 
 def _demographic_form_context(chosen: dict[str, str] | None = None) -> dict:
-    """The three optional dropdowns: what they offer, and what is selected in them.
+    """Options and current selection for the three optional dropdowns.
 
-    ``chosen`` is what the visitor had just picked, echoed back when their ballot
-    is refused. Without it a rate-limited voter — or one who forgot to choose —
-    got their radio button back and three dropdowns silently reset to « Ne pas
-    renseigner », with nothing on the page saying they had to fill them in again.
-
-    Keyed by form field name rather than by dimension, because that is what the
-    template renders and what the route was handed. Values that are not one of
-    the options simply match nothing, so a posted category this application does
-    not recognise cannot be echoed back as selected.
+    ``chosen`` (keyed by form field name) keeps the visitor's selection when
+    their ballot is refused.
     """
     return {
         "age_brackets": DIMENSION_ORDER[DIMENSION_AGE],
@@ -64,28 +56,19 @@ def _demographic_form_context(chosen: dict[str, str] | None = None) -> dict:
 
 
 def _back_to(law: Law) -> str:
-    """This law's own URL, built from the stored slug rather than the path.
-
-    The two are the same string today — `visible` looked the law up by that very
-    parameter, and every slug in the table went through `slugify`, which strips
-    anything a header could be split on. Building the `Location` from the column
-    means it stays true of code that has not been written yet: a slug is what the
-    database holds, not what the caller typed.
-    """
+    """The law's URL, built from the stored slug rather than from the request."""
     return f"/loi/{law.slug}"
 
 
 def _carry_cookies(source: Response, target: Response) -> Response:
-    """Move any Set-Cookie an auth/profile helper wrote onto the real response."""
+    """Copy Set-Cookie headers from ``source`` to ``target``."""
     for key, value in source.raw_headers:
         if key.lower() == b"set-cookie":
             target.raw_headers.append((key, value))
     return target
 
 
-# Every way the vote route can refuse, in the words the voter reads. They exist
-# as constants because each one is used twice: once in the full page and once in
-# the HTMX fragment, and the two must not drift into telling different stories.
+# Messages shown when a vote is refused.
 GONE_NOTICE = "Cette votation n'est plus disponible. Rechargez la page pour voir son état actuel."
 CLOSED_NOTICE = "Cette votation vient de se clore : votre vote n'a pas pu être enregistré."
 NO_CHOICE_NOTICE = "Choisissez « Pour », « Contre » ou « Abstention » avant de valider."
@@ -106,18 +89,10 @@ def _ballot_fragment(
     notice: str = "",
     chosen: dict[str, str] | None = None,
 ) -> HTMLResponse:
-    """The ballot on its own, for HTMX to swap back into the page.
+    """The ballot fragment, for HTMX.
 
-    Every refusal on the vote route answers with this when the request came from
-    HTMX, and with a redirect or a full error page when it did not. The two
-    branches are not decoration: htmx follows a 303 and swaps whatever it lands
-    on into the ballot's ``<div>``, so a vote on a law that had just closed
-    nested the entire site inside the ballot; and htmx discards the body of a
-    4xx, so a rate-limited voter watched the button do nothing whatsoever.
-
-    Answering 200 here is deliberate. The refusal is carried by the fragment's
-    own text, which is what the voter actually reads; the status code has no
-    reader left to inform once the response is a piece of a page.
+    Refusals return this with a 200 for HTMX requests: htmx would swap a
+    whole redirected page into the ballot, and ignores the body of a 4xx.
     """
     return templates.TemplateResponse(
         request,
@@ -125,11 +100,6 @@ def _ballot_fragment(
         {
             "law": law,
             "status": status,
-            # The one question the ballot asks of the status, decided here rather
-            # than by comparing against « open » in the template: the value is
-            # `STATUS_OPEN`, and a page that spells it out is a copy no rename
-            # would follow — the same reason `draft_state_context` hands its
-            # partial three booleans instead of a status string.
             "voting_open": status == STATUS_OPEN,
             "existing_choice": existing_choice,
             "choices": list(VoteChoice),
@@ -149,14 +119,9 @@ def _refused_ballot(
     notice: str,
     chosen: dict[str, str] | None = None,
 ) -> HTMLResponse:
-    """The visitor's own ballot, re-rendered with the reason it was refused.
+    """Re-render the visitor's ballot with the refusal message.
 
-    Reads the existing vote back so a refusal leaves the radio buttons showing
-    what this browser had already chosen, rather than silently clearing it — and
-    takes ``chosen`` for the same reason, one field further down: the optional
-    profile is typed on the same submit that was refused, and re-rendering the
-    ballot without it asked the voter to fill it in again with no indication that
-    it had gone.
+    Keeps their existing vote and their profile selection (``chosen``).
     """
     voter_token = auth.peek_voter_token(request)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
@@ -181,23 +146,9 @@ def law_page_context(
     demographics_locked: bool = False,
     preview: bool = False,
 ) -> dict:
-    """Everything ``law.html`` needs.
-
-    Shared with the administration's preview, which renders this same template on
-    purpose: an approximation would only catch the mistakes somebody thought to
-    approximate. Sharing the context is what keeps the preview honest as the page
-    grows — a block added here appears in both, or in neither.
-    """
-    # Three cases, and only the middle one asks the database anything.
-    #
-    # Only the closed page shows a tally: counting the votes to render a ballot
-    # nobody sees was wasted work on the busiest page of the site. And `law.id` is
-    # None for the administration's preview of an unsaved form — a `Law` built for
-    # one render and never added to the session. That case used to reach the two
-    # queries below and be answered zero, correctly and by accident: the predicate
-    # became `law_id IS NULL`, which matches nothing. Saying so here keeps a None
-    # out of two helpers whose parameter is typed `int`, and out of the per-law
-    # memo `tally` writes to. See `results_crud.empty_tally`.
+    """Context for ``law.html``. Also used by the admin preview."""
+    # The tally is only shown once the vote is closed. law.id is None for the
+    # preview of an unsaved law.
     if status == STATUS_OPEN:
         tally = None
     elif law.id:
@@ -208,8 +159,6 @@ def law_page_context(
     return {
         "law": law,
         "status": status,
-        # See `_ballot_fragment`: the template asks whether it may show a ballot,
-        # not what the status string happens to be.
         "voting_open": status == STATUS_OPEN,
         "existing_choice": existing_choice,
         "tally": tally,
@@ -217,15 +166,8 @@ def law_page_context(
         "demographics_locked": demographics_locked,
         "revision_count": laws_crud.count_revisions(db, law.id) if law.id else 0,
         "preview": preview,
-        # For « Signaler une erreur » in the provenance note: the page admits the
-        # presentation may be wrong, so it has to say where to report it. Empty
-        # when no contact is configured, and the offer simply disappears.
+        # For the "Signaler une erreur" link; hidden if empty.
         "contact_email": get_settings().legal_contact_email,
-        # The law as the thing it is, for a search engine — see `app.seo`. Built
-        # here rather than in the route so the administration's preview carries
-        # it too: this builder exists precisely so the preview is the page and
-        # not an approximation of it, and a block emitted on one and not the
-        # other is how that stops being true.
         "jsonld": seo.graph(
             seo.legislation(origin, law),
             seo.breadcrumb(origin, [("Accueil", "/"), (law.title, f"/loi/{law.slug}")]),
@@ -245,8 +187,7 @@ def law_page(
     if law is None:
         return not_found(request)
 
-    # Reading a law issues nothing: a voter token is minted when someone votes,
-    # not when they visit. Somebody who only reads leaves no identifier behind.
+    # Don't create a token for readers, only for voters.
     voter_token = auth.peek_voter_token(request)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
 
@@ -268,9 +209,7 @@ def law_page(
 def cast_vote(
     request: Request,
     slug: str,
-    # Optional rather than required, so an empty ballot is answered by this route
-    # instead of by FastAPI's validation error. The radio group carries `required`
-    # too, so in a browser this is the fallback for the fallback.
+    # Optional so an empty ballot gets our message, not a validation error.
     choice: str = Form(""),
     age_bracket: str = Form(""),
     sexe: str = Form(""),
@@ -279,8 +218,7 @@ def cast_vote(
     auth: AuthProvider = Depends(get_auth_provider),
 ):
     htmx = bool(request.headers.get("HX-Request"))
-    # What the visitor typed in the optional dropdowns, kept so that every refusal
-    # below hands it back rather than clearing it — see `_demographic_form_context`.
+    # Sent back with any refusal so the dropdowns aren't reset.
     chosen = {"age_bracket": age_bracket, "sexe": sexe, "region": region}
 
     law = visible(db, slug)
@@ -289,17 +227,9 @@ def cast_vote(
             return _ballot_fragment(request, None, notice=GONE_NOTICE)
         return not_found(request)
 
-    # A fresh cookie is a fresh voter, so without this a script can add votes as
-    # fast as it can open connections. Counters are held in memory only.
-    #
-    # Checked and *recorded* in two steps, on either side of reading the choice,
-    # which is the same split the administration's guard uses and for a related
-    # reason. Recording first charged a ballot with nothing chosen against an
-    # allowance that is shared by everyone on one connection — an address is not
-    # a person here, so the cost of a mis-click landed on strangers. Checking
-    # first still refuses an address already over the limit, so a flood is
-    # answered before any of the work below; only a request that really is a
-    # ballot spends allowance.
+    # Rate limit, since a new cookie means a new voter. Checked first, but only
+    # recorded once we know the request is a real ballot (the limit is shared by
+    # everyone behind the same IP).
     settings = get_settings()
     throttle = ratelimit.Throttle(
         limit=settings.vote_rate_limit,
@@ -318,22 +248,17 @@ def cast_vote(
             return _refused_ballot(request, db, law, auth, notice=NO_CHOICE_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
 
-    # This one is a ballot. A vote on a votation that closed a moment ago still
-    # counts against the limit below: it is an attempt to write, and telling the
-    # two apart is exactly what an attacker would arrange.
+    # A vote on a just-closed law still counts towards the limit.
     if ratelimit.too_many(request, **throttle):
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=TOO_MANY_NOTICE, chosen=chosen)
         return too_many_votes(request)
 
-    carrier = Response()  # collects the cookies the helpers below set
+    carrier = Response()  # collects cookies set by the helpers
     voter_token = auth.get_voter_token(request, carrier)
 
-    # One transaction for the whole ballot, from here to the commit below. The
-    # vote row is locked by `cast_vote` and stays locked while the counters move,
-    # so two ballots arriving from one browser at once cannot both count a
-    # profile; and a failure anywhere in between takes the vote down with it
-    # rather than leaving a vote whose counters were never moved.
+    # One transaction until the commit below. `cast_vote` locks the vote row
+    # meanwhile, so concurrent ballots can't count the profile twice.
     try:
         vote, previous_choice = votes_crud.cast_vote(db, law, voter_token, vote_choice)
     except votes_crud.VotingClosed:
@@ -341,17 +266,12 @@ def cast_vote(
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
 
-    # Move the *published* breakdown forward first, if it is due — before this
-    # ballot's own contribution is folded in below, so that nobody can trigger a
-    # step and read themselves inside it. See `demo_crud.refresh_snapshot` for
-    # what the snapshot defends against; on the overwhelming majority of ballots
-    # this is two in-memory comparisons and no query at all.
+    # Before adding this ballot's profile, so a voter can't trigger a snapshot
+    # that includes themselves.
     demo_crud.refresh_snapshot(db, law)
 
-    # Optional, anonymous: folded once into aggregate counters (no per-voter row).
-    # The categories a voter already contributed come back from their own device,
-    # keyed on this law, so changing a vote moves this law's counters and no
-    # other law's. The cookie is decoded once and both read from and written to.
+    # Optional profile, added to the counters once. Previous categories come
+    # from the cookie.
     profile = profile_cookie.load(request)
     on_file = demo_crud.record(
         db,
@@ -364,12 +284,10 @@ def cast_vote(
         previous_categories=profile.for_law(law.id),
     )
     db.commit()
-    # Only once the ballot is safely stored: a cookie promising a contribution
-    # that a rolled-back transaction never made would move the wrong cell on the
-    # next change.
+    # Only after the commit, so the cookie never refers to a rolled-back vote.
     profile.remember(carrier, law.id, on_file)
 
-    # HTMX request → return just the ballot fragment; else full-page redirect.
+    # HTMX gets the fragment, otherwise redirect.
     if htmx:
         fragment = _ballot_fragment(
             request,
@@ -387,29 +305,19 @@ def cast_vote(
 def results_page(
     request: Request,
     slug: str,
-    # The page of the modification history, not of the results. Named so it reads
-    # as what it pages through, since it is the only paged thing here.
+    # Page number of the revision history.
     revisions: int = 1,
     db: Session = Depends(get_db),
 ):
     law = visible(db, slug)
     if law is None:
         return not_found(request)
-    # One pass over this law's votes, shared by everything below that needs it.
-    # Four separate COUNT(*)s used to answer the same question per render.
-    #
-    # Two passes, in fact — the tally and the curve — and on a closed votation
-    # both are repetition, because nothing about a closed votation can move. That
-    # is what `results_memo_age` returns a number for here and zero while the vote
-    # is open; see it for why the open case is deliberately not the same trade.
+    # Memoised only once the vote is closed (see `results_memo_age`).
     status = law.status()
     memo_age = results_memo_age(status)
     tally = results_crud.tally(db, law.id, max_age=memo_age)
     evolution = results_crud.evolution(db, law.id, total=tally.total, max_age=memo_age)
-    # `tally.with_profile` is the count both of these would otherwise ask the
-    # database for on their own — it decides whether this law's last step to the
-    # live counters is large enough to publish. See
-    # `demo_crud.publishes_live_counters`.
+    # Pass with_profile to save a query (see `publishes_live_counters`).
     breakdowns = demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
     breakdowns_as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
     history = laws_crud.revisions(db, law.id, page=revisions)
@@ -422,14 +330,7 @@ def results_page(
             "law": law,
             "status": status,
             "voting_open": status == STATUS_OPEN,
-            # The open data, declared as a dataset — which is what makes these
-            # figures findable by somebody looking for the figures rather than
-            # for the law. The law is in the graph too, because the dataset says
-            # it is `about` it and a reference only resolves inside the document
-            # that carries it — but as `legislation_ref`, which names it and
-            # stops there: this page shows a votation's figures, not the law's
-            # presentation, and markup must not assert what a page does not
-            # display. See `app.seo.legislation_ref` for what that cost.
+            # The dataset, plus a minimal reference to the law it's `about`.
             "jsonld": seo.graph(
                 seo.legislation_ref(origin, law),
                 seo.votation_dataset(origin, law),
@@ -446,15 +347,8 @@ def results_page(
             "evolution": evolution,
             "chart": build_evolution_chart(evolution),
             "breakdowns": breakdowns,
-            # The suppression threshold is the same for every dimension; passing
-            # it explicitly means the template does not have to reach into
-            # `breakdowns[0]` and take the list being non-empty on faith.
             "min_cell_count": settings.min_cell_count,
-            # When the breakdowns above were last allowed to move, and by how
-            # little they may move at a time. None once the live counters are
-            # published, where dating them would suggest a lag that is not there.
-            # The page has to say this — a figure that is deliberately behind is
-            # only honest if it is labelled.
+            # Snapshot date, shown on the page. None when the figures are live.
             "breakdowns_as_of": breakdowns_as_of,
             "min_bucket_volume": settings.min_bucket_volume,
             "provision": demo_crud.provision_rate(db, law.id, tally=tally),

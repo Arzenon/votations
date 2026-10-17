@@ -1,10 +1,4 @@
-"""Work the pages must *not* do.
-
-Asserted by counting the statements a request sends, because these are the
-regressions nobody notices until a votation gets popular: a page that reads every
-vote to render a ballot, or a listing that fetches prose to draw a table of
-titles.
-"""
+"""Work the pages must not do, checked by counting SQL statements."""
 
 from __future__ import annotations
 
@@ -45,7 +39,7 @@ def count_queries(db_session):
 
 
 def test_the_law_page_does_not_read_every_vote(client, db_session, open_law, count_queries):
-    """It used to fetch every vote row for an evolution curve it never rendered."""
+    """The law page doesn't fetch the votes."""
     for i in range(60):
         db_session.add(Vote(law_id=open_law.id, voter_token=f"v{i}", choice="for"))
     db_session.commit()
@@ -106,7 +100,7 @@ def test_the_evolution_curve_is_bucketed_by_the_database(db_session, open_law, c
     assert not any("votes.voter_token" in s for s in seen), "no row-by-row fetch"
 
 
-# --- B7 / C8: cheaper public pages -------------------------------------------
+# --- Cheaper public pages ---------------------------------------------------
 
 
 def test_an_absurd_page_number_is_clamped(client, db_session):
@@ -117,11 +111,7 @@ def test_an_absurd_page_number_is_clamped(client, db_session):
 
 
 def test_a_listing_that_shows_no_excerpt_does_not_fetch_one(db_session, count_queries):
-    """The search results and the admin table show titles, references and dates.
-
-    They were fetching whole summaries to throw them away. Deferred rather than
-    dropped, so an attribute touched anyway still works — it just costs a query.
-    """
+    """Search results and the admin table don't load the summaries."""
     publish_laws(db_session, 3)
     with count_queries() as seen:
         laws_crud.search(db_session, query=None, status=None, page=1)
@@ -133,16 +123,7 @@ def test_a_listing_that_shows_no_excerpt_does_not_fetch_one(db_session, count_qu
 
 
 def test_the_home_page_gets_a_cut_excerpt_not_the_whole_summary(db_session, count_queries):
-    """The one listing that shows an excerpt asks the database to cut it.
-
-    `summary_text` has no width in the schema and the admin form accepts 20 000
-    characters, so selecting it to render two lines made the cost of the busiest
-    page depend on the longest text anyone had ever pasted. `left()` bounds it.
-
-    Two windows rather than one: what must not happen is a *second* statement
-    when the attribute is read — an excerpt that costs a query per card would be
-    a worse trade than the one it replaced.
-    """
+    """The home page excerpt is cut by the database, without an extra query."""
     publish_laws(db_session, 3)
     with count_queries() as listing:
         rows = laws_crud.list_published(db_session)
@@ -158,7 +139,7 @@ def test_the_home_page_gets_a_cut_excerpt_not_the_whole_summary(db_session, coun
 
 
 def test_the_excerpt_says_when_there_is_more(db_session):
-    """The template adds an ellipsis by length, so the cut must overshoot by one."""
+    """The excerpt is one character longer than shown, to detect truncation."""
     long_summary = "x" * (laws_crud.EXCERPT_CHARS + 500)
     make_law(db_session, slug="loi-longue", title="Loi longue", summary_text=long_summary)
     row = next(r for r in laws_crud.list_published(db_session) if r.slug == "loi-longue")
@@ -169,12 +150,7 @@ def test_the_excerpt_says_when_there_is_more(db_session):
 
 
 def test_the_home_page_trails_off_at_the_length_the_database_cut(client, db_session):
-    """And the page must cut at the same number the SQL did.
-
-    It held that number as a literal, twice — once to slice and once to decide
-    the ellipsis — against a constant that lives in Python. The overshoot of one
-    only means anything while the two agree.
-    """
+    """The template truncates at the same length as the SQL."""
     cut = laws_crud.EXCERPT_CHARS
     make_law(db_session, slug="loi-longue", title="Loi longue", summary_text="a" * (cut + 500))
     make_law(db_session, slug="loi-courte", title="Loi courte", summary_text="b" * (cut - 5))
@@ -186,7 +162,7 @@ def test_the_home_page_trails_off_at_the_length_the_database_cut(client, db_sess
 
 
 def test_recording_a_vote_reads_it_back_once(db_session, open_law, count_queries):
-    """`get` followed by `refresh` fetched the same row twice, on every vote."""
+    """Casting a vote reads the row back once."""
     from app.crud import votes as votes_crud
     from app.models import VoteChoice
 
@@ -199,11 +175,7 @@ def test_recording_a_vote_reads_it_back_once(db_session, open_law, count_queries
 def test_the_results_page_walks_the_votes_once_for_both_counts(
     client, db_session, open_law, count_queries
 ):
-    """The tally and the profile rate are two questions about the same rows.
-
-    They were two scans of every vote on the law, on a page that already makes
-    three. One `GROUP BY` with a filtered count answers both.
-    """
+    """The tally and the profile rate come from a single scan."""
     for i in range(60):
         db_session.add(
             Vote(
@@ -228,7 +200,7 @@ def test_the_results_page_walks_the_votes_once_for_both_counts(
 
 
 def test_the_tally_carries_how_many_voters_shared_a_profile(db_session, open_law):
-    """Counted in the same pass, so `provision_rate` needs no query of its own."""
+    """The tally includes the number of profiled votes."""
     from app.crud import demographics as demo_crud
 
     for i in range(10):
@@ -262,7 +234,7 @@ def test_deriving_the_profile_rate_from_a_tally_costs_nothing(db_session, open_l
 
 
 def test_a_colliding_slug_is_resolved_in_one_query(db_session, count_queries):
-    """It used to ask "is `loi-x-2` taken? `-3`? `-4`?", one round trip each."""
+    """A slug collision is resolved in one query."""
     for n in range(6):
         make_law(db_session, slug="loi-x" if n == 0 else f"loi-x-{n + 1}", title=f"Loi X {n}")
 
@@ -273,9 +245,8 @@ def test_a_colliding_slug_is_resolved_in_one_query(db_session, count_queries):
 
 
 def test_a_very_long_title_leaves_room_for_its_suffix(db_session):
-    """`slugify` cut at the column's width, leaving none for the `-2`."""
-    # Long enough that the slug needs trimming, short enough for `laws.title`
-    # (500) — the admin form refuses anything longer anyway.
+    """A very long slug leaves room for the "-2" suffix."""
+    # Long enough to need trimming, within laws.title's 500 characters.
     title = "Loi " + "extraordinairement longue " * 16
     first = laws_crud.unique_slug(db_session, title)
     make_law(db_session, slug=first, title=title)
@@ -287,12 +258,7 @@ def test_a_very_long_title_leaves_room_for_its_suffix(db_session):
 
 
 def test_the_home_page_counts_every_law_s_votes_in_one_query(client, db_session, count_queries):
-    """Participation on the cards must not cost one query per card.
-
-    The administration's dashboard already learned this — `tallies_for` groups the
-    whole page's counts into a single scan — and the home page now shows the same
-    figure, so it uses the same call rather than a tally per law.
-    """
+    """Home page participation counts take a single query."""
     from tests.helpers import publish_laws
 
     publish_laws(db_session, 12)
@@ -308,13 +274,7 @@ def test_the_home_page_counts_every_law_s_votes_in_one_query(client, db_session,
 def test_the_home_page_does_not_recount_inside_its_own_cache_window(
     client, db_session, count_queries
 ):
-    """One query is not the same thing as a cheap one.
-
-    Counting the participation of every listed law walks every vote ever cast on
-    any of them, and nothing in the shipped stack caches on the app's behalf. The
-    page already tells its reader the figures may be a minute old; serving them
-    from memory for that same minute tells nobody anything new.
-    """
+    """Within its cache window, the home page doesn't count again."""
     publish_laws(db_session, 5)
     client.get("/")  # warms it
 
@@ -325,24 +285,14 @@ def test_the_home_page_does_not_recount_inside_its_own_cache_window(
 
 
 def test_a_ballot_makes_the_home_page_count_that_law_again(client, db_session, open_law):
-    """The window is the backstop, not the mechanism.
-
-    A vote drops the law it was cast on, so the figure a reader sees is not
-    merely fresh-ish but current — and a busy site re-counts the one votation
-    being voted on rather than all of them.
-    """
+    """A ballot invalidates the memo for its law."""
     assert "Aucun vote" in client.get("/").text
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
     assert "1 vote" in client.get("/").text
 
 
 def test_an_open_votation_recounts_its_results_every_time(client, open_law, count_queries):
-    """The one page that must not be memoised, and why.
-
-    Its thirty seconds of caching are aimed at one reader's own browser and were
-    chosen so somebody who has just voted still sees their ballot. A memo shared
-    by every reader would spend that budget on somebody else's request.
-    """
+    """Results of an open vote aren't memoised."""
     client.get(f"/loi/{open_law.slug}/resultats")
     with count_queries() as seen:
         client.get(f"/loi/{open_law.slug}/resultats")
@@ -352,7 +302,7 @@ def test_an_open_votation_recounts_its_results_every_time(client, open_law, coun
 
 
 def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, count_queries):
-    """Nothing about a closed votation can move, so both scans are repetition."""
+    """Results of a closed vote are memoised."""
     client.get(f"/loi/{closed_law.slug}/resultats")
     with count_queries() as seen:
         client.get(f"/loi/{closed_law.slug}/resultats")
@@ -361,7 +311,7 @@ def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, c
 
 
 def test_the_memo_window_is_the_one_the_page_promises():
-    """Two numbers that must be the same, in two files that cannot see each other."""
+    """The memo duration equals the page's max-age."""
     from app.models import STATUS_CLOSED, STATUS_OPEN
     from app.routes.public.common import (
         CLOSED_RESULTS_CACHE,
@@ -381,16 +331,10 @@ def test_the_memo_window_is_the_one_the_page_promises():
 
 
 def test_the_public_visibility_filter_can_use_its_partial_index():
-    """`published`, never `published IS true` — and this is why.
+    """The filter uses `published`, not `published IS true`.
 
-    Postgres applies a partial index only where it can *prove* the query's WHERE
-    implies the index predicate, and it cannot prove that of ``IS true``. The
-    explicit spelling therefore disqualified `ix_laws_home` silently: identical
-    results, identical rows, and every public listing back to reading the whole
-    table and sorting it — 26.8 ms against 0.3 ms at fifty thousand laws.
-
-    Tidying `_published` back to `.is_(True)` is exactly the change a reviewer
-    would wave through, so it is asserted here rather than left to a comment.
+    Postgres won't use the partial index ix_laws_home with `IS true`
+    (0.3 ms vs 26.8 ms at 50,000 laws).
     """
     from sqlalchemy import select
 
@@ -403,7 +347,7 @@ def test_the_public_visibility_filter_can_use_its_partial_index():
 
 
 def test_the_index_the_listings_rely_on_is_declared():
-    """Its two halves live in different files; neither works without the other."""
+    """ix_laws_home is declared on the model with the expected predicate."""
     from sqlalchemy import text
 
     from app.models import Law
@@ -416,15 +360,7 @@ def test_the_index_the_listings_rely_on_is_declared():
 def test_a_closed_votation_with_a_snapshot_costs_no_extra_scan(
     client, closed_law, db_session, count_queries
 ):
-    """Deciding whether the last step may be published must be free.
-
-    A closed votation that took a snapshot while it was open has to compare its
-    profiled count against the one recorded at that snapshot — see
-    `demo_crud.publishes_live_counters`. That number is `Tally.with_profile`,
-    which this page already counts, so both the breakdowns and their date are
-    decided from it. Asking the database again would have put a second scan back
-    on the page the memo exists to keep off.
-    """
+    """A closed vote with a snapshot needs no extra scan (uses Tally.with_profile)."""
     for i in range(30):
         db_session.add(
             Vote(

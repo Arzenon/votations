@@ -1,4 +1,4 @@
-"""The AI draft banner: a small state machine that must not lose its message."""
+"""The AI draft status banner."""
 
 from __future__ import annotations
 
@@ -6,16 +6,11 @@ from datetime import UTC, datetime
 
 from tests.helpers import admin_headers
 
-# --- D1: the draft banner stops nagging, but only after it has been seen -------
+# --- Failure banner ------------------------------------------------------------
 
 
 def test_a_failed_draft_is_shown_until_it_is_dismissed(client, db_session):
-    """A failure must be seen once, then stop nagging — without a GET clearing it.
-
-    Clearing it while *rendering* the form meant an ordinary GET destroyed the
-    only record of why the draft had not happened, so a link prefetch or a
-    browser preload could consume the explanation before anybody read it.
-    """
+    """A failed draft is shown until dismissed (a GET doesn't clear it)."""
     from app.crud import imports as imports_crud
     from app.models import ImportedLaw
 
@@ -68,7 +63,7 @@ def test_dismissing_a_draft_failure_needs_the_admin_guard(client, db_session):
 
 
 def test_a_pending_draft_is_never_cleared_by_opening_the_form(client, db_session):
-    """Clearing it mid-run would stop the polling banner while the job continues."""
+    """Opening the form doesn't clear a running draft."""
     from app.crud import imports as imports_crud
     from app.models import ImportedLaw
 
@@ -94,13 +89,10 @@ def test_a_pending_draft_is_never_cleared_by_opening_the_form(client, db_session
 
 
 def test_a_running_draft_never_holds_the_process_open():
-    """The whole of CORR-1, and the reason the pool is not a ThreadPoolExecutor.
+    """A running draft doesn't keep the process alive (daemon threads).
 
-    Its workers are ordinary threads, and `concurrent.futures.thread` joins every
-    one of them at interpreter exit — so `shutdown(wait=False,
-    cancel_futures=True)` returned instantly and the process then sat there for
-    as long as the draft had left. Docker gives up after ten seconds, which made
-    a redeploy during a draft end in SIGKILL.
+    ThreadPoolExecutor joins its threads at exit, so Docker would kill the
+    container during a redeploy.
     """
     import threading
 
@@ -123,7 +115,7 @@ def test_a_running_draft_never_holds_the_process_open():
 
 
 def test_a_queued_draft_is_not_started_once_the_service_is_stopping(monkeypatch):
-    """`cancel_futures` used to be what dropped these; now the flag is."""
+    """A queued draft doesn't start once shutdown has begun."""
     from app import drafting
 
     monkeypatch.setattr(drafting, "_stopping", drafting.threading.Event())
@@ -137,7 +129,7 @@ def test_a_queued_draft_is_not_started_once_the_service_is_stopping(monkeypatch)
 
 
 def test_a_draft_between_steps_stops_with_a_readable_reason(monkeypatch):
-    """A cooperative stop still records *why*, rather than vanishing."""
+    """A draft stopped between steps records why."""
     import pytest
 
     from app import drafting

@@ -1,7 +1,6 @@
-"""The law form: what it accepts, what it refuses, and in whose timezone.
+"""The law form: what it accepts and refuses, and time zones.
 
-Opening and closing times are typed as Paris civil time and stored as UTC, which
-is the single richest source of off-by-an-hour bugs in the application.
+Times are entered in Paris time and stored in UTC.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ PARIS = ZoneInfo("Europe/Paris")
 
 
 def test_a_closing_time_means_the_hour_the_admin_typed(client, db_session):
-    """The form says 20:00; it used to close at 22:00 Paris."""
+    """20:00 in the form means 20:00 Paris time."""
     client.post(
         "/admin/lois",
         headers=admin_headers(),
@@ -34,7 +33,7 @@ def test_a_closing_time_means_the_hour_the_admin_typed(client, db_session):
 
 
 def test_winter_and_summer_are_both_right(client, db_session):
-    """A fixed offset would be wrong for half the year."""
+    """Correct in both winter and summer time."""
     client.post(
         "/admin/lois",
         headers=admin_headers(),
@@ -61,7 +60,7 @@ def test_the_edit_form_shows_back_what_was_typed(client, db_session):
 
 
 def test_a_law_opens_at_the_local_hour_it_was_scheduled_for(db_session):
-    """The status the public sees follows the same clock as the form."""
+    """The public status follows the same clock as the form."""
     opens = datetime(2026, 7, 1, 20, 0, tzinfo=PARIS)
     law = Law(slug="prog", title="Programmée", published=True, opens_at=opens)
     db_session.add(law)
@@ -110,16 +109,11 @@ def test_a_nonsense_import_id_is_rejected_not_fatal(client, db_session):
     assert r.status_code == 422
 
 
-# --- B1 / B4 / B5: the form refuses instead of failing quietly ---------------
+# --- Invalid input is refused with a message ------------------------------------
 
 
 def test_a_half_filled_argument_is_refused_not_silently_wiped(client, db_session):
-    """An author with no quote is an argument someone started and lost track of.
-
-    Dropping it quietly would lose an argument on a platform whose premise is
-    symmetry between the two sides — the same reason malformed JSON used to be
-    refused rather than swallowed, back when this field was JSON.
-    """
+    """An argument with an author but no quote is refused, not silently dropped."""
     law = make_law(db_session, slug="loi-args", arguments_for=[{"text": "gardé"}])
     r = client.post(
         f"/admin/lois/{law.id}",
@@ -139,12 +133,7 @@ def test_a_half_filled_argument_is_refused_not_silently_wiped(client, db_session
 
 
 def test_an_entirely_empty_argument_row_is_simply_skipped(client, db_session):
-    """A row added and then left blank must be skipped, not refused.
-
-    The page no longer renders a spare row, but « Ajouter un argument » can leave
-    one behind: adding a row and thinking better of it is ordinary, and it must
-    not be the difference between saving and a 400.
-    """
+    """An empty argument row is skipped."""
     r = client.post(
         "/admin/lois",
         headers=admin_headers(),
@@ -162,12 +151,11 @@ def test_an_entirely_empty_argument_row_is_simply_skipped(client, db_session):
 
 
 def test_arguments_are_paired_by_position(client, db_session):
-    """Three parallel lists, zipped in document order — no index in the names."""
+    """The three lists are matched by position."""
     r = client.post(
         "/admin/lois",
         headers=admin_headers(),
-        # Repeated fields, exactly as the browser posts them: a list per name,
-        # zipped by position on the server.
+        # Repeated fields, as the browser posts them.
         data={
             "title": "Loi à deux arguments",
             "arguments_for_text": [
@@ -213,15 +201,11 @@ def test_an_empty_title_is_refused(client):
     assert r.status_code == 400
 
 
-# --- The prose blocks are Text columns, so nothing bounded them ---------------
+# --- Length limits ------------------------------------------------------------
 
 
 def test_an_enormous_summary_is_refused_with_a_message(client):
-    """`summary_text` had no limit at all: the column is Text and so was the form.
-
-    A whole loi de finances pasted in landed as a multi-megabyte row that the home
-    page then read in full to render a 200-character excerpt.
-    """
+    """An enormous summary is refused with a message."""
     r = client.post(
         "/admin/lois",
         headers=admin_headers(),
@@ -249,13 +233,7 @@ def test_an_argument_longer_than_a_quotation_is_refused(client):
 
 
 def test_more_arguments_than_a_side_may_carry_are_refused(client, db_session):
-    """The prose blocks were bounded and the argument lists were not.
-
-    Which made the sizing at `_PROSE_LIMITS` arithmetic that did not close: the
-    form's real ceiling was Starlette's thousand-field limit, so a side could
-    carry a quarter of a megabyte of JSON onto a public page and the
-    administrator met it as a bare 413 from the edge, naming no field.
-    """
+    """Too many arguments on one side are refused."""
     over = forms.MAX_ARGUMENTS_PER_SIDE + 1
     r = client.post(
         "/admin/lois",
@@ -274,7 +252,7 @@ def test_more_arguments_than_a_side_may_carry_are_refused(client, db_session):
 
 
 def test_exactly_the_limit_is_accepted(client, db_session):
-    """The bound is generous on purpose; it must not be off by one."""
+    """Exactly the limit is accepted."""
     n = forms.MAX_ARGUMENTS_PER_SIDE
     client.post(
         "/admin/lois",
@@ -292,7 +270,7 @@ def test_exactly_the_limit_is_accepted(client, db_session):
 
 
 def test_the_preview_truncates_the_arguments_rather_than_dropping_them(client):
-    """`_echoed` cuts every other over-long field; a list must not come back empty."""
+    """The preview truncates the argument list rather than emptying it."""
     over = forms.MAX_ARGUMENTS_PER_SIDE + 3
     r = client.post(
         "/admin/lois/apercu",
@@ -325,7 +303,7 @@ def test_an_ordinary_presentation_still_saves(client, db_session):
 
 
 def test_the_column_limits_are_read_off_the_model_not_copied():
-    """Widening a column used to leave the form refusing at the old limit."""
+    """Length limits come from the model."""
     from app.routes.admin.forms import MAX_LENGTHS
 
     for name in ("title", "official_ref", "legifrance_url"):
@@ -336,7 +314,7 @@ def test_the_column_limits_are_read_off_the_model_not_copied():
 
 
 def test_an_unchecked_box_does_not_publish(client, db_session):
-    """A browser omits the field entirely when the box is not ticked."""
+    """An unchecked box (field absent) doesn't publish."""
     client.post(
         "/admin/lois",
         headers=admin_headers(),
@@ -347,15 +325,8 @@ def test_an_unchecked_box_does_not_publish(client, db_session):
 
 
 def test_the_word_false_does_not_publish_a_law(client, db_session):
-    """`bool("false")` is True, and this field decides whether people can vote.
-
-    No browser sends it — a checkbox is absent or "on" — but this form is also
-    posted by replayed requests and by curl, and V3 opens it to every
-    authenticated user. Publishing on a value that says the opposite is not a
-    failure mode worth keeping for the sake of one character.
-    """
-    # The title carries the index, not the word: `law_form` strips the title, so
-    # a value with spaces around it would not be the title we looked up.
+    """`published=false` doesn't publish (bool("false") is True)."""
+    # The title holds the index, since law_form strips it.
     for index, word in enumerate(("false", "0", "off", "non", " False ")):
         title = f"Loi non publiee {index}"
         client.post(

@@ -1,9 +1,4 @@
-"""The in-memory throttles: votes, administrator logins, and export capacity.
-
-One table, several buckets, shared by every request thread — so this file is as
-much about the bookkeeping staying correct under concurrency as about the limits
-themselves.
-"""
+"""In-memory rate limits: votes, admin logins, export capacity."""
 
 from __future__ import annotations
 
@@ -20,7 +15,7 @@ from tests.helpers import admin_headers, basic_auth
 
 
 def test_a_burst_of_votes_is_refused(client, open_law, monkeypatch):
-    """A fresh cookie is a fresh voter, so bursts are the cheapest attack."""
+    """A burst of votes is refused."""
     from app import ratelimit
 
     ratelimit.reset()
@@ -52,22 +47,20 @@ def test_the_limit_message_does_not_leak_the_threshold(client, open_law, monkeyp
 
 
 def test_counters_are_never_persisted():
-    """IP addresses are personal data: they live in this process and nowhere else."""
+    """The counters (IP addresses) are only kept in memory."""
     from app import ratelimit
 
     ratelimit.reset()
     assert ratelimit._hits == {}
 
 
-# --- Rate-limit keying --------------------------------------------------------
+# --- Rate-limit key -------------------------------------------------------------
 #
-# The limiter keys on a client address. Reverse proxies *append* to
-# X-Forwarded-For, so the leftmost entries are whatever the caller wrote: reading
-# from that end handed the key to the attacker and made the whole control a no-op.
+# Proxies append to X-Forwarded-For, so the leftmost entries come from the client.
 
 
 def test_a_forged_forwarded_for_cannot_buy_a_fresh_bucket(client, open_law, monkeypatch):
-    """The attack: one new fake address per request, and the limit never bites."""
+    """A fake X-Forwarded-For doesn't give a new bucket."""
     settings = get_settings()
     monkeypatch.setattr(settings, "vote_rate_limit", 2, raising=False)
     monkeypatch.setattr(settings, "trusted_proxy_hops", 1, raising=False)
@@ -76,8 +69,7 @@ def test_a_forged_forwarded_for_cannot_buy_a_fresh_bucket(client, open_law, monk
         client.post(
             f"/loi/{open_law.slug}/vote",
             data={"choice": "for"},
-            # The caller invents a different left-hand entry every time; our own
-            # proxy appended the real one on the right.
+            # Fake left entry each time; the real one is on the right.
             headers={"X-Forwarded-For": f"9.9.9.{i}, 10.0.0.1"},
             follow_redirects=False,
         ).status_code
@@ -126,14 +118,14 @@ def test_without_a_declared_proxy_the_header_is_ignored(client, open_law, monkey
 
 
 def test_the_tracking_table_is_bounded(monkeypatch):
-    """A flood of forged keys must not grow the table without bound."""
+    """The table size is capped."""
     from app import ratelimit
 
     ratelimit.reset()
     monkeypatch.setattr(ratelimit, "_MAX_TRACKED", 50)
 
     def request_from(address: str):
-        """The two attributes the limiter reads off a request."""
+        """A fake request with what the limiter reads."""
         return SimpleNamespace(headers={}, client=SimpleNamespace(host=address))
 
     refused = sum(
@@ -143,10 +135,7 @@ def test_the_tracking_table_is_bounded(monkeypatch):
         for i in range(400)
     )
     assert len(ratelimit._hits) <= 50
-    # Past the cap the least recently active entries are evicted, and the caller
-    # is still admitted. Refusing instead — which is what this used to do — turned
-    # a flood into a site-wide outage for every address not already tracked, which
-    # is precisely the outcome an attacker was after.
+    # Past the cap, old entries are evicted and the caller is still let in.
     assert refused == 0, "a full table must evict, not refuse legitimate voters"
     ratelimit.reset()
 
@@ -155,11 +144,7 @@ def test_the_tracking_table_is_bounded(monkeypatch):
 
 
 def test_a_sweep_does_not_expire_a_longer_windowed_bucket(client, open_law, monkeypatch):
-    """One table holds every bucket, so a sweep must use the widest window.
-
-    Sweeping with the *calling* bucket's cutoff let a burst of votes hand back
-    export allowance that had already been spent.
-    """
+    """A sweep uses the widest window, so it doesn't reset another bucket's count."""
     settings = get_settings()
     monkeypatch.setattr(settings, "export_rate_limit", 2, raising=False)
     monkeypatch.setattr(settings, "export_rate_window_seconds", 3600, raising=False)
@@ -170,17 +155,17 @@ def test_a_sweep_does_not_expire_a_longer_windowed_bucket(client, open_law, monk
         assert client.get(f"/loi/{open_law.slug}/export.csv").status_code == 200
     assert client.get(f"/loi/{open_law.slug}/export.csv").status_code == 429
 
-    # Force a sweep from the short-windowed bucket. It must not rescue the export.
+    # Sweep from the short-window bucket.
     monkeypatch.setattr(ratelimit, "_SWEEP_EVERY", 1, raising=False)
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
     assert client.get(f"/loi/{open_law.slug}/export.csv").status_code == 429
 
 
-# --- A1: the administrator throttle actually throttles -------------------------
+# --- Admin throttle -----------------------------------------------------------
 
 
 def test_guessing_is_refused_not_merely_counted(client, monkeypatch):
-    """Wrong passwords used to return 401 for ever, at network speed."""
+    """Repeated wrong passwords get a 429."""
     monkeypatch.setattr(get_settings(), "admin_rate_limit", 3, raising=False)
     wrong = basic_auth("admin", "nope")
 
@@ -190,7 +175,7 @@ def test_guessing_is_refused_not_merely_counted(client, monkeypatch):
 
 
 def test_a_throttled_response_does_not_reveal_a_correct_password(client, monkeypatch):
-    """429-only-on-success turned the throttle into an oracle."""
+    """A 429 doesn't reveal whether the password was correct."""
     monkeypatch.setattr(get_settings(), "admin_rate_limit", 2, raising=False)
     for _ in range(2):
         client.get("/admin", headers=basic_auth("admin", "nope"))
@@ -205,7 +190,7 @@ def test_a_throttled_response_does_not_reveal_a_correct_password(client, monkeyp
 
 
 def test_repeated_bad_passwords_are_throttled(client, monkeypatch):
-    """A static credential pair with no lockout is guessable at network speed."""
+    """Repeated bad passwords are throttled."""
     settings = get_settings()
     monkeypatch.setattr(settings, "admin_rate_limit", 3, raising=False)
     wrong = {"Authorization": "Basic " + base64.b64encode(b"admin:nope").decode()}
@@ -213,8 +198,7 @@ def test_repeated_bad_passwords_are_throttled(client, monkeypatch):
     codes = [client.get("/admin", headers=wrong).status_code for _ in range(5)]
     assert codes[:3] == [401, 401, 401]
 
-    # And the correct password is refused too while that address is guessing,
-    # so the throttle cannot be sidestepped by landing on the right one.
+    # The correct password is refused too during the streak.
     assert client.get("/admin", headers=admin_headers()).status_code == 429
 
 
@@ -228,7 +212,7 @@ def test_a_working_administrator_is_never_slowed_down(client, monkeypatch):
 
 
 def test_exports_are_capped_by_how_many_stream_at_once(client, open_law, monkeypatch):
-    """An export holds a database connection for as long as the client reads."""
+    """Concurrent exports are capped."""
     monkeypatch.setattr(get_settings(), "export_max_concurrent", 1, raising=False)
     ratelimit.reset()
 
@@ -243,7 +227,7 @@ def test_exports_are_capped_by_how_many_stream_at_once(client, open_law, monkeyp
 
 
 def test_a_finished_export_gives_its_slot_back(client, open_law, db_session):
-    """A leaked slot never comes back, so the count is kept by the generator."""
+    """A finished export frees its slot."""
     ratelimit.reset()
     for _ in range(3):
         assert client.get(f"/loi/{open_law.slug}/export.json").status_code == 200
@@ -251,7 +235,7 @@ def test_a_finished_export_gives_its_slot_back(client, open_law, db_session):
 
 
 def test_being_refused_for_capacity_does_not_spend_the_rate_limit(client, open_law, monkeypatch):
-    """Refusing someone because the server is busy must not also cost them."""
+    """A capacity refusal doesn't count against the rate limit."""
     settings = get_settings()
     monkeypatch.setattr(settings, "export_max_concurrent", 1, raising=False)
     monkeypatch.setattr(settings, "export_rate_limit", 2, raising=False)
@@ -270,20 +254,15 @@ def test_being_refused_for_capacity_does_not_spend_the_rate_limit(client, open_l
 
 
 def test_the_table_survives_being_swept_while_it_is_written(monkeypatch):
-    """The sweep used to walk the table while another thread inserted into it.
+    """Sweeping while other threads insert doesn't raise.
 
-    The routes are sync `def`, so Starlette runs each one on its own thread and
-    they all reach for one module-level dict. Both the periodic sweep and the
-    eviction iterate it, and iterating a dict another thread is inserting into
-    raises "dictionary changed size during iteration" — a 500 on the vote route,
-    arriving precisely when the table is large, which is to say under the flood
-    the limiter exists to slow down.
+    Without the lock: "dictionary changed size during iteration".
     """
     import threading
 
     from app import ratelimit as rl
 
-    # Sweep on almost every call, so the window this is about is wide open.
+    # Sweep on almost every call.
     monkeypatch.setattr(rl, "_SWEEP_EVERY", 1)
     rl.reset()
 
@@ -314,12 +293,7 @@ def test_the_table_survives_being_swept_while_it_is_written(monkeypatch):
 
 
 def test_a_refusal_tells_the_client_when_to_come_back(client, open_law, monkeypatch):
-    """A 429 with no `Retry-After` invites an immediate retry.
-
-    Which is the one thing neither the visitor nor the server wants — and the
-    limit is keyed on an address that a mobile carrier shares between thousands
-    of people, so the client retrying is very often not the one that spent it.
-    """
+    """A 429 has a Retry-After header."""
     monkeypatch.setattr(get_settings(), "vote_rate_limit", 1, raising=False)
     ratelimit.reset()
 
@@ -331,7 +305,7 @@ def test_a_refusal_tells_the_client_when_to_come_back(client, open_law, monkeypa
 
 
 def test_a_refusal_does_not_blame_the_reader(client, open_law, monkeypatch):
-    """The message has to leave room for the very likely case: a shared address."""
+    """The message mentions that the connection may be shared."""
     monkeypatch.setattr(get_settings(), "vote_rate_limit", 1, raising=False)
     ratelimit.reset()
 
@@ -341,28 +315,23 @@ def test_a_refusal_does_not_blame_the_reader(client, open_law, monkeypatch):
     assert "partagent" in refused.text or escape("n'y êtes") in refused.text
 
 
-# --- A refused ballot is not always a ballot ---------------------------------
+# --- Empty ballots ------------------------------------------------------------
 
 
 def test_an_empty_ballot_does_not_spend_the_allowance(client, open_law):
-    """The limit is keyed on a connection, and a connection is shared.
-
-    Recording a hit before reading the choice charged a mis-click against an
-    allowance that belongs to everyone behind the same address — on a platform
-    whose own refusal page says « vous n'y êtes peut-être pour rien ».
-    """
+    """An empty ballot doesn't count against the limit (shared by everyone on the IP)."""
     settings = get_settings()
     for _ in range(settings.vote_rate_limit + 5):
         client.post(f"/loi/{open_law.slug}/vote", data={"choice": ""})
 
-    # Far past the limit in requests, none of them a ballot: a real vote still works.
+    # Many empty ballots, then a real vote still works.
     response = client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
     assert response.status_code in (200, 303)
     assert "Trop de votes" not in response.text
 
 
 def test_a_flood_of_real_ballots_is_still_refused(client, open_law):
-    """The counterpart: checking before recording must not disarm the limiter."""
+    """Real ballots are still limited."""
     settings = get_settings()
     for _ in range(settings.vote_rate_limit):
         client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
@@ -373,7 +342,7 @@ def test_a_flood_of_real_ballots_is_still_refused(client, open_law):
 
 
 def test_a_vote_on_a_law_that_just_closed_still_counts(client, closed_law, open_law):
-    """It is an attempt to write, and telling the two apart is what an attacker would arrange."""
+    """A vote on a just-closed law still counts towards the limit."""
     settings = get_settings()
     for _ in range(settings.vote_rate_limit):
         client.post(f"/loi/{closed_law.slug}/vote", data={"choice": "for"})

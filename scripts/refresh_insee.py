@@ -1,9 +1,7 @@
-"""Refresh cached INSEE reference shares from the open Melodi API.
+"""Refresh the cached INSEE reference shares from the Melodi API.
 
-Run manually or on a schedule (see the `insee-refresh` service in
-docker-compose). On any fetch error it exits non-zero **without touching** the
-existing cached values, so the app keeps serving the last good data (or the
-curated fallback). Safe to run repeatedly.
+Run by the `insee-refresh` service, or by hand. On a fetch error it exits with
+an error and keeps the existing values. Safe to rerun.
 
     python -m scripts.refresh_insee
 """
@@ -24,13 +22,13 @@ def main() -> int:
     try:
         data = fetch_reference()
     except InseeFetchError as exc:
-        print(f"INSEE refresh skipped — fetch failed: {exc}", file=sys.stderr)
+        print(f"INSEE refresh skipped, fetch failed: {exc}", file=sys.stderr)
         return 1
 
     db = SessionLocal()
     try:
         for dimension, mapping in data.values.items():
-            # Replace this dimension's rows atomically with the fresh snapshot.
+            # Replace this dimension's rows (same transaction).
             db.execute(delete(InseeReference).where(InseeReference.dimension == dimension))
             for category, pct in mapping.items():
                 db.add(
@@ -43,10 +41,9 @@ def main() -> int:
                 )
         db.commit()
     except SQLAlchemyError as exc:
-        # Any database refusal, not only "the schema is not migrated yet": the
-        # containerised loop reads a traceback as a crash and retries in seconds.
+        # A message and an exit code rather than a traceback.
         db.rollback()
-        print(f"INSEE refresh skipped — database: {exc}", file=sys.stderr)
+        print(f"INSEE refresh skipped, database error: {exc}", file=sys.stderr)
         return 1
     finally:
         db.close()

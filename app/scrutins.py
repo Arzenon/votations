@@ -1,23 +1,11 @@
-"""How the Assemblée nationale actually voted on a law.
+"""Assemblée nationale vote counts for a law.
 
-« Adoptée par 357 voix contre 177 » and « adoptée par 269 voix contre 0 » do not
-say the same thing to somebody about to give their own opinion, and until now the
-site said neither. The counts are published as open data (Licence Ouverte, no
-authentication) in a second export beside the dossiers one, joined on the vote
-reference a dossier's decision act carries.
+Read from the scrutins export, joined on the vote reference of the dossier's
+decision acts. Assemblée only: the Sénat publishes its votes elsewhere.
 
-**Only the Assemblée.** The Sénat publishes its own scrutins elsewhere and they
-are not in this file, so everything here — and everything the page says about it
-— names one chamber.
-
-Design notes:
-- The HTTP getter is injectable so the parsing is unit-testable offline.
-- Any failure raises :class:`ScrutinsFetchError`. The daily import catches it and
-  carries on: a vote count is worth having and is not worth losing a law over.
-- The archive holds one JSON document per scrutin, named by its identifier, and
-  there are 8 434 of them for a legislature against roughly 150 that any law
-  refers to. So the members are read **by name**, not walked: the download is
-  what it is, the parsing is proportional to what is actually wanted.
+Failures raise `ScrutinsFetchError`; the import carries on without counts.
+The archive has about 8,400 scrutins and we need about 150, so members are
+read by name.
 """
 
 from __future__ import annotations
@@ -33,28 +21,17 @@ from app.opendata import Getter, getter
 
 log = get_logger("scrutins")
 
-#: Where one scrutin lives inside the archive, by identifier.
 MEMBER = "json/{uid}.json"
 
-#: The export runs to ~25 MB. Generous against that, and sized against the
-#: container the same way the dossiers cap is — a download peaks at roughly twice
-#: this figure, see `app.opendata.fetch`.
+# The export is about 25 MB.
 MAX_EXPORT_BYTES = 64 * 1024 * 1024
 
-#: The largest single scrutin worth reading, uncompressed. Real ones are a few
-#: kilobytes; a `zipfile` member declares its own uncompressed size, and reading
-#: one without looking first is how a few kilobytes of archive become gigabytes of
-#: memory. The cap on the download bounds the *compressed* bytes and nothing else.
-#:
-#: The same rule the two other archive readers already state — see
-#: `app.legifrance.MAX_MEMBER_BYTES` and `app.assemblee.MAX_DOSSIER_BYTES`. This
-#: reader was the one that did not apply it, which is precisely the way a rule
-#: held in three places stops being one.
+# Max uncompressed size of one scrutin (real ones are a few kB). Zip bomb guard.
 MAX_MEMBER_BYTES = 16 * 1024 * 1024
 
 
 class ScrutinsFetchError(RuntimeError):
-    """Raised on any network/archive/parse problem, so callers keep old rows."""
+    """Network, archive or parse failure."""
 
 
 _default_getter = getter(timeout=120.0, max_bytes=MAX_EXPORT_BYTES, error=ScrutinsFetchError)
@@ -62,12 +39,12 @@ _default_getter = getter(timeout=120.0, max_bytes=MAX_EXPORT_BYTES, error=Scruti
 
 @dataclass(frozen=True)
 class Scrutin:
-    """One recorded vote: what it was about, how it went, and by how much."""
+    """One recorded vote."""
 
     uid: str
-    #: "adopté" | "rejeté".
+    # "adopté" or "rejeté"
     sort: str
-    #: « l'ensemble du projet de loi… », « la première partie… ». Read, not shown.
+    # e.g. "l'ensemble du projet de loi...", "la première partie..."
     objet: str
     pour: int
     contre: int
@@ -75,7 +52,7 @@ class Scrutin:
 
 
 def _count(decompte: dict, key: str) -> int:
-    """One figure of a vote, as a number. The export writes them as strings."""
+    """A vote count as an int (the export uses strings)."""
     try:
         return int(decompte.get(key) or 0)
     except TypeError, ValueError:
@@ -98,13 +75,7 @@ def _parse(document: dict) -> Scrutin | None:
 
 
 def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scrutin]:
-    """The scrutins named by ``wanted``, read out of the export by identifier.
-
-    Returns what could be read. A reference the export does not carry is simply
-    absent from the result — the law then has no published count, which is a
-    state the page has to render anyway (a text adopted without a public scrutin
-    is in exactly the same position).
-    """
+    """The scrutins listed in ``wanted``. Missing or unreadable ones are left out."""
     if not wanted:
         return {}
     get = get or _default_getter
@@ -113,18 +84,13 @@ def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scruti
     found: dict[str, Scrutin] = {}
     try:
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
-            # The entries by name, with their declared sizes — `namelist()` gave
-            # only the first half, and the size is what has to be looked at before
-            # a member is read into memory.
+            # infolist() rather than namelist(), to check sizes before reading.
             available = {info.filename: info for info in archive.infolist()}
             for uid in wanted:
                 info = available.get(MEMBER.format(uid=uid))
                 if info is None:
                     continue
                 if info.file_size > MAX_MEMBER_BYTES:
-                    # No real scrutin is this large, so this is a malformed or
-                    # hostile archive. Skipped rather than fatal: the other
-                    # hundred and fifty votes are still worth having.
                     log.warning("scrutin %s anormalement volumineux - ignoré", uid)
                     continue
                 try:
@@ -139,36 +105,22 @@ def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scruti
     return found
 
 
-#: A scrutin on part of a text is not a scrutin on the text.
-#:
-#: Three lois de finances carry one: the Assemblée rejected « la première partie »
-#: in first reading and the law was adopted later in commission mixte paritaire.
-#: The `sort` filter below already catches those three, and this is the second
-#: net, because the failure it guards against is silent and specific — one of them
-#: reads « **l'ensemble de** la première partie », so a check for « l'ensemble »
-#: passes it straight through.
+# A vote on part of a text (e.g. "la première partie" of a loi de finances)
+# isn't a vote on the whole text. Some read "l'ensemble de la première partie",
+# so checking for "l'ensemble" isn't enough.
 _A_PART_OF_THE_TEXT = "partie"
 
-#: The only outcome worth reading a count from. It is also the guard against the
-#: polarity trap in the other direction: a text can be disposed of by adopting a
-#: *motion de rejet*, where « pour 190 » means a hundred and ninety votes to throw
-#: it out. Those votes hang off `…-MOTION-VOTE` acts, which
-#: `app.assemblee` never collects — see the note there. This is the backstop.
+# Only adopted votes count. Also guards against motions de rejet, where "pour"
+# means rejecting the text (already excluded in `app.assemblee`).
 _ADOPTED = "adopté"
 
 
 def final_vote(vote_refs: list[str], index: dict[str, Scrutin]) -> Scrutin | None:
-    """The vote that adopted this law as a whole, out of everything it references.
+    """The last vote that adopted the whole text.
 
-    ``vote_refs`` arrives oldest first, across every reading — first reading,
-    second, commission mixte paritaire, lecture définitive. The one that matters
-    is the **last** that adopted the whole text: a law read three times has three
-    recorded votes and only the final one says how the Assemblée settled it.
-
-    Taking the first, or taking the one attached to the first reading, is the
-    mistake this function exists to avoid. Measured over a whole legislature it is
-    not a marginal difference: reading only the first-reading act found a usable
-    count for 73 of 147 promulgated laws, and walking every reading finds 94.
+    ``vote_refs`` is oldest first across all readings, and the final adoption
+    is the one that counts. Looking at every reading finds a count for 94 of
+    147 laws, against 73 for the first reading only.
     """
     chosen: Scrutin | None = None
     for ref in vote_refs:

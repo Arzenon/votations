@@ -1,27 +1,11 @@
-"""an_vote_checked - telling "no scrutin" apart from "nobody looked"
+"""an_vote_checked: "no scrutin" vs "not looked up"
 
-The previous revision added the Assemblée's vote counts, and left two very
-different situations producing the same empty columns:
+Empty vote counts could mean there was no public scrutin, or that nobody had
+checked yet, and the page assumed the former. Now: counts present, show them;
+checked and none, say there was no scrutin; unchecked, say nothing.
 
-* the text was adopted without a public scrutin - true of a third of promulgated
-  laws, and worth saying;
-* nobody has consulted the scrutins export for this text yet.
-
-The page read the emptiness as the first and printed « adoptée à l'Assemblée
-nationale sans scrutin public ». On the four laws already published when this
-shipped, that was a statement about how Parliament voted made from never having
-looked - and it would not have corrected itself, because the record was copied
-from the staged row only when the votation was created and never again.
-
-So: three states rather than two. Counts present, say them; checked and none,
-say there was no scrutin; unchecked, say nothing at all. The daily import sets
-the flag whether or not it finds a vote, and leaves it alone when the download
-fails, which is exactly when the page must stay quiet.
-
-`false` on every existing row, which is the honest starting point: nothing has
-been looked up yet. One run of `scripts/refresh_assemblee` fills it in - and
-`propagate_parliament_record`, added in the same change, is what finally carries
-it onto the votations that were created before any of this existed.
+False for existing rows. The next `scripts/refresh_assemblee` run fills it in,
+and `propagate_parliament_record` copies it onto existing laws.
 
 Revision ID: c47d0e91b8a5
 Revises: b81f5a3c96e2

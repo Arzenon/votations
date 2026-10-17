@@ -1,18 +1,10 @@
-"""Pytest fixtures: an isolated PostgreSQL test database and a TestClient.
+"""Pytest fixtures: a PostgreSQL test database and a TestClient.
 
-Two deliberate choices:
+The schema is built by the migrations (once per session), not create_all, so
+migrations are tested too. Each test runs in a transaction that is rolled back.
 
-* **The schema is built by the migrations**, once per session, not by
-  ``create_all``. Building it from the models would have meant the suite never
-  touched Alembic, so drift between the two could only be discovered by running
-  an upgrade in production.
-* **Each test runs inside a transaction that is rolled back**, rather than
-  dropping and recreating every table. The application commits freely; binding
-  the session to an outer transaction in savepoint mode lets it, and still
-  leaves the database untouched afterwards.
-
-Set ``TEST_DATABASE_URL`` to override the target — e.g. inside Docker it points
-at the ``db`` service.
+Set ``TEST_DATABASE_URL`` to use another database (in Docker, the ``db``
+service).
 """
 
 import os
@@ -56,13 +48,7 @@ Erreur : {error}"""
 
 
 def _ensure_database(url: str) -> None:
-    """Create the target database if absent (CREATE DATABASE needs autocommit).
-
-    A database that cannot be reached ends the run with one readable message.
-    Letting the connection error escape gave 124 identical fixture errors that
-    said "connection refused" in the middle of a stack trace — indistinguishable,
-    at a glance, from a real regression.
-    """
+    """Create the test database if needed. Exits with a clear message if unreachable."""
     url_obj = make_url(url)
     db_name = url_obj.database
     admin = create_engine(url_obj.set(database="postgres"), isolation_level="AUTOCOMMIT")
@@ -92,8 +78,7 @@ def engine():
     """One engine per session, with the schema migrated to head."""
     _ensure_database(TEST_DATABASE_URL)
     eng = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
-    # Start from nothing so a schema left by an older revision cannot mask a
-    # broken migration chain.
+    # Start from scratch so a leftover schema can't hide a broken migration.
     with eng.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public"))
     command.upgrade(alembic_config(TEST_DATABASE_URL), "head")
@@ -103,10 +88,9 @@ def engine():
 
 @pytest.fixture
 def db_session(engine):
-    """A session whose every write is rolled back when the test ends.
+    """A session rolled back at the end of the test.
 
-    The outer transaction never commits; ``join_transaction_mode`` turns the
-    application's own ``commit()`` calls into savepoint releases inside it.
+    The app's commits become savepoints inside the outer transaction.
     """
     connection = engine.connect()
     transaction = connection.begin()
@@ -132,7 +116,7 @@ def db_session(engine):
 
 @pytest.fixture
 def sessionmaker_for(engine):
-    """A plain session factory on the test engine, for code that opens its own."""
+    """Session factory on the test engine, for code that opens its own sessions."""
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
@@ -177,11 +161,9 @@ def closed_law(db_session):
 
 
 class _NoCloseSession:
-    """Hands the shared test session to code that opens (and closes) its own.
+    """Gives the test session to code that opens and closes its own.
 
-    The background drafting job runs after its request and normally opens a fresh
-    session; in a test it has to join the transaction the test will roll back, and
-    must not close the session the test is still asserting on.
+    Lets the drafting job use the test transaction without closing it.
     """
 
     def __init__(self, inner: Session) -> None:
@@ -198,16 +180,10 @@ _QUEUED: list[tuple] = []
 
 
 class _DeferredExecutor:
-    """Queues a submitted job instead of running it on another thread.
+    """Queues jobs instead of running them on another thread.
 
-    Drafting normally goes to its own thread pool so a ten-minute job cannot eat
-    request capacity. A real pool in a test would mean asserting against a job
-    racing on another thread, and sharing the test's Session across threads, which
-    is not safe.
-
-    Queueing reproduces the ordering that matters — schedule, answer the request,
-    *then* run — so a test can still see the "en cours" banner the administrator
-    sees, and `drain_drafts()` runs what was queued afterwards.
+    Keeps the real order (schedule, respond, then run) so tests can see the
+    "en cours" banner. `drain_drafts()` runs the queue.
     """
 
     def submit(self, fn, *args, **kwargs):
@@ -216,7 +192,7 @@ class _DeferredExecutor:
 
 
 def drain_drafts() -> None:
-    """Run every draft queued so far, as the pool would have."""
+    """Run the queued drafts."""
     while _QUEUED:
         fn, args, kwargs = _QUEUED.pop(0)
         fn(*args, **kwargs)
@@ -234,13 +210,7 @@ def background_db(db_session, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _clear_process_state():
-    """Two tables live in the process, not the database; no test inherits either.
-
-    The rate-limit counters, and the short-lived memo of the per-law figures the
-    listings read. Both are deliberately process-local — see `app.ratelimit` and
-    `app.crud.results._Memo` — which is exactly what makes them leak between
-    tests unless something clears them.
-    """
+    """Reset in-memory state (rate limits, results memo) between tests."""
     from app import ratelimit
     from app.crud import results
 

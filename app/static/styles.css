@@ -1,35 +1,20 @@
-/* Every colour on this site is a token, and the dark palette at the bottom of
-   this file redefines the tokens and nothing else. That is the whole mechanism:
-   a rule that writes `#fff` is a rule that has one appearance, and there were a
-   couple of dozen of them here before there was a second appearance to have.
-
-   Contrast was checked pair by pair, in both palettes, against the background
-   each colour is actually drawn on rather than against white — the note on
-   `--for` below is what that habit is for. Text pairs clear WCAG AA (4.5:1);
-   the three series colours also clear it, though as graphical marks they only
-   owe 3:1. */
+/* All colours are tokens; the dark palette at the bottom only redefines them.
+   Contrast checked in both palettes against the actual background: text meets
+   WCAG AA (4.5:1). */
 :root {
-  /* Which of its own two palettes the browser should paint the parts we do not:
-     form controls, scrollbars, the text caret, the `<details>` marker. Without
-     it a dark page keeps white `<select>`s and a white scrollbar, which is the
-     tell that a dark theme was painted on rather than declared. */
+  /* So form controls and scrollbars follow the theme. */
   color-scheme: light dark;
 
   --ink: #1a1a2e;
   --muted: #5b6472;
   --line: #e2e6ed;
   --bg: #f7f8fa;
-  /* Cards, blocks, the header and the footer: what sits *on* the page. It was
-     `#fff` in a dozen places, which is exactly the value that cannot survive a
-     second palette. */
+  /* Cards, blocks, header and footer. */
   --surface: #fff;
 
-  /* Two blues, and they only coincide in this palette. `--blue` is the accent
-     *on* the page — links, the focus ring, a secondary button's text and border
-     — so it is read against `--bg` and `--surface`. `--accent-solid` is the
-     accent *as* a surface, with `--on-accent` written on top of it. In a dark
-     palette one has to become lighter and the other cannot, and conflating them
-     is precisely how a dark theme ends up with white text on pale blue. */
+  /* `--blue` is for links and borders on the page background; `--accent-solid`
+     is a background with `--on-accent` text on it. Same value here, different
+     in the dark palette. */
   --blue: #1d3a8a;
   --accent-solid: #1d3a8a;
   --on-accent: #fff;
@@ -38,19 +23,13 @@
   --accent-bg: #fafbfe;
   --disabled: #b6bdc9;
 
-  /* Measured against the pale pill backgrounds below, not against white:
-     #2e7d32 on #e3f4e4 came to 4.47, just under the 4.5 AA needs for the
-     small text in a status pill. */
+  /* Darker than #2e7d32, which only reached 4.47:1 on the pill background. */
   --for: #2b7530;
   --against: #c62828;
-  /* Only ever a graphical mark (a bar, a line, a swatch), so 3:1 is the bar it
-     has to clear — but 3.45 was uncomfortably close, and the chart lines read
-     better a shade darker. */
+  /* Only used for graphics (3:1 needed), but darker reads better. */
   --abstain: #7a7a7a;
 
-  /* Status pills. Each one is a pale wash under a colour already defined above,
-     which is why they are tokens of their own rather than opacities: a wash that
-     works under `--for` in one palette is not the wash that works in the other. */
+  /* Status pill backgrounds, separate tokens per palette. */
   --pill-bg: #eef;
   --pill-for-bg: #e3f4e4;
   --pill-against-bg: #fde7e7;
@@ -67,54 +46,28 @@
   --danger-bg: #fdf5f5;
   --danger-line: #f0c9c9;
 
-  /* The public record of changes: what an edit removed and what it added.
-     Tokens of their own rather than `--for` / `--against`, which mean a vote —
-     conflating "somebody voted against" with "this sentence was deleted" is how
-     a palette stops meaning anything. Read against `--surface`; the inks clear
-     AA on their washes, and the marking never rests on colour alone (the strike
-     and the underline carry it, and `<del>`/`<ins>` carry it to a screen
-     reader). */
+  /* Revision diff colours, separate from the vote colours. Not the only cue:
+     strike-through and underline too. */
   --del-bg: #fdecec;
   --del-ink: #8a2020;
   --ins-bg: #e6f4e7;
   --ins-ink: #1f5e26;
 
   --axis: #c9cfd8;
-  /* The filled area under each curve. A tenth is enough over a white plot and
-     disappears over a dark one, where the same three colours have to read as a
-     tint rather than as a stain. */
+  /* Opacity of the area under each curve (higher in dark mode). */
   --area-opacity: 0.10;
 
   --radius: 8px;
 
-  /* The shell. Wide enough that a 1680px screen is not two thirds margin, which
-     is what 880px made of it — the site used under half the width it was given
-     and read as an empty page with a column down the middle.
-
-     This is deliberately *not* the width of a line of text. Everything that is
-     prose keeps the reading measure below (see `--measure`), and what the extra
-     width buys is the things that are not prose: two law cards side by side
-     instead of one, the results tables, the evolution curve. Widening the shell
-     alone would have taken the home page's excerpts from ~106 characters a line
-     to ~131 — the exact figure the reading column exists to avoid. */
+  /* Page width. Text stays at `--measure`; the extra width is for cards side by
+     side, tables and the chart. */
   --maxw: 1080px;
 
-  /* The comfortable measure, 45-75 characters at 16px. Named here because three
-     rules depend on it: the law article, the legal pages, and the standalone
-     prose paragraphs. It was written out as `44rem` in two places before
-     anything else needed it. */
+  /* Readable line length (45-75 characters). */
   --measure: 44rem;
 
-  /* The narrowest a law card may be before the grid stops adding columns —
-     which is what decides how many there are, since `auto-fill` fits as many of
-     these as the shell allows.
-
-     Deliberately *not* `--measure`: two 44rem columns need 1424px and the shell
-     is 1080, so using the measure here produced one column and a card 126
-     characters wide — worse than what this change set out to fix. Between about
-     22rem and 32rem the shell yields exactly two columns; 26rem sits in the
-     middle of that band, which puts a card's own text at roughly 60 characters
-     a line — inside the measure, without being the measure. */
+  /* Minimum card width: gives two columns on desktop, about 60 characters a
+     line. Not `--measure`, which would only fit one column. */
   --card-min: 26rem;
 }
 
@@ -148,12 +101,7 @@ h1 { font-size: 1.8rem; line-height: 1.2; }
 .lede { font-size: 1.1rem; color: var(--muted); }
 .meta { color: var(--muted); font-size: 0.88rem; }
 
-/* Prose keeps the reading measure even where the shell is wider than it.
-   `.meta` is 0.88rem, so a paragraph of it spanning the whole shell would run to
-   about 150 characters a line — worse than the 106 that made the law page
-   narrow in the first place, and the results page carries thirteen of them
-   explaining the anonymity thresholds. Only standalone paragraphs: the same
-   class inside a card or a table is already narrower than this and unaffected. */
+/* Standalone paragraphs keep the readable width. */
 main > .lede,
 main > p.meta,
 .block > p.meta { max-width: var(--measure); }
@@ -166,14 +114,7 @@ main > p.meta,
 .search.advanced { gap: 1rem; }
 .search label { display: block; font-size: 0.85rem; color: var(--muted); }
 
-/* The home page's search box: label stacked above the field, field taking the
-   width the button leaves it.
-
-   Deliberately not what `.search.advanced` does. There, three controls share a
-   line and a small muted label is exactly what fits above each of them. Here
-   there is one field, it is the main thing the page invites you to do, and the
-   label is closer to a heading for it than to a caption — so it reads at body
-   size and in body colour. */
+/* Home page search: label above the field, at normal size. */
 .search-field { flex: 1; min-width: 220px; display: grid; gap: 0.35rem; }
 .search-field label { font-size: 1rem; color: var(--ink); }
 .search-field input[type=search] { width: 100%; }
@@ -188,16 +129,7 @@ button:disabled, .button:disabled { background: var(--disabled); cursor: not-all
 .link-danger { background: none; color: var(--against); padding: 0; }
 
 /* Law list */
-/* Cards flow into as many columns as fit, rather than one tall stack down the
-   middle of a wide screen. This is where the shell's extra width actually goes:
-   two cards side by side on a desktop, one below about 900px, and a card's
-   excerpt around 60 characters a line — so the width buys more cards rather than
-   longer lines, which is what widening a single column would have bought.
-
-   `min(var(--card-min), 100%)` rather than the token alone: `auto-fill` with a
-   bare minimum lays out one column *at* that minimum, which overflows any
-   viewport narrower than it. The `min()` is what keeps a phone at one column
-   that fits, and is why this needs no media query. */
+/* As many card columns as fit. min(..., 100%) avoids overflow on phones. */
 .law-list {
   list-style: none;
   padding: 0;
@@ -208,9 +140,7 @@ button:disabled, .button:disabled { background: var(--disabled); cursor: not-all
 .law-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .law-card a { display: block; padding: 1rem 1.2rem; text-decoration: none; color: inherit; }
 .law-card h3 { margin: 0.3rem 0; }
-/* The facts under a card's excerpt: promulgation, closing, participation. Laid
-   out inline so three short items read as one line rather than three stacked
-   paragraphs, and wrap rather than overflow on a phone. */
+/* Card facts on one line, wrapping on phones. */
 .card-facts { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
 
 /* Status pill */
@@ -240,8 +170,7 @@ fieldset { border: 1px solid var(--line); border-radius: var(--radius); }
 .choice { display: block; padding: 0.35rem 0; }
 .vote-confirm { color: var(--for); font-size: 0.9rem; }
 .closed-note { color: var(--muted); }
-/* Why a vote was refused, shown in place of the button doing nothing. Amber
-   rather than red: nothing has gone wrong, the vote simply was not taken. */
+/* Refused vote message. Amber, not red. */
 .vote-notice {
   background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: var(--radius);
   color: var(--warn-ink); padding: 0.6rem 0.8rem; margin: 0 0 0.9rem; font-size: 0.92rem;
@@ -296,8 +225,7 @@ th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(
 
 
 /* --- Administration: use the full window width ---------------------------- */
-/* The admin edits long legal text and JSON side by side, so the reading-width
-   cap that suits public pages only gets in the way here. */
+/* No width limit in the admin. */
 body.admin-wide .container { max-width: none; padding: 0 1.5rem; }
 body.admin-wide .law-form { max-width: none; }
 body.admin-wide .admin-table { width: 100%; }
@@ -326,15 +254,14 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
 
 /* --- Accessibility ------------------------------------------------------- */
 
-/* A visible focus ring everywhere, so the site is usable from the keyboard.
-   :focus-visible only shows it for keyboard navigation, never on a mouse click. */
+/* Keyboard focus ring. */
 :focus-visible {
   outline: 3px solid var(--blue);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
-/* Skip straight to the content past the header and the disclaimer banner. */
+/* Skip link. */
 .skip-link {
   position: absolute;
   left: -9999px;
@@ -348,7 +275,7 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
   left: 0;
 }
 
-/* Wide tables scroll inside their own box rather than pushing the page sideways. */
+/* Wide tables scroll horizontally in their own box. */
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -360,30 +287,21 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
   font-size: 0.85rem;
 }
 
-/* Bar widths are painted by /static/app.js from data-pct: with no JavaScript the
-   percentages and counts beside each bar still carry the whole result. */
+/* Bar widths are set by app.js from data-pct. */
 .bar-fill {
   width: 0;
 }
 
-/* Who wrote the presentation, and what that is worth (charter: state the limits).
-   A `<details>`: three paragraphs between the arguments and the ballot is a lot
-   of page for something read once, so the explanation folds away — but the
-   summary line keeps the admission itself, so nothing about the limitation is
-   behind a click. Native, so it opens with JavaScript off. */
+/* "Who wrote this presentation" note. */
 .provenance { border-left: 3px solid var(--accent-line); background: var(--accent-bg); border-radius: var(--radius);
   padding: 0.7rem 1rem; margin: 1.5rem 0; font-size: 0.92rem; color: var(--muted); }
 
-/* The whole line is the target, chevron included. `list-style: none` removes the
-   default triangle in Firefox and modern Chrome; the ::-webkit- rule covers the
-   older WebKit that ignores it. */
+/* Hide the default marker (the ::-webkit- rule is for older WebKit). */
 .provenance > summary { cursor: pointer; list-style: none; position: relative;
   padding-right: 1.5rem; color: var(--ink); font-weight: 600; }
 .provenance > summary::-webkit-details-marker { display: none; }
 
-/* Drawn from two borders rather than set as a character: `⌄` is missing from
-   enough font stacks to render as a blank or a tofu box, and this is the only
-   thing telling the reader there is anything to open. */
+/* Chevron drawn with borders; the character isn't in every font. */
 .provenance > summary::after { content: ""; position: absolute; right: 0.25rem;
   top: 0.35em; width: 0.45em; height: 0.45em; border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor; transform: rotate(45deg);
@@ -395,12 +313,10 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
 /* Sits under the form buttons and explains what the second one does. */
 .form-hint { margin-top: 0.5rem; }
 
-/* Public record of edits made to a law after publication (charter: transparency). */
+/* Revision history. */
 .revised-note { background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: var(--radius);
   padding: 0.75rem 1rem; font-size: 0.9rem; }
-/* The public record of changes. One block per edit, and the edit itself marked
-   inside the text rather than left for the reader to find between two whole
-   copies of it — see `app.textdiff`. */
+/* One block per change, with the diff (see `app.textdiff`). */
 .revisions { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: 0.9rem; }
 .revision { background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 0.8rem 1rem; }
@@ -408,39 +324,29 @@ body.admin-wide textarea { width: 100%; resize: vertical; }
   align-items: baseline; margin: 0 0 0.4rem; }
 .revision-field { font-weight: 600; }
 
-/* The diff keeps the reading measure: it is prose with marks in it, and the
-   marks do not make it read any faster than the law page's own paragraphs. */
 .revision-diff, .revision-swap { margin: 0; max-width: var(--measure);
   overflow-wrap: anywhere; white-space: pre-wrap; }
 
-/* Colour is the *third* cue, never the only one: `<del>` and `<ins>` are what a
-   screen reader announces, the strike and the underline are what somebody who
-   cannot separate the two hues still sees. */
-/* The horizontal margin is not decoration. A deletion and the insertion that
-   replaces it are adjacent tokens with no space between them, so « garanties »
-   followed by « garde-fous » rendered as one run-on word. */
+/* Not just colour: strike-through and underline too. */
+/* Margin so adjacent deletions and insertions don't run together. */
 del, ins { padding: 0.05em 0.2em; margin: 0 0.15em; border-radius: 3px; }
 del { background: var(--del-bg); color: var(--del-ink); text-decoration: line-through; }
 ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underline; }
 
-/* A block rewritten rather than edited: both versions whole, one under the
-   other. Stacked rather than side by side — two columns is what made the old
-   table unreadable, and it is worse on a phone. */
+/* Rewritten block: both versions, stacked. */
 .revision-rewrite { display: grid; gap: 0.6rem; }
 .revision-before, .revision-after { margin: 0; max-width: var(--measure);
   overflow-wrap: anywhere; white-space: pre-wrap; }
 .revision-note { margin: 0 0 0.5rem; font-style: italic; }
 
-/* A run of unchanged words, collapsed. Set apart from the text it stands in so
-   it reads as the page speaking rather than as part of the law. */
+/* Collapsed unchanged words. */
 .diff-elided { color: var(--muted); font-size: 0.85rem; font-style: italic;
   white-space: nowrap; }
 
-/* « avant → après », for the values too short to be worth diffing. */
+/* "before / after" for short values. */
 .revision-swap { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }
 
-/* Triage controls on the imports listing: status, procedure, sort. Inline on a
-   wide screen, stacked on a phone. */
+/* Import list filters. */
 .import-filters { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end;
   margin: 1rem 0 1.5rem; }
 .import-filters label { display: flex; flex-direction: column; font-size: 0.85rem;
@@ -448,8 +354,7 @@ ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underli
 .import-filters select { min-width: 11rem; }
 .seance-count { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* The argument editor. Replaces two JSON textareas that asked an administrator
-   to be a programmer: one missing bracket and the whole block was unreadable. */
+/* Argument editor. */
 .arguments-editor { border: 1px solid var(--line); border-radius: var(--radius);
   padding: 0.75rem 1rem 1rem; margin: 1.25rem 0; }
 .arguments-editor legend { font-weight: 600; padding: 0 0.4rem; }
@@ -466,16 +371,14 @@ ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underli
   font-size: 0.82rem; text-decoration: underline; }
 .add-argument { font-size: 0.9rem; }
 
-/* Archiving and purging: the two-step replacement for one-click deletion. */
+/* Archiving and deletion. */
 .danger-zone { border: 1px solid var(--danger-line); background: var(--danger-bg); border-radius: var(--radius);
   padding: 1rem 1.25rem; margin-top: 2rem; }
 .danger-zone h2 { margin-top: 0; font-size: 1.05rem; }
 .confirm-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 1.5rem; }
 .button.secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
 
-/* Legal pages: long prose, read once, so a comfortable measure matters more
-   than density. `.unfilled` marks a mandatory field nobody has filled in — it
-   has to look wrong, because a plausible-looking placeholder would be worse. */
+/* Legal pages. `.unfilled` marks a missing mandatory field. */
 .legal { max-width: var(--measure); }
 .legal ul { padding-left: 1.2rem; }
 .legal li { margin-bottom: 0.4rem; }
@@ -513,16 +416,13 @@ ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underli
 .chart-data { margin-top: 0.75rem; }
 .chart-data summary { cursor: pointer; font-size: 0.9rem; color: var(--blue); }
 
-/* Visible to screen readers, not on screen. For table captions and the like,
-   where the heading above already gives a sighted reader the context. */
+/* Visible to screen readers only. */
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-/* The rest of « Ce que ça change en pratique ». Deliberately quiet: it is the
-   same content as above the fold, not an aside, so it gets a divider and a
-   control rather than a box that would read as a footnote. */
+/* Folded part of "Ce que ça change en pratique". */
 .more-audiences { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
 .more-audiences > summary { cursor: pointer; color: var(--blue); font-size: 0.95rem; }
 .more-audiences > summary:hover { text-decoration: underline; }
@@ -534,11 +434,7 @@ ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underli
 .preview-bar .container { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: center; }
 
 /* ---- Keyboard and pointer targets ---------------------------------------
-   The universal :focus-visible rule above already draws the ring; what is left
-   is the ballot, where the radio itself is a small target inside a large label.
-
-   Radio and checkbox targets are small; give the whole label a hit area and a
-   ring, so the choice is selectable without precision aiming. */
+   The whole label is clickable and gets the focus ring. */
 .choice { display: block; padding: 0.35rem 0.5rem; border-radius: var(--radius); }
 .choice:hover { background: var(--accent-soft); }
 .choice:focus-within { outline: 3px solid var(--blue); outline-offset: 1px; }
@@ -550,35 +446,21 @@ ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underli
 }
 
 /* --- Dark palette --------------------------------------------------------
-   Follows the reader's own setting and offers no switch of its own. A switch
-   needs a script to remember the choice, and this site's Content-Security-Policy
-   allows no inline script and its pages are built to work with JavaScript off —
-   so a toggle would be a control that silently does nothing for part of the
-   audience. `prefers-color-scheme` is the setting the reader has already made,
-   once, for everything they read.
+   Follows prefers-color-scheme; no toggle (it would need JavaScript). Only
+   redefines tokens.
 
-   Nothing below is a rule: it is the same tokens with different values, which is
-   why the two palettes cannot drift apart in layout, spacing or state. If a rule
-   ever needs to differ here, that is the signal that it was written with one
-   appearance in mind and should be tokenised instead.
-
-   Contrast, on the surface each colour is actually painted on: body text 14.7,
-   `--muted` 7.8, links 9.1, white on `--accent-solid` 5.5, « pour » 8.1 and 6.2
-   in its pill, « contre » 7.3 and 6.3, « abstention » 6.8. */
+   Contrast: body text 14.7, --muted 7.8, links 9.1, white on --accent-solid
+   5.5, pour 8.1 (6.2 in its pill), contre 7.3 (6.3), abstention 6.8. */
 @media (prefers-color-scheme: dark) {
   :root {
     --ink: #e7eaf0;
     --muted: #a3adbb;
     --line: #2b313c;
     --bg: #12141a;
-    /* Lifted off the page rather than dropped below it: on a dark ground a card
-       reads as a card by being *lighter* than what surrounds it, which is the
-       opposite of the shadow-and-white idiom the light palette uses. */
+    /* Cards are lighter than the background in dark mode. */
     --surface: #1a1e26;
 
-    /* The split that `--blue` and `--accent-solid` exist for. The link colour
-       has to come up off a dark ground; the button ground has to stay dark
-       enough for white to sit on it. One value could not do both. */
+    /* Lighter links, but a button background dark enough for white text. */
     --blue: #9db8ff;
     --accent-solid: #3d63c8;
     --on-accent: #fff;
@@ -611,42 +493,24 @@ ins { background: var(--ins-bg); color: var(--ins-ink); text-decoration: underli
     --ins-ink: #8fdc9a;
 
     --axis: #414958;
-    /* Twice the light value. The same tenth that reads as a tint under a white
-       plot is invisible under a dark one, and the area is what makes the three
-       curves tell one story rather than three. */
+    /* Twice the light value, otherwise invisible. */
     --area-opacity: 0.22;
   }
 }
 
 /* --- Reading a law ---------------------------------------------------------
-   The law page is the only long-form page on the site, and it was rendered at
-   the same width as everything else: 880px, which at 16px is about 106
-   characters a line against the 45-75 that reads comfortably. The legal pages
-   had already been capped at 44rem for exactly this reason; this is that value,
-   applied where people actually read.
-
-   Scoped to `main` so the header, the disclaimer band and the footer keep the
-   site's own width - only the article narrows. */
+   Readable width for the article only; header and footer keep the site width. */
 body.reading main.container { max-width: var(--measure); }
 
-/* More air between paragraphs and inside them. A block of six paragraphs set
-   solid is the "gros pavé" the first reader complained about, and half of that
-   complaint is leading rather than length. */
+/* More spacing between and within paragraphs. */
 .block.prose p { line-height: 1.7; margin: 0 0 1.05em; }
 .block.prose p:last-child { margin-bottom: 0; }
 
-/* One paragraph per public concerné, with the public set apart.
-
-   Bold on the label and never on the substance: « Pour les employeurs » tells a
-   reader which paragraph is theirs, which is navigation. Emphasising a measure
-   inside the text would be telling them what matters, which is the one thing
-   this platform does not do. See `app.templating.audience_split`. */
+/* One paragraph per audience; only the label is bold (see `audience_split`). */
 .block.prose .audience { margin-top: 1.2em; }
 .block.prose .audience:first-of-type { margin-top: 0; }
 
-/* The encart: what a hesitating reader needs before anything else - the
-   paragraph the summary was written to open with, and what the debate turned
-   on. Given the weight the rest of the page does not have. */
+/* Top box: first paragraph and debate summary. */
 .encart {
   background: var(--accent-soft);
   border-left: 4px solid var(--accent-solid);
@@ -661,8 +525,7 @@ body.reading main.container { max-width: var(--measure); }
   letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.15rem;
 }
 
-/* On a phone the card chrome eats a tenth of the line. Nothing structural, but
-   it is the cheapest width there is to reclaim. */
+/* Less padding on phones. */
 @media (max-width: 640px) {
   .block { padding: 0.9rem 0.95rem; }
   .block h2 { font-size: 1.25rem; }
@@ -670,31 +533,23 @@ body.reading main.container { max-width: var(--measure); }
   .encart-lede { font-size: 1.08rem; }
 }
 
-/* How Parliament settled the text. Set apart from the summary above it: one is
-   what the law says, the other is what happened to it. */
+/* Parliamentary vote, set apart from the summary. */
 .encart-scrutin { margin: 0.75rem 0 0; font-size: 0.95rem; color: var(--muted); }
 .encart-scrutin strong { color: var(--ink); }
 
 
-/* --- Page de loi : ce qui se replie ---------------------------------------- */
-/* Three folds were added at once, and they are deliberately the same object: a
-   native `<details>`, a chevron drawn from two borders rather than set as a
-   character (see `.provenance`, where `⌄` was found to render as tofu), and no
-   script anywhere. A reader who learns the control once knows all three. */
+/* --- Law page: folds ------------------------------------------------------ */
+/* All folds look the same: <details> with a border-drawn chevron. */
 
-/* The offer to skip ahead to the ballot, under the encart. Not the same object as
-   « Envoyer mon vote »: that is the page's primary action and stays the only solid
-   blue button on it. This one reads as a bordered link, because skipping the
-   presentation is a choice being offered, not the thing the page wants. */
+/* Link to the ballot: outlined, so "Envoyer mon vote" stays the only solid
+   button. */
 .aller-au-vote { margin: 0 0 1.25rem; }
 .aller-au-vote a { display: inline-block; text-decoration: none; border-radius: var(--radius);
   padding: 0.5rem 1rem; background: var(--accent-soft); border: 1px solid var(--accent-line);
   color: var(--blue); font-size: 0.95rem; }
 .aller-au-vote a:hover { background: var(--surface); }
 
-/* « Ce que dit la loi », folded behind its own heading. The `<h2>` stays inside the
-   summary rather than above it: the charter names a four-block structure, so what
-   folds is the detail of a block, never the fact that the block is there. */
+/* "Ce que dit la loi" folded; the <h2> stays visible in the summary. */
 .bloc-repliable > summary { cursor: pointer; list-style: none; display: flex;
   align-items: baseline; justify-content: space-between; gap: 1rem; }
 .bloc-repliable > summary::-webkit-details-marker { display: none; }
@@ -708,9 +563,7 @@ body.reading main.container { max-width: var(--measure); }
   transition: transform 0.15s ease; }
 .bloc-repliable[open] > summary .repli-indice::after { transform: rotate(-135deg); top: 0.5em; }
 
-/* One public per row in « Ce que ça change en pratique » (see `practical_layout`).
-   The whole row is the target and it is 44 px tall, for the reason the ballot's
-   choices are: this is opened with a thumb far more often than with a mouse. */
+/* One row per audience (see `practical_layout`), 44px tall for touch. */
 .publics-indice { margin: 0 0 0.4rem; }
 .block.prose .public { border-top: 1px solid var(--line); }
 .block.prose .public > summary { cursor: pointer; list-style: none; display: flex;
@@ -723,8 +576,7 @@ body.reading main.container { max-width: var(--measure); }
 .block.prose .public[open] > summary::after { transform: rotate(-135deg); }
 .block.prose .public > p { margin: 0 0 1.05em; }
 
-/* The arguments a reader has to ask for. Same control as `.more-audiences`: the two
-   do the same job on the same page and must not look like two different ideas. */
+/* Folded arguments, same look as `.more-audiences`. */
 .plus-arguments { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
 .plus-arguments > summary { cursor: pointer; color: var(--blue); font-size: 0.95rem; }
 .plus-arguments > summary:hover { text-decoration: underline; }

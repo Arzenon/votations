@@ -1,11 +1,8 @@
 {% extends "base.html" %}
-{# The site's name at the end, as on every other page here. It is the first
-   thing a result truncates when the law's title is long, which is the right
-   thing to lose: the words before it are what somebody searched for. #}
+{# Site name at the end, as on the other pages. #}
 {% block title %}Résultats - {{ law.title }} - Votations Françaises{% endblock %}
 {% block description %}Résultats de la votation citoyenne sur « {{ law.title }} » : pourcentages, évolution dans le temps et données brutes anonymisées.{% endblock %}
-{# This page publishes percentages, so it carries the consequence as well as the
-   admission: what a reader must not do with the figure is stated beside it. #}
+{# Full disclaimer, since this page shows figures. #}
 {% block disclaimer %}{{ DISCLAIMER }}{% endblock %}
 {% block content %}
 <article class="law">
@@ -26,8 +23,7 @@
     <h2>Évolution des votes</h2>
     {% if chart %}
     <figure class="chart">
-      {# role="img" + title/desc: the curve is a picture of the table below it,
-         so a screen reader gets one sentence rather than 300 path commands. #}
+      {# role="img" with a description; the data is in the table below. #}
       <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" width="100%"
            role="img" aria-labelledby="evo-titre evo-desc" class="evolution-chart">
         <title id="evo-titre">Évolution des votes, par {{ chart.period.name }}</title>
@@ -62,11 +58,8 @@
         {% endfor %}
       </figcaption>
     </figure>
-    {# The curve is drawn one point per day up to three months, then one point per
-       week (or wider) — see `app.charts.MAX_POINTS`. Below that threshold the two
-       sentences say the same thing and the second is not shown; past it, the page
-       has to name the difference, because a reader comparing the curve to the
-       table underneath would otherwise be comparing two different units. #}
+    {# Past three months the curve is grouped by week or more (see
+       `app.charts.MAX_POINTS`), while the table stays daily, so say so. #}
     <p class="meta">
       Une mobilisation organisée se voit ici : elle laisse un pic sur {{ chart.period.span }}.
       {% if chart.period.days > 1 %}
@@ -84,14 +77,9 @@
           <tbody>
             {% for bucket in evolution %}
             <tr>
-              {# `day`, not `label`: the label is the ISO form the chart parses
-                 back, and printing it put a third date format in this section —
-                 next to an axis in jj/mm and a history table in jj/mm/aaaa, on a
-                 site where every other date goes through `app.labels`. #}
+              {# `day` rather than the ISO `label`, to show a French date. #}
               <th scope="row">{{ bucket.day | french_date }}</th>
-              {# Iterated, so the cells cannot fall out of step with the headings
-                 above — which is what three hand-written columns on each side of
-                 one table eventually do. #}
+              {# Same loop as the headings, so columns stay aligned. #}
               {% for key in CHOICE_LABELS %}<td>{{ bucket.counts[key] }}</td>{% endfor %}
             </tr>
             {% endfor %}
@@ -111,10 +99,7 @@
       n'est affichée que si chacune de ses cases atteint le seuil d'anonymat
       (≥ {{ min_cell_count }} votes) ; sinon, l'ensemble est masqué.
     </p>
-    {# A figure that is deliberately behind is only honest if it says so. The
-       threshold above protects a single reading of this page; this paragraph
-       explains what protects a series of them — without it a reader comparing
-       two visits would take the lag for a bug rather than for the rule it is. #}
+    {# Explain that the breakdowns are a snapshot, so the lag isn't taken for a bug. #}
     {% if breakdowns_as_of %}
     <p class="meta">
       Ces répartitions sont <strong>arrêtées au
@@ -125,10 +110,7 @@
       choix, l'âge, le sexe et la région de la personne qui vient de voter. Le
       décompte total, lui, reste en direct.
       {%- if not voting_open %}
-      {# The last step is held to the same rule as every other one. A votation
-         that closes a few profils short of the next palier keeps its last
-         published figures rather than releasing the remainder in one go, which
-         would have been that handful of people's profiles, exactly. #}
+      {# Closed, but the remainder since the last snapshot is too small to publish. #}
       La votation est close : les derniers profils renseignés avant la clôture
       restent en dehors de ce tableau, parce qu'un dernier palier trop petit
       désignerait les personnes qui ont voté juste avant la fin.
@@ -167,8 +149,7 @@
     {% elif bd.is_below_threshold %}
     <p class="meta">Pas assez de votant·e·s.</p>
     {% elif bd.is_pending %}
-    {# Not « aucune donnée » : people may have been filling these fields in since
-       the votation opened. Nothing is published until the first palier. #}
+    {# Not "aucune donnée": there may be data, just not published yet. #}
     <p class="meta">
       Pas encore publiée : la première répartition paraîtra dès que
       {{ min_bucket_volume }} personnes auront renseigné un profil.
@@ -193,14 +174,7 @@
       publication. Le détail est donné ici pour que chacun·e puisse juger si les
       votes exprimés portaient sur le même texte que celui affiché aujourd'hui.
     </p>
-    {# One block per change rather than a four-column table. The table put both
-       whole values side by side in two narrow cells, so checking an edit meant
-       reading two presentation blocks and finding the difference yourself — on
-       the section whose entire job is to make that difference visible.
-
-       Not a table any more because this is not tabular: each entry is one
-       change, narrated. It also means no horizontal scroll on a phone, which the
-       four-column version needed. #}
+    {# One block per change, with a diff (see `app.textdiff`). #}
     <ol class="revisions">
       {% for rev in revisions %}
       {% set change = field_change(rev.old_value, rev.new_value) %}
@@ -210,29 +184,21 @@
           <span class="meta">{{ rev.changed_at | french_datetime }}</span>
         </p>
         {% if change.short %}
-        {# Short single-line values — the publication flag, the three dates. A
-           word diff of « oui » → « non » marks noise around a change already
-           visible whole. #}
+        {# Short values (flag, dates): shown as before/after. #}
         <p class="revision-swap">
           <del>{{ change.old or "(vide)" }}</del>
           <span aria-hidden="true">→</span>
           <ins>{{ change.new or "(vide)" }}</ins>
         </p>
         {% elif change.rewritten %}
-        {# Most of the words moved, so marking them one by one is confetti rather
-           than a picture of the change — see `app.textdiff.REWRITE_SHARE`. Both
-           versions whole, stacked and full width, which is what the old table
-           did badly by putting them side by side in two narrow cells. #}
+        {# Mostly rewritten (see `REWRITE_SHARE`): both versions in full. #}
         <p class="meta revision-note">Bloc réécrit : les deux versions sont données entières.</p>
         <div class="revision-rewrite">
           <p class="revision-before"><del>{{ change.old or "(vide)" }}</del></p>
           <p class="revision-after"><ins>{{ change.new or "(vide)" }}</ins></p>
         </div>
         {% else %}
-        {# `<del>` and `<ins>` rather than styled spans: they are what a screen
-           reader announces as removed and inserted, so the marking is not
-           carried by colour alone. See `app.textdiff` — these segments are data,
-           escaped here like any other value. #}
+        {# <del> and <ins> so screen readers announce the changes, not just colour. #}
         <p class="revision-diff">
           {%- for seg in change.segments -%}
             {%- if seg.kind == "added" %}<ins>{{ seg.text }}</ins>
@@ -247,10 +213,7 @@
       {% endfor %}
     </ol>
 
-    {# Paginated because this table has no ceiling: every edit adds a row holding
-       the whole before and after value of a field. The links carry the anchor so
-       a reader turning a page lands back on the history rather than at the top of
-       the results. #}
+    {# Paginated. The links include the anchor to land back on the history. #}
     {% if revision_pages > 1 %}
     <nav class="pagination" aria-label="Pages de l'historique des modifications">
       {% if revision_page > 1 %}

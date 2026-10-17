@@ -24,13 +24,8 @@ from app.templating import STATIC_DIR, templates
 
 log = get_logger("app")
 
-# Robots: everything is public and worth indexing except the administration and
-# the bulk exports, which are large and pointless for a crawler.
-#
-# The two export URLs are also named as the `DataDownload` distributions of each
-# votation's `Dataset` — see `app.seo.votation_dataset`, which explains why
-# declaring where the data is and asking a crawler not to walk into it are two
-# compatible statements rather than the sitemap-versus-noindex contradiction.
+# Everything is indexable except the admin and the exports (large, useless to
+# crawlers). See also `app.seo.votation_dataset`.
 ROBOTS_TXT = """\
 User-agent: *
 Disallow: /admin
@@ -39,12 +34,9 @@ Disallow: /loi/*/export.json
 Allow: /
 """
 
-# Appended at request time: the sitemap has to be an absolute URL, and only the
-# request knows the site's own origin.
+# Added per request: the sitemap URL must be absolute.
 SITEMAP_LINE = "Sitemap: {base}/sitemap.xml\n"
 
-# A tricolour ballot mark, inline so the tab icon costs no extra request and no
-# third-party host.
 FAVICON_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
     '<rect width="32" height="32" rx="6" fill="#1d3a8a"/>'
@@ -53,11 +45,8 @@ FAVICON_SVG = (
     "</svg>"
 )
 
-# Set by the app itself, not only by the reverse proxy. The Caddyfile sets the
-# same headers and wins where it is present (these are applied only if absent),
-# but the app must not depend on a particular proxy being in front of it for its
-# protection: run it behind anything else and the headers used to vanish with no
-# signal at all.
+# Also set by Caddy, but the app shouldn't depend on a particular proxy.
+# Only added when the response doesn't already have them.
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -72,32 +61,19 @@ SECURITY_HEADERS = {
     ),
 }
 
-# Only ever sent where the site is already HTTPS-only — `cookie_secure` is the
-# app's own record of that, and production refuses to boot without it. Sending it
-# over plain HTTP in development would pin the developer's browser to a scheme
-# the local stack does not serve, and browsers honour that pin for a year.
+# Only sent when cookie_secure is set, so a dev browser isn't pinned to HTTPS.
 HSTS_HEADER = ("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
-# Pages default to not being stored anywhere. The law page renders the visitor's
-# own ballot, and the administration renders unpublished drafts; neither may sit
-# in a shared cache, and "no cache directive at all" leaves that to the goodwill
-# of whatever proxy is in the path. Anything genuinely shareable opts in by
-# setting its own Cache-Control — the static files and the favicon do.
+# No caching by default: the law page shows the visitor's ballot and the admin
+# shows drafts. Cacheable responses set their own Cache-Control.
 DEFAULT_CACHE_CONTROL = "private, no-store"
 STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
-# Development only: still cacheable, but revalidated every time. `immutable`
-# there meant an edited stylesheet was invisible until a hard reload, because the
-# files change under a running server and `--reload` only watches Python.
+# In development, static files are revalidated on each request.
 DEV_STATIC_CACHE_CONTROL = "no-cache"
 
 
 class CachedStaticFiles(StaticFiles):
-    """Static assets, cached hard.
-
-    Safe only because the templates request them through ``asset_url``, which
-    appends a fingerprint of the file's contents: a deployed edit is a new URL,
-    so nothing can be served stale.
-    """
+    """Static files with a long cache. Safe because `asset_url` adds a content hash."""
 
     def file_response(self, *args, **kwargs) -> Response:
         response = super().file_response(*args, **kwargs)
@@ -108,15 +84,10 @@ class CachedStaticFiles(StaticFiles):
 
 
 def default_headers(settings: Settings | None = None) -> list[tuple[str, str]]:
-    """The security headers plus the conservative cache default, in one list.
+    """Security headers plus the default Cache-Control.
 
-    Applied in two places on purpose. The middleware below covers every ordinary
-    response; :func:`_error_page` applies them again because an unhandled
-    exception is served by Starlette's ``ServerErrorMiddleware``, which sits
-    *above* our own middleware and never reaches it. That left the one page on
-    the site most likely to be generated under stress as the only one with no
-    CSP — and, worse, with no ``no-store``, which is the directive no reverse
-    proxy puts back for us.
+    Also applied in `_error_page`, because 500 responses come from
+    ServerErrorMiddleware, which runs outside our middleware.
     """
     settings = settings or get_settings()
     headers = [*SECURITY_HEADERS.items(), ("Cache-Control", DEFAULT_CACHE_CONTROL)]
@@ -126,22 +97,14 @@ def default_headers(settings: Settings | None = None) -> list[tuple[str, str]]:
 
 
 class SecurityHeaders:
-    """Apply the site's headers, whatever is (or is not) proxying for us.
+    """Adds the default headers unless the response already sets them.
 
-    A plain ASGI middleware rather than ``@app.middleware("http")``: the
-    ``BaseHTTPMiddleware`` behind that decorator pipes every response body
-    through an anyio memory stream, task group included. The open-data exports
-    are the one place that streams a whole votation row by row, and they paid
-    that cost on every chunk for a handful of headers that never vary.
-
-    Headers already on the response win, so a route that sets its own
-    ``Cache-Control`` — the static files, the favicon, robots.txt — keeps it.
+    Plain ASGI rather than BaseHTTPMiddleware, which adds overhead to every
+    chunk of a streamed response (the exports).
     """
 
     def __init__(self, app: ASGIApp, *, headers: list[tuple[str, str]]) -> None:
         self.app = app
-        # Encoded once at construction: they are the same bytes on every
-        # response, and latin-1 is what the HTTP layer wants.
         self.headers = [
             (name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers
         ]
@@ -162,10 +125,7 @@ class SecurityHeaders:
         await self.app(scope, receive, send_with_headers)
 
 
-# What the heading says, for the refusals a visitor can actually meet. Anything
-# not named here falls back to the generic wording — « Une erreur est survenue »
-# is the honest heading for a status nobody has thought about yet, and a wrong
-# specific one would be worse.
+# Error page headings. Other statuses get a generic one.
 _ERROR_TITLES = {
     403: "Requête refusée",
     429: "Trop de tentatives",
@@ -173,7 +133,7 @@ _ERROR_TITLES = {
 
 
 def _error_page(request: Request, *, status: int, titre: str, message: str) -> Response:
-    """Render a failure as a page of this site, not as a bare JSON payload."""
+    """Render an error as an HTML page."""
     template = "not_found.html" if status == 404 else "erreur.html"
     context = {} if status == 404 else {"titre": titre, "message": message}
     response = templates.TemplateResponse(request, template, context, status_code=status)
@@ -187,27 +147,13 @@ def _wants_html(request: Request) -> bool:
 
 
 def _release_interrupted_drafts() -> None:
-    """Hand back the rows a previous process was still drafting when it stopped.
+    """Release drafts left "running" by a previous process.
 
-    Deliberately swallows every failure. The database may not be reachable at the
-    instant we boot — the entrypoint migrates first, but nothing guarantees the
-    connection survives to here — and refusing to start the site over a piece of
-    administrative housekeeping would trade a stuck banner for an outage.
+    Errors are logged and ignored: not worth refusing to start over.
 
-    **Assumes one app container**, which is what the shipped compose file runs
-    and is stated here because nothing in the code would say so otherwise. « en
-    cours » means "a thread in *this* process is working on it", and this reads
-    it as "a thread in *any* process was" — true of a single container starting,
-    false the moment there are two: a rolling restart would mark the other
-    replica's live draft as interrupted while it is still running, and the draft
-    would then finish and overwrite the failure.
-
-    Scaling the app therefore needs a shared claim rather than this: a
-    ``claimed_at`` on the staged row, released once it is older than
-    ``AI_DRAFT_DEADLINE_SECONDS``. That column does not exist, and inventing it
-    for a deployment nobody runs would be a migration in exchange for nothing.
-    The same caveat applies to the migrations themselves — see
-    ``docker/entrypoint.sh``.
+    Assumes a single app container. With several, this would mark another
+    replica's running draft as failed. Scaling would need a ``claimed_at``
+    column instead.
     """
     db = SessionLocal()
     try:
@@ -224,43 +170,14 @@ def _release_interrupted_drafts() -> None:
 
 
 class HeadAsGet:
-    """Answer HEAD wherever GET is answered, by reading it as the GET it is.
+    """Handle HEAD as GET (FastAPI doesn't add HEAD routes by itself).
 
-    Starlette adds HEAD beside GET on its own; FastAPI, which builds its routes
-    itself, does not — so *every* URL on this site refused a HEAD request,
-    `/robots.txt` and the sitemap included. That is the request link checkers,
-    uptime probes and several crawlers make first, precisely because it is the
-    cheap way to ask whether a URL is alive, and all of them were being told the
-    method was not allowed.
+    A middleware rather than adding HEAD to every route, which would produce
+    duplicate operationIds. The scope is copied, not mutated: the server reads
+    the original method to know it must not send a body.
 
-    **Here rather than on the routes**, and the two attempts are worth recording.
-    Adding ``"HEAD"`` to each route's ``methods`` is the obvious fix and has two
-    costs: since FastAPI 0.140 an included router is a single opaque node in the
-    parent's list, so reaching the forty routes that arrive through
-    ``include_router`` means walking a private attribute; and FastAPI derives one
-    ``operationId`` per *route*, not per method, so every route answering both
-    then warns about a duplicate every time the schema is built. A middleware has
-    neither problem and is shorter.
-
-    **The scope is copied, never mutated.** The server keeps its own reference to
-    the scope it built and reads the method back from it to decide that a HEAD
-    response carries no body. Rewriting in place would make it send one, which is
-    a protocol violation; handing the application a copy leaves the server's own
-    view of the request intact.
-
-    The cost is that the application sees ``GET``. Nothing here distinguishes
-    them — `require_same_origin` already treats HEAD as the read it is — and the
-    body the handler produces is discarded by the server, exactly as it would be
-    for a route that declared the method itself.
-
-    **Except where producing that body is the expensive part.** The server throws
-    it away, but the application still builds it: a HEAD on an open-data export
-    therefore scanned every vote on a votation and serialised the lot, for a
-    response that is headers only. That is the request a link checker or an uptime
-    probe makes *first*, on the two URLs `robots.txt` marks as not worth
-    crawling. So the original method is recorded in the scope under
-    :data:`~app.security.HEAD_SCOPE_KEY`, and the routes that would pay for it ask
-    :func:`~app.security.is_head` and answer with the headers alone.
+    Sets HEAD_SCOPE_KEY so expensive routes (exports) can skip the work, see
+    `app.security.is_head`.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -273,18 +190,14 @@ class HeadAsGet:
 
 
 def create_app() -> FastAPI:
-    # Refuse to serve real votes on placeholder secrets. Raising here stops the
-    # container at boot instead of quietly running a forgeable configuration.
     settings = get_settings()
     check_production_config(settings)
     configure_logging()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        # The routes are sync `def`, so Starlette runs each one in this thread
-        # pool. Keeping it in step with the connection pool means a burst queues
-        # on the database at most once, rather than here *and* on checkout. Only
-        # settable from inside the loop, hence the lifespan hook.
+        # Sync routes run in this thread pool; match it to the DB pool. Can only
+        # be set inside the event loop.
         anyio.to_thread.current_default_thread_limiter().total_tokens = settings.db_max_threads
         log.info(
             "démarrage - environnement=%s, threads=%s, pool=%s",
@@ -294,14 +207,10 @@ def create_app() -> FastAPI:
         )
         _release_interrupted_drafts()
         yield
-        # Drafts can run for minutes; do not make a redeploy wait for one.
+        # Don't wait for drafts, which can take minutes.
         shutdown_drafting()
 
-    # The OpenAPI schema enumerates every administration route. Useful locally,
-    # gratuitous reconnaissance in production, so all three are switched off
-    # there. Spelled out rather than unpacked from a dict of overrides: FastAPI's
-    # own defaults are exactly these paths, and naming them keeps the intent — and
-    # the types — visible.
+    # No API docs in production: they list every admin route.
     hide_docs = settings.is_production
     app = FastAPI(
         title="Votations Françaises",
@@ -312,7 +221,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(SecurityHeaders, headers=default_headers(settings))
-    # Outermost, so the rewrite happens before anything tries to match a route.
+    # Outermost, so it runs before routing.
     app.add_middleware(HeadAsGet)
 
     app.mount("/static", CachedStaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -322,8 +231,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     def http_error(request: Request, exc: StarletteHTTPException) -> Response:
-        """Serve HTTP errors as pages of this site when a browser asked for one."""
-        # A 401 must keep its WWW-Authenticate header or the browser never prompts.
+        """HTML error page for browsers, plain text otherwise."""
+        # A 401 needs its WWW-Authenticate header for the browser to prompt.
         if exc.status_code == 401 or not _wants_html(request):
             return PlainTextResponse(
                 str(exc.detail), status_code=exc.status_code, headers=exc.headers
@@ -332,28 +241,14 @@ def create_app() -> FastAPI:
         response = _error_page(
             request, status=exc.status_code, titre=titre, message=str(exc.detail)
         )
-        # The headers the refusal itself carries — `Retry-After` on the
-        # administration's 429, in practice. They were reaching a `curl` through
-        # the branch above and being dropped for a browser, which is the caller
-        # that most needs telling how long to wait.
+        # Keep the exception's headers (e.g. Retry-After on a 429).
         for name, value in (exc.headers or {}).items():
             response.headers.setdefault(name, value)
         return response
 
     @app.exception_handler(RequestValidationError)
     def invalid_request(request: Request, exc: RequestValidationError) -> Response:
-        """A field FastAPI could not read at all, rendered as a page.
-
-        Its own handler answers with a JSON list of pydantic error dicts, which
-        is right for an API and wrong for a site whose forms are posted by
-        browsers: a mistyped field showed the visitor raw JSON. The status stays
-        FastAPI's 422 — the request really was unprocessable, and nothing is
-        gained by disagreeing with the framework about which number says so.
-
-        The detail is deliberately not echoed: it names internal field paths,
-        which help nobody reading the page and describe the shape of the form
-        handler to anyone probing it.
-        """
+        """Show a 422 as a page instead of FastAPI's JSON. Details aren't shown."""
         if not _wants_html(request):
             return PlainTextResponse("Requête invalide", status_code=422)
         return _error_page(
@@ -372,12 +267,12 @@ def create_app() -> FastAPI:
             request,
             status=400,
             titre="Saisie invalide",
-            message=f"{exc} — revenez en arrière pour corriger le formulaire.",
+            message=f"{exc}. Revenez en arrière pour corriger le formulaire.",
         )
 
     @app.exception_handler(Exception)
     def unhandled(request: Request, exc: Exception) -> Response:
-        """Last resort: log the failure, show a page, leak nothing about it."""
+        """Log the error and show a generic page."""
         log.error(
             "erreur non gérée sur %s %s",
             request.method,
@@ -409,22 +304,13 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # Two URLs, one image, and the pair is the point. `<link rel="icon">` in the
-    # page points at the `.svg`, which is what the mark actually is and what
-    # every browser that reads the link will fetch. `/favicon.ico` stays because
-    # a browser that ignores the link asks for that path by itself, and answering
-    # it with a 404 costs a log line and an empty tab icon — but a file named
-    # `.ico` holding SVG is a mismatch some clients (Safari, historically) refuse
-    # to render, which is exactly why it is no longer the one the page names.
+    # Pages link to the .svg. /favicon.ico is for browsers that request it anyway.
     app.get("/favicon.svg", include_in_schema=False)(_favicon)
     app.get("/favicon.ico", include_in_schema=False)(_favicon)
 
     @app.get("/sante", response_class=PlainTextResponse, include_in_schema=False)
     def sante() -> PlainTextResponse:
-        """Liveness probe: the app answers *and* the database does.
-
-        Deliberately cheap and free of personal data, so it can be polled often.
-        """
+        """Health check: the app and the database respond."""
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))

@@ -1,4 +1,4 @@
-"""V1: advanced search filtering and anti-manipulation evolution gating."""
+"""Search and the evolution curve."""
 
 from datetime import UTC, date, datetime, timedelta
 
@@ -53,7 +53,7 @@ def test_evolution_shown_above_min_volume(db_session, open_law, monkeypatch):
 
 
 def test_search_pages_in_sql_not_in_python(db_session):
-    """A page used to be sliced out of every published law loaded into memory."""
+    """Search pagination is done in SQL."""
     publish_laws(db_session, 45)
     seen: list[str] = []
     bind = db_session.get_bind()
@@ -74,12 +74,9 @@ def test_search_pages_in_sql_not_in_python(db_session):
 
 
 def test_search_is_ordered_like_the_home_page(db_session):
-    """One corpus, one order — whichever page you reach it from.
+    """Search uses the same order as the home page (promulgation date).
 
-    The home page was moved off `created_at` (the moment somebody pressed save)
-    and onto the promulgation date; search was left behind, so the same two laws
-    ranked one way on the home page and the other way here. Inserted newest-first
-    below precisely so that data-entry order and promulgation order disagree.
+    Inserted so that creation order and promulgation order differ.
     """
     make_law(db_session, slug="loi-recente", title="Loi commune", promulgated_on=date(2026, 8, 20))
     make_law(db_session, slug="loi-ancienne", title="Loi commune", promulgated_on=date(2026, 1, 5))
@@ -96,13 +93,7 @@ def test_search_by_status_filters_correctly(db_session, open_law, closed_law):
 
 
 def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
-    """LIKE wildcards must not survive into the query as wildcards.
-
-    Search is full-text now, so punctuation is not indexed and a bare « % » finds
-    nothing rather than finding the law that contains one. What matters is
-    unchanged and still asserted: neither wildcard can be used to match the whole
-    corpus, and the words around them are searched as words.
-    """
+    """LIKE wildcards typed in the search box don't match everything."""
     db_session.add(Law(slug="pourcent", title="Loi 100 % renouvelable", published=True))
     db_session.add(Law(slug="autre", title="Loi ordinaire", published=True))
     db_session.commit()
@@ -114,8 +105,7 @@ def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
     # A bare "%" is not "match everything".
     assert laws_crud.search(db_session, query="%").total == 0
 
-    # The official reference is still matched with LIKE, so both wildcards have
-    # to stay literal there: "2026_214" must not match "2026-214".
+    # The reference uses LIKE: "2026_214" must not match "2026-214".
     db_session.add(
         Law(slug="ref", title="Texte référencé", official_ref="LOI n° 2026-214", published=True)
     )
@@ -124,7 +114,7 @@ def test_a_wildcard_typed_in_the_box_never_matches_everything(db_session):
     assert laws_crud.search(db_session, query="2026_214").total == 0
 
 
-# --- Recherche plein texte ----------------------------------------------------
+# --- Full-text search ----------------------------------------------------------
 
 
 def test_search_finds_a_plural_from_the_singular(client, db_session):
@@ -152,20 +142,14 @@ def test_search_requires_every_word(client, db_session):
 
 
 def test_search_ignores_punctuation_a_visitor_types(client, db_session):
-    """`to_tsquery` would treat these as syntax and fail the whole query."""
+    """Punctuation is ignored (to_tsquery would fail on it)."""
     make_law(db_session, slug="loi-ponct", title="Loi sur l'eau", summary_text="Texte.")
     for query in ("l'eau", "eau !", "(eau)", "eau & | :"):
         assert laws_crud.search(db_session, query=query).total == 1, query
 
 
 def test_the_curve_keeps_the_days_nobody_voted(db_session, open_law, monkeypatch):
-    """A quiet day is drawn flat, not deleted.
-
-    The chart spaces its points by position, not by date, so a dropped day made
-    thirty quiet days look exactly like thirty busy ones — and flattened out the
-    one thing the page says this curve is for: « une mobilisation organisée
-    laisse un pic sur une journée ».
-    """
+    """Days without votes are kept as zeros, so spikes stand out."""
     monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
     base = datetime(2026, 5, 4, 12, 0, tzinfo=UTC)
     for i in range(3):
@@ -193,7 +177,7 @@ def test_the_curve_keeps_the_days_nobody_voted(db_session, open_law, monkeypatch
 
 
 def test_the_curve_does_not_invent_days_outside_the_votes(db_session, open_law, monkeypatch):
-    """The range still stops where the voting did, at both ends."""
+    """The curve starts and ends with the first and last vote."""
     monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
     moment = datetime(2026, 5, 4, 12, 0, tzinfo=UTC)
     for i in range(4):

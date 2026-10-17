@@ -1,21 +1,13 @@
-# Production stack. Differs from docker-compose.dev.yml deliberately:
-#   · no bind mounts and no --reload — the image you built is what runs
-#   · no seeding — sample laws must never reach a live civic platform
-#   · Postgres is not published; only Caddy is reachable from outside
-#   · every service restarts on its own, and the app declares a healthcheck
+# Production stack. Unlike the dev stack: no bind mounts, no --reload, no
+# sample data, Postgres not exposed (only Caddy), automatic restarts and a
+# healthcheck.
 #
-# Secrets come from the environment (or a .env beside this file, which is
-# gitignored). See DEPLOY.md — the app refuses to start on placeholder values.
+# Secrets come from .env (gitignored). See DEPLOY.md.
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    # No `read_only` here, unlike the services built from our own image: Postgres
-    # writes to /var/run/postgresql and to its own temporary files, and freezing
-    # a database's filesystem to harden a container it does not need hardening
-    # for would be trading a working stack for a checkbox. Same for `caddy`,
-    # which manages its certificate store, and for `db-backup`, which shells out
-    # to pg_dump.
+    # No read_only here: Postgres needs to write (same for caddy and db-backup).
     security_opt:
       - no-new-privileges:true
     environment:
@@ -31,14 +23,9 @@ services:
       retries: 5
 
   app:
-    # Built once, under a name, and reused by the three job services below: they
-    # run the same code from the same image. Declaring `build:` on each of them
-    # made `docker compose build` produce four identical images under four names,
-    # and left room for them to drift apart on a partial rebuild.
+    # Built once and reused by the job services below.
     image: votations-app:local
-    # `target` is mandatory, not decoration: with none, Docker builds the *last*
-    # stage of the Dockerfile, which is `dev` — pytest, ruff and the test suite,
-    # shipped to production. Naming `base` is what keeps them out.
+    # Required: otherwise Docker builds the last stage (`dev`, with the tests).
     build:
       context: .
       target: base
@@ -46,54 +33,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Everything the operator decides — secrets, mentions légales, seuils
-    # d'anonymat, clé IA. `.env` is excluded from the image on purpose, so this
-    # is what carries it into the container; without it, filling `.env` would
-    # change nothing in production. Create it first: `cp .env.example .env`.
+    # Operator settings. Create it with `cp .env.example .env`.
     env_file: .env
-    # Only what the deployment itself must impose. `environment` wins over
-    # `env_file`, so these cannot be weakened by editing `.env` — which is the
-    # point: they are properties of *this* stack, not preferences.
+    # Imposed by this stack; takes precedence over .env.
     environment:
       ENVIRONMENT: production
       COOKIE_SECURE: "true"
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
-      # Exactly one proxy (Caddy) sits in front, and it overwrites
-      # X-Forwarded-For with the peer address — so the last entry is the real
-      # client and the rate limit cannot be keyed on a forged one.
+      # One proxy (Caddy), which overwrites X-Forwarded-For.
       TRUSTED_PROXY_HOPS: "1"
-      # Fail at `up`, with a message, rather than at boot inside the container.
+      # Fail at `up` with a clear message.
       SECRET_KEY: ${SECRET_KEY:?définissez SECRET_KEY — voir DEPLOY.md}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?définissez ADMIN_PASSWORD}
       # SEED_ON_START is deliberately absent: it defaults to 0.
-    # --no-access-log: uvicorn's access log records the client IP of every
-    # request, which would pair addresses with vote timestamps in the logs.
-    # --forwarded-allow-ips: only Caddy may set the proxy headers. It reaches the
-    # app over this compose network, so trust is scoped to that subnet rather
-    # than to "*", which would trust whoever happened to connect.
+    # --no-access-log: the access log would pair IPs with vote times.
+    # --forwarded-allow-ips: only trust proxy headers from the compose network.
     command:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
        "--proxy-headers", "--forwarded-allow-ips", "${TRUSTED_PROXY_CIDR:-172.16.0.0/12}",
        "--no-access-log"]
-    # The image already runs as a non-root user and installs nothing at
-    # runtime; these two say so to the kernel as well.
-    #
-    # `no_new_privileges` stops any setuid binary in the image from raising
-    # privilege, which nothing here needs. `read_only` freezes the image's own
-    # filesystem — safe because this container writes nowhere but /tmp:
-    # PYTHONDONTWRITEBYTECODE keeps __pycache__ out, both archive readers work
-    # in memory (io.BytesIO), and the only files the app writes at all are the
-    # content snapshots, which belong to a different service and land in a
-    # mounted volume. Volumes and tmpfs stay writable under `read_only`, which
-    # is what makes it usable here at all.
-    #
-    # /tmp is given as tmpfs rather than left absent: Starlette spools a large
-    # multipart body to a temporary file, and the administration posts forms.
-    #
-    # If a container ever fails to start with « Read-only file system », that is
-    # this line and not a mystery: find what it wanted to write, and either give
-    # that path a tmpfs beside /tmp or drop `read_only` here. Nothing else in the
-    # stack depends on it. `no-new-privileges` is unconditional and should stay.
+    # Read-only filesystem: the app only writes to /tmp (tmpfs, used by
+    # Starlette for large form uploads). If a container fails with "Read-only
+    # file system", add a tmpfs for that path or remove read_only.
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -102,8 +63,7 @@ services:
     deploy:
       resources:
         limits:
-          # The import jobs decompress multi-megabyte government archives in
-          # memory; a cap keeps a bad upstream day from taking the host with it.
+          # Memory cap (archives are decompressed in memory).
           memory: 1g
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/sante', timeout=4).status==200 else 1)\""]
@@ -131,8 +91,7 @@ services:
 
   insee-refresh:
     image: votations-app:local
-    # Built by `app`, never fetched: without this, a registry lookup for a tag
-    # that only exists on this host is the first thing `up` would try.
+    # Built by `app`, not pulled from a registry.
     pull_policy: never
     restart: unless-stopped
     depends_on:
@@ -140,26 +99,22 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    # The same `.env` as the app. Without it this container ran on the shipped
-    # defaults alone: filling in INSEE_API_KEY or INSEE_DATASET changed nothing,
-    # silently, because `.env` is excluded from the image on purpose.
+    # Same .env as the app.
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
       INSEE_REFRESH_INTERVAL: "2592000"   # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/insee_cron.sh"]
-    # Same as `app`: nothing is written outside /tmp — the heartbeat the
-    # healthcheck reads, and (for content-export) HOME. The snapshots
-    # themselves go to the bind mount, which stays writable.
+    # Only /tmp is written (heartbeat, and HOME for content-export). Snapshots go
+    # to the bind mount.
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
       - /tmp
-    # A shell loop that has stopped succeeding still looks "running". The
-    # heartbeat is touched only after a successful refresh, so its age is what
-    # actually says whether the job works. Generous window: the cadence is 30 days.
+    # The heartbeat is touched after each successful run. The job runs every 30
+    # days.
     healthcheck:
       test: ["CMD-SHELL", "test $(find /tmp/refresh-alive -mmin -64800 2>/dev/null | wc -l) -eq 1"]
       interval: 6h
@@ -173,8 +128,7 @@ services:
 
   assemblee-refresh:
     image: votations-app:local
-    # Built by `app`, never fetched: without this, a registry lookup for a tag
-    # that only exists on this host is the first thing `up` would try.
+    # Built by `app`, not pulled from a registry.
     pull_policy: never
     restart: unless-stopped
     depends_on:
@@ -182,26 +136,21 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    # The same `.env` as the app — this is the container that most needs it. The
-    # export URL carries the legislature number and changes once per legislature;
-    # without this, correcting AN_DOSSIERS_URL in `.env` would fix the setting
-    # everywhere except in the job that reads it.
+    # Same .env as the app (AN_DOSSIERS_URL in particular).
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
       AN_REFRESH_INTERVAL: "86400"        # lu par le script shell, pas par l'app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/assemblee_cron.sh"]
-    # Same as `app`: nothing is written outside /tmp — the heartbeat the
-    # healthcheck reads, and (for content-export) HOME. The snapshots
-    # themselves go to the bind mount, which stays writable.
+    # Only /tmp is written (heartbeat, and HOME for content-export). Snapshots go
+    # to the bind mount.
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
       - /tmp
-    # Without this the import stops in silence when the source moves. The
-    # dashboard warns too, but only somebody who logs in sees that.
+    # Unhealthy if the import stops succeeding.
     healthcheck:
       test: ["CMD-SHELL", "test $(find /tmp/refresh-alive -mmin -2880 2>/dev/null | wc -l) -eq 1"]
       interval: 1h
@@ -211,22 +160,17 @@ services:
     deploy:
       resources:
         limits:
-          # The Dossiers_Legislatifs export is ~10 MB zipped and is walked in
-          # memory; twice that is ample and bounds a decompression surprise.
+          # The export is ~10 MB zipped and processed in memory.
           memory: 1g
 
-  # Daily snapshot of the editorial content, in a portable form. Separate from
-  # `db-backup` on purpose: that one protects the votes and restores only into
-  # this same schema, while this one is what you carry to another host.
+  # Daily export of the editorial content (see scripts/content.py). Separate
+  # from db-backup, which covers the votes.
   #
-  # Bind-mounted rather than a named volume, so the files land in ./exports on
-  # the host and `cp` reaches them without going through `docker cp`. The
-  # directory is committed (with a .gitkeep) because Docker would otherwise
-  # create it as root on first `up`, and the container could not write into it.
+  # Bind mount to ./exports. The directory is committed (.gitkeep), otherwise
+  # Docker would create it as root.
   content-export:
     image: votations-app:local
-    # Built by `app`, never fetched: without this, a registry lookup for a tag
-    # that only exists on this host is the first thing `up` would try.
+    # Built by `app`, not pulled from a registry.
     pull_policy: never
     restart: unless-stopped
     depends_on:
@@ -234,8 +178,7 @@ services:
         condition: service_started
       db:
         condition: service_healthy
-    # Runs as *you*, not as the image's own user, so the snapshots belong to the
-    # account that will copy them. `id -u` / `id -g` if 1000 is not your uid.
+    # Runs as your user so you own the files (check with `id -u` / `id -g`).
     user: "${EXPORT_UID:-1000}:${EXPORT_GID:-1000}"
     env_file: .env
     environment:
@@ -243,12 +186,11 @@ services:
       CONTENT_EXPORT_INTERVAL: "86400"
       CONTENT_KEEP_DAYS: "5"
       HEARTBEAT_FILE: /tmp/export-alive
-      # That uid has no entry in the image's passwd, so give it a home it can write.
+      # This uid has no home in the image.
       HOME: /tmp
     entrypoint: ["./docker/content_export.sh"]
-    # Same as `app`: nothing is written outside /tmp — the heartbeat the
-    # healthcheck reads, and (for content-export) HOME. The snapshots
-    # themselves go to the bind mount, which stays writable.
+    # Only /tmp is written (heartbeat, and HOME for content-export). Snapshots go
+    # to the bind mount.
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -267,8 +209,7 @@ services:
         limits:
           memory: 512m
 
-  # Daily dump of the only irreplaceable data on the platform: the votes.
-  # Uses the Postgres image because it already ships pg_dump.
+  # Daily database dump (the votes). Postgres image, for pg_dump.
   db-backup:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -284,17 +225,15 @@ services:
       PGDATABASE: votations
       BACKUP_INTERVAL: "86400"     # 24 h
       BACKUP_KEEP_DAYS: "14"
-      # Refuse to dump with less than this free, rather than filling the disk the
-      # database is also sitting on.
+      # Minimum free space, so the backup doesn't fill the database's disk.
       BACKUP_MIN_FREE_MB: "500"
       BACKUP_HEARTBEAT: /tmp/backup-alive
     volumes:
       - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
       - backups:/backups
     entrypoint: ["sh", "/usr/local/bin/backup.sh", "loop"]
-    # A backup you find out about only when you need it is not a backup. The
-    # heartbeat is touched after a dump that passed its integrity checks, so a
-    # full disk or a broken pg_dump turns this container unhealthy within a day.
+    # The heartbeat is touched after a verified dump, so a failure shows as
+    # unhealthy within a day.
     healthcheck:
       test: ["CMD-SHELL", "test $(find /tmp/backup-alive -mmin -2880 2>/dev/null | wc -l) -eq 1"]
       interval: 1h

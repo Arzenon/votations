@@ -5,58 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Votations Françaises{% endblock %}</title>
   <meta name="description" content="{% block description %}{{ TAGLINE }}{% endblock %}">
-  {# The page's own address, so the several URLs that reach it are known to be
-     one page: apex and www, http and https, and above all the query strings —
-     `?page=`, `?revisions=`, `?q=` — each of which would otherwise offer a
-     crawler a near-identical copy to index instead of the original. Built from
-     the path alone; see `app.templating._page_context`. #}
+  {# Canonical URL, without the query string (see `app.templating._page_context`). #}
   <link rel="canonical" href="{% block canonical %}{{ canonical_url }}{% endblock %}">
-  {# Pages that must not be indexed say so here. Never in robots.txt: a
-     disallowed page is one the crawler may not *read*, so it never sees the
-     instruction not to index it — and the URL can still surface, stripped of
-     everything that would have made it useful. #}
+  {# noindex goes here, not in robots.txt: a disallowed page can't be read, so
+     the crawler never sees the noindex. #}
   {% block meta_robots %}{% endblock %}
   <meta property="og:site_name" content="Votations Françaises">
   <meta property="og:title" content="{{ self.title() }}">
   <meta property="og:description" content="{{ self.description() }}">
   <meta property="og:type" content="website">
-  {# The canonical address again, in Open Graph's own vocabulary. It is what a
-     messaging app keys a link preview on, so without it the same page shared
-     twice under two URLs is two previews and two link counts. #}
+  {# Same as the canonical URL, for link previews. #}
   <meta property="og:url" content="{{ self.canonical() }}">
-  {# Absolute URL, as the Open Graph spec requires — a relative one is ignored by
-     every scraper. `asset_url` fingerprints it so a redesign is picked up rather
-     than served from a social network's cache for ever. #}
+  {# Must be absolute. `asset_url` adds a hash so a new image isn't stuck in caches. #}
   <meta property="og:image" content="{{ site_origin }}{{ asset_url('og.png') }}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Votations Françaises - donnez votre avis sur les lois adoptées par le Parlement">
   <meta property="og:locale" content="fr_FR">
   <meta name="twitter:card" content="summary_large_image">
-  {# `.svg`, not `.ico`: the mark is an SVG, and a file named `.ico` that holds
-     one is a mismatch some browsers decline to render. `/favicon.ico` still
-     answers, for the clients that ask for it without reading this line. #}
+  {# The icon is an SVG; /favicon.ico also works for clients that request it. #}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  {# htmx reads this before it initialises, on the two pages that load it. Both
-     settings default to true, and the Content-Security-Policy already refuses
-     what they permit — `script-src 'self'` with neither 'unsafe-eval' nor
-     'unsafe-inline'. Switched off here anyway, because that makes the CSP the
-     second line of defence rather than the only one: the day somebody has to
-     loosen it for an unrelated reason, htmx must not quietly start evaluating
-     attribute expressions and running <script> tags out of swapped fragments.
-     A meta element, not an inline script — the CSP forbids those too. #}
+  {# Disable htmx eval and script execution. The CSP already blocks them, but
+     this still holds if the CSP is ever loosened. #}
   <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false}'>
   <link rel="stylesheet" href="{{ asset_url('styles.css') }}">
-  {# What this page is, in schema.org's vocabulary — see `app.seo` for what is
-     said and what is deliberately not. JSON-LD is a data block, never executed,
-     so `script-src 'self'` allows it with no `unsafe-inline` and the policy above
-     stays exactly as strict as it was. `tojson` escapes `<`, `>`, `&` and `'`,
-     which is what lets a law's title be dropped in here safely. #}
+  {# Structured data (see `app.seo`). JSON-LD isn't executed, so the CSP allows
+     it. `tojson` escapes < and >. #}
   {% if jsonld %}<script type="application/ld+json">{{ jsonld | tojson }}</script>{% endif %}
   <script src="{{ asset_url('app.js') }}" defer></script>
-  {# htmx is 50 kB and only two pages use it (the ballot, and the admin draft
-     banner). Loading it from here made every visitor on every page pay for it —
-     on a site whose charter names slow connections explicitly. #}
+  {# htmx (50 kB) is only loaded by the pages that use it. #}
   {% block scripts %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -66,10 +43,7 @@
       <a class="brand" href="/">Votations&nbsp;Françaises</a>
       <nav class="nav" aria-label="Navigation principale">
         <a href="/recherche">Rechercher</a>
-        {# No « Se connecter » here. Voting needs no account, and that label is one
-           of the web's most fixed conventions for « participation requires one » —
-           it advertised a gate the site does not have. The footer links the same
-           page under its honest name. #}
+        {# No "Se connecter" link: voting needs no account. #}
       </nav>
     </div>
   </header>
@@ -79,10 +53,7 @@
     <div class="container">
       <strong>Aperçu</strong>
       <span>Cette page n'est pas publiée : personne d'autre ne peut la voir, et le vote est désactivé.</span>
-      {# A law previewed straight from the form has no id yet — it is not saved,
-         which is the whole point of that preview. Linking back regardless emitted
-         `/admin/lois/None`, a 404 on the one page whose job is to reassure. The
-         form it came from is a tab away in that case. #}
+      {# An unsaved law has no id, so no link back to its form. #}
       {% if law.id %}
       <a href="/admin/lois/{{ law.id }}">← Retour à l'édition</a>
       {% else %}
@@ -92,11 +63,8 @@
   </div>
   {% endif %}
 
-  {# The admission is on every page and never behind a click (charter). What a page
-     adds to it is the consequence — « les résultats ne peuvent pas être généralisés »
-     — and that belongs where a figure is actually published, not above the heading of
-     a page about cookies. Pages that show a tally override this block; see
-     `app.templating.DISCLAIMER_SHORT`. #}
+  {# Short disclaimer on every page. Pages with figures override this block with
+     the full one. #}
   <div class="disclaimer" role="note">
     <div class="container">⚠️ {% block disclaimer %}{{ DISCLAIMER_SHORT }}{% endblock %}</div>
   </div>

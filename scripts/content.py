@@ -1,34 +1,15 @@
-"""Export and re-import the editorial content: the laws and their public record.
+"""Export and re-import the editorial content: laws and their public history.
 
-This is **not** the backup. ``scripts/backup.sh`` dumps the whole database and is
-what protects the votes, which are the irreplaceable part and are deliberately
-absent from here. This is the other need: moving an instance to another host, or
-seeding a fresh one, without rewriting by hand the neutral presentations that are
-the actual work on this platform.
+This is not the backup (that's ``scripts/backup.sh``, which covers the votes).
+It's a readable JSON file for moving an instance or seeding a new one, and can
+be restored on a database at another migration revision.
 
-So it is a portable file rather than a dump — readable, diffable, and restorable
-into a database at a different migration revision, which a ``pg_dump`` is not.
+Included: all laws (published, drafts, archived), their revision history (the
+results page relies on it) and the review decisions on imported laws.
+Not included: votes and demographic counters (in the backup), INSEE data
+(refetched) and AI drafts (can be regenerated).
 
-What it carries, and why:
-
-* **the laws**, published, draft and archived alike. A presentation in progress
-  is exactly the thing whose loss costs a day of writing.
-* **the public record of changes** (``law_revisions``). Not an optimisation: the
-  results page reads it to tell a visitor whether the text moved while people
-  were voting. Restore the laws without it and the new site states « aucune
-  modification depuis la publication » about texts that were modified — the
-  charter's transparency claim, quietly turned into a false one.
-* **the review decisions** taken on imported laws — which were set aside, and
-  which produced a votation. The daily import rebuilds the facts on its own but
-  never touches these, by design, so nothing else would bring them back.
-
-What it deliberately omits: the votes and their demographic counters (the dump's
-job, and a reduced copy here would invite mistaking one for the other), the INSEE
-reference shares (refetched monthly), and the cached AI drafts (regenerable, at
-the price of another model call).
-
-Identifiers are not carried across: a row's ``id`` means nothing in another
-database. Laws are keyed on their slug, imported laws on their dossier uid.
+Ids aren't carried over: laws are keyed by slug, imported laws by dossier uid.
 
     python -m scripts.content export [--dir /exports] [--keep-days 5]
     python -m scripts.content import fichier.json [--replace]
@@ -50,16 +31,10 @@ from app.crud.laws import slugify
 from app.db import SessionLocal, utcnow
 from app.models import ImportedLaw, Law, LawRevision
 
-#: Bumped when the shape below changes in a way an older importer cannot read.
-#:
-#: *Adding* a field is not that, and must not bump it. The reader below refuses
-#: any version but its own, so a bump makes every snapshot already on disk
-#: unreadable — and the reason five days of them are kept is to be able to go
-#: back to one. A field the old writer never wrote simply arrives missing and
-#: restores as empty, which is what it was.
+# Only bump for incompatible changes, not for added fields: the importer
+# rejects other versions, which would make existing snapshots unreadable.
 FORMAT_VERSION = 1
 
-#: Everything an administrator wrote or scheduled.
 LAW_FIELDS = (
     "slug",
     "title",
@@ -83,25 +58,14 @@ LAW_FIELDS = (
     "created_at",
 )
 
-#: Columns of ``laws`` that deliberately do not travel, each for a stated reason.
-#: Together with :data:`LAW_FIELDS` this must account for every column, which
-#: ``test_every_column_of_a_law_is_carried_or_deliberately_left_out`` checks —
-#: because the way this file goes wrong is by silence. ``promulgated_on`` was
-#: added as a column, as an admin form field and as the home page's sort key, and
-#: was simply not added here: a snapshot restored on another host put every law's
-#: promulgation date back as empty, and nothing anywhere said so.
+# Columns not exported. With LAW_FIELDS this must cover every column (checked
+# by a test), so a new column can't be forgotten silently.
 _NOT_CARRIED = frozenset(
     {
-        # Means nothing in another database — see the module docstring.
         "id",
-        # Set by the write that restores the row. Carrying the old value would
-        # state that a law had not been touched since a date that precedes its
-        # own insertion, which is the one thing the column is read for.
+        # Set when the row is restored.
         "updated_at",
-        # Bookkeeping for the published demographic breakdown, which is derived
-        # from the votes — and the votes are the dump's job, not this file's. A
-        # restored law starts with no snapshot, which is exactly right: there is
-        # nothing published about a votation whose ballots did not travel.
+        # Derived from the votes, which aren't exported.
         "demographics_snapshot_at",
         "demographics_snapshot_profiles",
     }
@@ -110,24 +74,15 @@ _NOT_CARRIED = frozenset(
 REVISION_FIELDS = ("changed_at", "field", "old_value", "new_value")
 
 
-#: The fields that hold an instant rather than text. Named rather than sniffed:
-#: reading every string back through `fromisoformat` turned a slug into a parse
-#: error, and would have turned an unlucky title into a date.
+# Datetime fields, listed explicitly rather than guessed from the values.
 _INSTANT_FIELDS = frozenset({"opens_at", "closes_at", "archived_at", "created_at", "changed_at"})
 
-#: And the ones that hold a calendar day. Kept apart from the instants because
-#: they read back differently: `datetime.fromisoformat` on « 2026-06-24 » answers
-#: midnight on that day, which is an instant nobody recorded and which a timezone
-#: can then move to the day before.
+# Date fields, parsed as dates (not as midnight datetimes).
 _DAY_FIELDS = frozenset({"promulgated_on"})
 
 
 def _plain(name: str, value: Any) -> Any:
-    """JSON-safe, keeping instants and days unambiguous.
-
-    `datetime` is checked before `date` because it subclasses it — the same
-    ordering `app.crud.laws._as_text` needs, for the same reason.
-    """
+    """Convert dates and datetimes to ISO strings for JSON."""
     if name in _INSTANT_FIELDS and isinstance(value, datetime):
         return value.isoformat()
     if name in _DAY_FIELDS and isinstance(value, date):
@@ -149,7 +104,7 @@ def _restore(name: str, value: Any) -> Any:
 
 
 def build_document(db: Session) -> dict:
-    """The whole editorial content of this instance, as one JSON-able mapping."""
+    """All the editorial content, as a JSON-serialisable dict."""
     laws = list(db.scalars(select(Law).order_by(Law.created_at)))
     by_id = {law.id: law.slug for law in laws}
 
@@ -167,7 +122,6 @@ def build_document(db: Session) -> dict:
             "dossier_uid": item.dossier_uid,
             "source": item.source,
             "status": item.status,
-            # The slug, not the id: ids do not survive the move.
             "law_slug": by_id.get(item.law_id) if item.law_id else None,
         }
         for item in db.scalars(select(ImportedLaw).order_by(ImportedLaw.dossier_uid))
@@ -191,10 +145,7 @@ class ExportDirectoryError(RuntimeError):
     """The snapshot directory cannot be written to."""
 
 
-#: Suffix of a snapshot still being written. Named rather than spelled out at the
-#: two places that need it: the retention sweep below globs for what it collects,
-#: and a glob that does not know this suffix collects everything *except* the
-#: files that are actually junk.
+# Suffix of a snapshot being written.
 _PARTIAL_SUFFIX = ".json.partial"
 
 
@@ -206,8 +157,7 @@ def export(directory: Path, keep_days: int) -> Path:
         probe.touch()
         probe.unlink()
     except OSError as exc:
-        # The predictable failure of a bind mount: the directory on the host
-        # belongs to somebody else, so the container's user cannot write into it.
+        # Typically a bind mount owned by another user.
         raise ExportDirectoryError(
             f"{directory} n'est pas accessible en écriture ({exc}). Sur un montage "
             "lié, vérifiez que le dossier existe côté hôte et que le conteneur "
@@ -221,8 +171,7 @@ def export(directory: Path, keep_days: int) -> Path:
 
     stamp = utcnow().strftime("%Y%m%d-%H%M%S")
     target = directory / f"votations-contenu-{stamp}.json"
-    # Written beside and renamed, so an interrupted run never leaves a truncated
-    # file that looks like a snapshot.
+    # Write then rename, so an interrupted run never leaves a truncated snapshot.
     partial = target.with_suffix(_PARTIAL_SUFFIX)
     partial.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
     partial.rename(target)
@@ -233,10 +182,8 @@ def export(directory: Path, keep_days: int) -> Path:
             if old != target and old.stat().st_mtime < cutoff:
                 old.unlink()
 
-    # What a killed run leaves behind. The sweep above collects snapshots, and a
-    # `.json.partial` is not one — so an interrupted export used to sit in the
-    # bind mount for ever, full size, on the same disk as PostgreSQL. An hour
-    # old, so a run happening right now is never touched.
+    # Delete leftover partial files from interrupted runs (older than an hour,
+    # so a running export isn't affected).
     stale = utcnow().timestamp() - 3600
     for junk in directory.glob(f"votations-contenu-*{_PARTIAL_SUFFIX}"):
         if junk.stat().st_mtime < stale:
@@ -264,7 +211,9 @@ def _read(path: Path) -> dict:
         raise ContentFormatError("ce fichier n'est pas un export de contenu")
     version = document.get("format")
     if version != FORMAT_VERSION:
-        raise ContentFormatError(f"format {version} — cette version lit le format {FORMAT_VERSION}")
+        raise ContentFormatError(
+            f"format {version} non pris en charge (cette version lit le format {FORMAT_VERSION})"
+        )
     return document
 
 
@@ -273,23 +222,17 @@ def _import_law(db: Session, entry: dict, *, replace: bool) -> str:
     raw_slug = entry.get("slug")
     if not raw_slug:
         raise ContentFormatError("une loi sans slug ne peut pas être identifiée")
-    # Re-derived rather than trusted. A slug is a URL segment and reaches a
-    # `Content-Disposition` header on the export routes, and this file is the one
-    # input to the application that arrives as a whole document from wherever the
-    # operator got it. `slugify` is idempotent on anything it produced, so a
-    # snapshot of a healthy instance round-trips unchanged.
+    # Don't trust the file: the slug ends up in URLs and headers. slugify is
+    # idempotent, so valid slugs are unchanged.
     slug = slugify(raw_slug)
 
     existing = db.scalar(select(Law).where(Law.slug == slug))
     if existing is not None and not replace:
-        # Skipping rather than merging is what makes a second run harmless.
+        # Skip, so running twice is harmless.
         return "skipped"
     if existing is not None and existing.published:
-        # `--replace` writes straight to the columns, so it records nothing in
-        # `law_revisions` — the public history would keep saying the text never
-        # moved while the text moved. On a published law that is not a bug to fix
-        # later, it is the transparency claim being made false in one command.
-        # Editing a published law goes through /admin, where it is recorded.
+        # --replace doesn't record revisions, so a published law would change
+        # without trace in its public history. Edit it in /admin instead.
         raise PublishedLawError(
             f"« {slug} » est publiée : la remplacer réécrirait le texte sur lequel "
             "des gens ont voté sans l'inscrire à l'historique public. Modifiez-la "
@@ -322,12 +265,10 @@ def _import_law(db: Session, entry: dict, *, replace: bool) -> str:
 
 
 def _apply_decisions(db: Session, decisions: list[dict]) -> tuple[int, int]:
-    """Re-apply the review decisions. Returns (applied, not yet importable).
+    """Re-apply the review decisions. Returns (applied, pending).
 
-    A decision can only be attached to a staged row that exists, and those are
-    rebuilt by the daily import job rather than by this file. Anything it has not
-    seen yet is reported rather than invented: the alternative would be writing
-    half a row, with the factual columns guessed.
+    Staged rows are recreated by the daily import, not by this script.
+    Decisions for rows not imported yet are counted as pending.
     """
     applied = pending = 0
     for decision in decisions:
@@ -343,8 +284,7 @@ def _apply_decisions(db: Session, decisions: list[dict]) -> tuple[int, int]:
         item.status = decision.get("status", item.status)
         slug = decision.get("law_slug")
         if slug:
-            # Through `slugify` for the same reason the laws are, and so that a
-            # decision still finds the law it points at after that pass.
+            # slugify, as for the laws above.
             law = db.scalar(select(Law).where(Law.slug == slugify(slug)))
             item.law_id = law.id if law is not None else None
         applied += 1

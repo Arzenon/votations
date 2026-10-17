@@ -1,10 +1,4 @@
-"""Helpers shared by more than one test module.
-
-Three of them existed in three or four near-identical copies, which is how the
-administration headers came to differ by whether they carried an ``Origin`` —
-harmless until a test moved between files and started exercising a different
-path from the one it was written for.
-"""
+"""Helpers shared by several test modules."""
 
 from __future__ import annotations
 
@@ -24,17 +18,13 @@ from app.models import DemographicTally, Law, Vote, VoteChoice
 
 
 def basic_auth(user: str, password: str) -> dict[str, str]:
-    """An HTTP Basic header for these credentials, right or wrong."""
+    """HTTP Basic header for these credentials."""
     token = base64.b64encode(f"{user}:{password}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
 
 def admin_headers() -> dict[str, str]:
-    """What a browser on this site sends to the administration.
-
-    Carries ``Origin`` as well as the credentials, because every state-changing
-    route checks it. Harmless on a GET, where the check returns immediately.
-    """
+    """Admin credentials plus the Origin header that POST routes check."""
     settings = get_settings()
     return {
         **basic_auth(settings.admin_username, settings.admin_password),
@@ -43,7 +33,7 @@ def admin_headers() -> dict[str, str]:
 
 
 def make_law(db: Session, **kwargs) -> Law:
-    """A published law, open for voting, overridable field by field."""
+    """A published, open law. Any field can be overridden."""
     defaults = {
         "slug": "loi-x",
         "title": "Loi X",
@@ -67,16 +57,12 @@ def cast_ballot(
     previous_categories: dict[str, str] | None = None,
     **profile: str,
 ) -> Vote:
-    """One ballot, cast the way the vote route casts it.
+    """Cast a ballot the way the vote route does, in one transaction.
 
-    The vote and the counters it moves are one transaction, committed once — so a
-    test that reads ``demographics_recorded`` back out of SQL sees what a request
-    would have left behind. ``previous_categories`` stands in for the profile
-    cookie the browser would send back.
+    ``previous_categories`` stands in for the profile cookie.
     """
     vote, previous_choice = votes_crud.cast_vote(db, law, token, choice)
-    # As the route does, and in the same order: the published breakdown moves
-    # forward before this ballot's own contribution is folded in.
+    # Same order as the route.
     demo_crud.refresh_snapshot(db, law)
     demo_crud.record(
         db,
@@ -91,13 +77,13 @@ def cast_ballot(
 
 
 def demographic_cells(db: Session, law_id: int) -> dict[tuple[str, str, str], int]:
-    """Every aggregate counter for a law, as {(dimension, category, choice): n}."""
+    """A law's counters as {(dimension, category, choice): n}."""
     rows = db.query(DemographicTally).filter_by(law_id=law_id).all()
     return {(r.dimension, r.category, r.choice): r.count for r in rows}
 
 
 def publish_laws(db: Session, n: int) -> None:
-    """``n`` published, open laws, newest first — for listings and pagination."""
+    """Create ``n`` published, open laws, newest first."""
     base = datetime.now(UTC)
     for i in range(n):
         db.add(
@@ -124,13 +110,9 @@ class _Collect(logging.Handler):
 
 @contextmanager
 def captured_logs(name: str = LOGGER_NAME, level: int = logging.WARNING) -> Iterator[list[str]]:
-    """What the application logger emitted inside the block, as a list of lines.
+    """Log lines emitted by the app logger inside the block.
 
-    Not ``caplog``: :func:`app.logging_config.configure_logging` sets
-    ``propagate = False`` on the application logger — deliberately, so its records
-    go to one stderr handler and nowhere else — and pytest's fixture listens on
-    the root logger, which therefore never sees them. Attaching to the logger
-    itself is what makes them assertable.
+    caplog doesn't work: the app logger has propagate=False.
     """
     logger = logging.getLogger(name)
     lines: list[str] = []

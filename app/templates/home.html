@@ -1,21 +1,12 @@
 {% extends "base.html" %}
-{# The one page whose title was the site's name and nothing else, which ranks for
-   people who already know the name - and this site is not yet known to anybody.
-   The tagline carries the words somebody actually types; fifty-three characters,
-   inside what a result displays before it truncates. #}
+{# The tagline in the title, for search results. #}
 {% block title %}Votations Françaises - Donnez votre avis sur les lois{% endblock %}
 {% block content %}
 <h1>Donnez votre avis sur les lois</h1>
 <p class="lede">{{ TAGLINE }}</p>
 
-{# One search, one page: the form posts to the dedicated search route rather
-   than duplicating a second implementation here.
-
-   The label and the field are wrapped together so the label sits *above* it
-   rather than beside it. On its own the label was a third item in the same flex
-   row, squeezed to the left of the box it names — which reads as a caption
-   somebody forgot to place, and left the field itself narrower than it needed to
-   be. This is the page's main invitation; it is worth the line. #}
+{# Submits to the search page. Label and field are wrapped so the label sits
+   above the field. #}
 <form class="search" action="/recherche" method="get" role="search">
   <div class="search-field">
     <label for="q">Rechercher une loi</label>
@@ -25,11 +16,8 @@
 </form>
 
 {% if bands %}
-{# Grouped by what a visitor can do with each law — vote, wait, read the result —
-   and inside each group by the day Parliament acted. While every votation is open
-   (which is what a year-long voting window makes of the first months) there is a
-   single band and no heading is drawn, so the page is a plain chronological list.
-   It starts grouping itself the day the windows diverge. #}
+{# Grouped by status (open, upcoming, closed), then by promulgation date. With
+   a single group, no heading is shown. #}
 {% for state, laws in bands %}
   {% if bands | length > 1 %}<h2>{{ state | home_band }}</h2>{% else %}<h2>Dernières votations</h2>{% endif %}
   <ul class="law-list">
@@ -38,26 +26,15 @@
       <a href="/loi/{{ law.slug }}">
         <span class="status status-{{ state }}">{{ state | law_status }}</span>
         <h3>{{ law.title }}</h3>
-        {# `excerpt`, not `summary_text`: the database cuts it to one character
-           more than is shown, so this page never reads a whole presentation to
-           display two lines of one — and that extra character is how we know
-           there was more to say. `excerpt_chars` is the cut, handed down from
-           `laws_crud.EXCERPT_CHARS` rather than written here as a number: the
-           slice and the ellipsis have to agree with the SQL, and a literal in a
-           template agrees with it only until somebody changes the constant. #}
+        {# `excerpt` is cut by the database, one character longer than shown so we
+           know whether to add an ellipsis. #}
         {% if law.excerpt %}<p>{{ law.excerpt[:excerpt_chars] }}{% if law.excerpt|length > excerpt_chars %}…{% endif %}</p>{% endif %}
         <p class="meta card-facts">
-          {# The date the list is ordered by, so the order is legible rather than
-             mysterious. Absent on a law written by hand, which has no staged row
-             to take it from — the card simply says nothing then. #}
+          {# The date the list is sorted by. Missing for laws entered by hand. #}
           {% if law.promulgated_on %}<span>Promulguée le {{ law.promulgated_on | french_date }}</span>{% endif %}
-          {# `french_date`, not `strftime`: the column is a UTC instant, so formatting
-             it raw published the previous day for anything closing between midnight
-             and 2 h Paris. The filter renders it in the zone the vote was scheduled in. #}
+          {# french_date converts from UTC to Paris time. #}
           {% if law.closes_at %}<span>Clôture le {{ law.closes_at | french_date }}</span>{% endif %}
-          {# Participation, never a ranking. The page is not ordered by this and
-             must not be: visibility following votes and votes following visibility
-             is the loop the charter refuses. #}
+          {# Shown but never used for sorting. #}
           {% set votes = tallies[law.id].total %}
           <span>{% if votes %}{{ votes }} vote{{ "s" if votes > 1 }}{% else %}Aucun vote{% endif %}</span>
         </p>

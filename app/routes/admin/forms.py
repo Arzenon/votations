@@ -1,15 +1,7 @@
-"""Reading, validating and re-rendering the law form.
+"""Reading and validating the law form.
 
-The three routes that accept this form — create, update, and the draft trigger —
-used to declare the same ten ``Form(...)`` parameters each and pass them one by
-one into a builder, sixty-odd lines that had to stay identical. They share
-:class:`LawForm` now, so a new field is one line in one place.
-
-Validation is the other half. The date fields already refused an unreadable value
-with a 400 page; everything else accepted anything and failed later or silently.
-A malformed argument list quietly wiped both argument blocks, a rejected URL was
-blanked with no message, and an over-long title reached the database as a 500.
-All of them raise :class:`InvalidFormValue` here instead.
+Shared by the create, update and draft routes through `LawForm`. Invalid
+values raise `InvalidFormValue`, shown as a 400 page naming the field.
 """
 
 from __future__ import annotations
@@ -24,57 +16,29 @@ from app.config import display_zone
 from app.models import Law
 from app.security import is_safe_url, safe_url
 
-#: The prose blocks are ``Text`` columns, so the database imposes no width on
-#: them and nothing here did either. A whole loi de finances pasted into « Ce que
-#: dit la loi » — by accident, or by one of the authenticated users V3 opens this
-#: form to — landed as a multi-megabyte row that the home page then read in full
-#: to render a 200-character excerpt. These are generous: the charter asks for
-#: three to five short paragraphs, and the drafts come in under 5 000 characters.
-#:
-#: Sized so the whole form stays inside the 256 kB request body Caddy accepts —
-#: two prose blocks plus two full argument lists — because a limit the edge
-#: refuses first is one the administrator meets as a bare 413 with no field named.
+# Limits for the Text columns, which have none in the database. Drafts are
+# under 5,000 characters. The whole form must fit in Caddy's 256 kB body limit,
+# otherwise the admin gets a bare 413.
 _PROSE_LIMITS = {
     "summary_text": 20_000,
     "practical_changes": 20_000,
 }
 
-#: The same for one argument's quoted text. The longest real speech in a sitting
-#: record runs to a few thousand characters, and an argument is a sentence or two
-#: out of one.
+# An argument is a sentence or two from a speech.
 MAX_ARGUMENT_CHARS = 5_000
 
-#: And how many of them one side may carry. Without this the sizing above was
-#: arithmetic that did not close: two prose blocks are bounded, the argument lists
-#: were not, and the form's real ceiling was Starlette's thousand-field limit —
-#: about three hundred rows, or a quarter of a megabyte of JSON rendered onto a
-#: public page, on a site whose charter names slow connections. The administrator
-#: met that as a bare 413 from the edge with no field named, which is the failure
-#: `_PROSE_LIMITS` exists to avoid.
-#:
-#: Ten is generous rather than tight: the model proposes five per side and the
-#: page shows one with the rest folded, so ten is already more than anybody will
-#: read. Two prose blocks (40 000) plus both full sides (100 000) leave the whole
-#: form comfortably inside the 256 kB Caddy accepts, which is what makes that
-#: sentence above true.
+# The model proposes five per side. With this cap the whole form stays under
+# 256 kB (40,000 + 100,000 characters).
 MAX_ARGUMENTS_PER_SIDE = 10
 
 
 def _column_limits() -> dict[str, int]:
-    """The declared width of each ``String`` column the form writes.
-
-    Read off the model rather than copied from it. The copy was correct and had
-    no way to stay that way: widening a column left the form still refusing at
-    the old limit, and narrowing one left it accepting values the database would
-    reject with a 500.
-    """
+    """Max length of the String columns the form writes, read from the model."""
     limits = {}
     for name in ("title", "official_ref", "legifrance_url", "debate_summary"):
         column_type = Law.__table__.c[name].type
         if not isinstance(column_type, String) or column_type.length is None:
-            # Turning one of these into an unbounded `Text` is a legitimate
-            # decision, but it has to be a decision: silently reading no limit
-            # here would drop the check on that field and nobody would notice.
+            # Fail loudly rather than silently drop the check.
             raise TypeError(
                 f"laws.{name} n'est plus une colonne String de largeur déclarée ; "
                 "adaptez la validation du formulaire"
@@ -83,22 +47,18 @@ def _column_limits() -> dict[str, int]:
     return limits
 
 
-# Checked here so an over-long paste is a message about the field rather than a
-# database error and a 500 page.
 MAX_LENGTHS = {**_column_limits(), **_PROSE_LIMITS}
 
 
 class InvalidFormValue(ValueError):
-    """A field the administrator typed cannot be read; rendered as a 400 page."""
+    """An invalid form value; shown as a 400 page."""
 
 
 def parse_dt(value: str | None) -> datetime | None:
-    """Read a `datetime-local` field as civil time in the display zone.
+    """Parse a `datetime-local` field as local time in the display zone.
 
-    The column is timestamptz. Storing the naive value straight from the form made
-    Postgres read it as UTC, so a vote scheduled to close at 20 h in Paris closed
-    at 22 h. Attaching the zone here — and stripping it again in `dt_local` — is
-    what makes the form mean what it says.
+    Without the zone, Postgres would read it as UTC (20:00 Paris would close
+    at 22:00).
     """
     if not value or not value.strip():
         return None
@@ -110,12 +70,7 @@ def parse_dt(value: str | None) -> datetime | None:
 
 
 def parse_day(value: str | None) -> date | None:
-    """Read a `date` field — a calendar day, with no time and no zone.
-
-    Deliberately not :func:`parse_dt`. A promulgation happened on a day, not at
-    an instant: attaching a time to it would invent a precision the Journal
-    Officiel does not publish, and then shift the day across a zone boundary.
-    """
+    """Parse a `date` field (a day, no time or zone)."""
     if not value or not value.strip():
         return None
     try:
@@ -125,12 +80,12 @@ def parse_day(value: str | None) -> date | None:
 
 
 def day_value(value: date | None) -> str:
-    """Render a stored day back into the form's `date` field."""
+    """Format a date for the form's `date` field."""
     return value.isoformat() if value else ""
 
 
 def dt_local(value: datetime | None) -> str:
-    """Render a stored instant back into the form's local-time field."""
+    """Format a datetime for the form's local-time field."""
     if not value:
         return ""
     if value.tzinfo is None:
@@ -140,12 +95,10 @@ def dt_local(value: datetime | None) -> str:
 
 @dataclass
 class ArgumentRows:
-    """One side's arguments as the form posts them: three parallel lists.
+    """One side's arguments as posted: three parallel lists.
 
-    The browser submits repeated fields in document order, so the *n*th text goes
-    with the *n*th author and the *n*th source. No index is carried in the field
-    names, which is what lets the page add and remove rows without renumbering
-    anything — a row is added by cloning markup and removed by deleting it.
+    Repeated fields arrive in document order, so no index is needed in the
+    field names and rows can be added or removed freely.
     """
 
     text: list[str] = field(default_factory=list)
@@ -163,29 +116,18 @@ class ArgumentRows:
 
 
 def _read_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
-    """One side's arguments, row by row, refusing any row that cannot be read.
+    """Read one side's arguments.
 
-    This used to read a JSON array typed into a textarea, which asked an
-    administrator to be a programmer: one missing bracket and the whole block was
-    unreadable, and the error message talked about lines and columns. The fields
-    are now ordinary inputs, so most of what could go wrong cannot any more.
-
-    What is left still refuses rather than drops. An empty row is how the page
-    says "nothing here" and is skipped in silence; a row with an author or a
-    source but *no text* is a half-filled entry, and quietly discarding it would
-    lose an argument on a platform whose premise is symmetry between the two
-    sides. Sources are checked because they are rendered as hrefs on the public
-    page, and V3 opens this form to every authenticated user.
-
-    Says nothing about *how many* rows there may be — that is
-    :func:`parse_arguments`, because the two callers want opposite answers to it.
+    Empty rows are skipped. A row with an author or source but no text is
+    refused rather than silently dropped. Sources must be http(s). The count
+    is checked by `parse_arguments`.
     """
     out: list[dict] = []
     for index in range(len(rows)):
         text, author, source = rows.row(index)
         text, author, source = text.strip(), author.strip(), source.strip()
         if not (text or author or source):
-            continue  # an untouched row — the page always offers a spare
+            continue  # empty row (the page always adds a spare one)
         position = len(out) + 1
         if not text:
             raise InvalidFormValue(
@@ -209,13 +151,13 @@ def _read_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
 
 
 def parse_arguments(rows: ArgumentRows, *, field: str) -> list[dict]:
-    """Read one side's arguments for *writing*, refusing anything unstorable."""
+    """Read one side's arguments for saving, refusing invalid ones."""
     out = _read_arguments(rows, field=field)
     if len(out) > MAX_ARGUMENTS_PER_SIDE:
         raise InvalidFormValue(
             f"« {field} » : {len(out)} arguments ; la limite est de "
             f"{MAX_ARGUMENTS_PER_SIDE} par camp. Les arguments sont une sélection "
-            "de citations, pas le compte rendu du débat — la page en affiche un et "
+            "de citations, pas le compte rendu du débat : la page en affiche un et "
             "replie les autres."
         )
     return out
@@ -246,13 +188,12 @@ class LawForm:
     opens_at: datetime | None
     closes_at: datetime | None
     published: bool
-    # Raw strings, kept so the draft route can echo the dates back into the form
-    # exactly as they were typed rather than round-tripping them through UTC.
+    # Raw values, to show the dates back exactly as typed.
     opens_at_raw: str = ""
     closes_at_raw: str = ""
 
     def columns(self) -> dict:
-        """The validated column values, ready for create/update."""
+        """Validated column values for create/update."""
         return {
             "title": self.title,
             "official_ref": self.official_ref or None,
@@ -269,7 +210,7 @@ class LawForm:
         }
 
     def typed(self) -> dict:
-        """What the administrator had in the form, for re-rendering it."""
+        """The form's current values, for re-rendering it."""
         return {
             "title": self.title,
             "summary_text": self.summary_text,
@@ -284,12 +225,8 @@ class LawForm:
         }
 
 
-#: Values a checkbox field may carry that mean "off". A browser omits an
-#: unchecked box entirely and sends "on" for a checked one, so `bool(value)` was
-#: right for every request a browser makes — and wrong for the ones this form
-#: also has to survive: a replayed POST, a curl, and the V3 API-shaped callers the
-#: roadmap invites. `published=false` publishing a law is not a failure mode worth
-#: keeping for the sake of one character.
+# Checkbox values meaning "off". Browsers just omit unchecked boxes, but
+# `published=false` from curl mustn't publish the law.
 _FALSY_CHECKBOX = frozenset({"", "0", "false", "off", "no", "non"})
 
 
@@ -299,7 +236,7 @@ def _checkbox(value: str) -> bool:
 
 @dataclass
 class RawLawForm:
-    """The form exactly as posted. Declared once, read two ways."""
+    """The form as posted, before validation."""
 
     title: str
     official_ref: str
@@ -321,9 +258,7 @@ def raw_law_form(
     legifrance_url: str = Form(""),
     summary_text: str = Form(""),
     practical_changes: str = Form(""),
-    # Repeated once per argument row, in document order. FastAPI collects every
-    # value posted under the same name into the list, which is what keeps the
-    # three sides of one argument together without an index in the field name.
+    # One value per argument row, in document order.
     arguments_for_text: list[str] = Form([]),
     arguments_for_author: list[str] = Form([]),
     arguments_for_source: list[str] = Form([]),
@@ -336,7 +271,7 @@ def raw_law_form(
     closes_at: str = Form(""),
     published: str = Form(""),
 ) -> RawLawForm:
-    """The whole form, declared in one place for every route that takes it."""
+    """FastAPI dependency declaring all the form fields."""
     return RawLawForm(
         title=title,
         official_ref=official_ref,
@@ -362,7 +297,7 @@ def raw_law_form(
 
 
 def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
-    """The form, validated for writing. Refuses anything it cannot store."""
+    """The form, validated for saving."""
     title = _checked(raw.title.strip(), field="title", label="Titre")
     if not title:
         raise InvalidFormValue("« Titre » ne peut pas être vide")
@@ -412,13 +347,7 @@ def law_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
 
 
 def _lenient_arguments(rows: ArgumentRows, field: str) -> list[dict]:
-    """A half-filled argument reads as no argument rather than as a refusal.
-
-    Too *many* arguments is the one thing truncated rather than dropped, which is
-    what :func:`_echoed` promises for every other field: an over-long block is cut
-    and shown back, and there is no reason a list should instead come back empty.
-    Saving still refuses and names the count — see :func:`parse_arguments`.
-    """
+    """Like `_read_arguments` but never refuses: invalid gives [], too many is truncated."""
     try:
         return _read_arguments(rows, field=field)[:MAX_ARGUMENTS_PER_SIDE]
     except InvalidFormValue:
@@ -426,7 +355,7 @@ def _lenient_arguments(rows: ArgumentRows, field: str) -> list[dict]:
 
 
 def _lenient_dt(value: str) -> datetime | None:
-    """A half-typed date reads as no date rather than as a refusal."""
+    """Like `parse_dt` but returns None instead of raising."""
     try:
         return parse_dt(value)
     except InvalidFormValue:
@@ -441,13 +370,10 @@ def _lenient_day(value: str) -> date | None:
 
 
 def _echoed(raw: RawLawForm, *, opens=None, closes=None) -> LawForm:
-    """The form read the forgiving way, for the routes that only ever show it back.
+    """Lenient reading for routes that don't save (draft, preview).
 
-    Everything is truncated rather than refused and nothing reaches the database.
-    Shared by the two routes that never write: asking for an AI draft, and asking
-    for a preview. Both happen *while* the form is being filled in, which is
-    exactly when it is at its most malformed — refusing either because a title is
-    blank or a bracket is missing would block the help at the moment it is wanted.
+    Values are truncated rather than refused, since the form is often
+    incomplete at that point.
     """
     return LawForm(
         title=raw.title.strip()[: MAX_LENGTHS["title"]],
@@ -468,22 +394,11 @@ def _echoed(raw: RawLawForm, *, opens=None, closes=None) -> LawForm:
 
 
 def draft_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
-    """The form as read by the draft trigger, which only ever echoes it back.
-
-    The dates are deliberately dropped: this route re-renders them from
-    ``opens_at_raw`` exactly as they were typed, rather than round-tripping them
-    through UTC and back.
-    """
+    """The form for the draft route. Dates are shown back from the raw values."""
     return _echoed(raw)
 
 
 def preview_form(raw: RawLawForm = Depends(raw_law_form)) -> LawForm:
-    """The form as read by the preview, which renders it and saves nothing.
-
-    Unlike the draft trigger, the dates *are* parsed: the voting window is what
-    decides whether the previewed page shows a ballot, a countdown or a result,
-    and a preview that always showed one of the three would be answering a
-    different question from the one being asked. A date too mangled to read
-    simply goes missing, which is what the page would do anyway.
-    """
+    """The form for the preview. Dates are parsed, since the voting window
+    decides what the page shows."""
     return _echoed(raw, opens=_lenient_dt(raw.opens_at), closes=_lenient_dt(raw.closes_at))

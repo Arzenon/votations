@@ -12,16 +12,8 @@
   personne avant toute mise au vote.
 </p>
 
-{# Triage, not a to-do list. Most of what the daily job stages is not votation
-   material — treaty ratifications above all — and the texts that are worth one
-   are the texts that were argued over. These two controls are what turn a long
-   queue into a short shortlist.
-
-   Both dropdowns list values the route builds from the stored constants, rather
-   than spelling « importe » and « seances » out here. The literals worked, and
-   were four copies of values whose only definition lives in `app.models` and
-   `app.crud.imports` — a rename there would have left this page filtering on
-   strings the database had stopped using, with nothing to say so. #}
+{# Filters for sorting through the queue (e.g. hiding treaty ratifications).
+   Option values come from the route, not hard-coded here. #}
 <form class="import-filters" action="/admin/imports" method="get">
   <label>Statut
     <select name="statut">
@@ -59,9 +51,7 @@
   <thead>
     <tr>
       <th>Promulguée le</th><th>Référence</th><th>Titre</th>
-      {# The count is the best proxy on this page for "was this contested" — and
-         so for whether a citizen would want a say. Sortable from here because
-         that is the whole point of showing it. #}
+      {# Number of sittings: a hint of how debated the text was. Sortable. #}
       <th><a href="/admin/imports?statut={{ statut | urlencode }}&procedure={{ procedure | urlencode }}&tri={{ sort_by_seances | urlencode }}"
              title="Trier par nombre de séances publiques">Séances{% if tri == sort_by_seances %} ↓{% endif %}</a></th>
       <th>Procédure</th><th>Statut</th><th>Actions</th>
@@ -86,9 +76,7 @@
           {% endif %}
         </small>
       </td>
-      {# A law adopted without any public sitting has no argued positions to
-         source, so its two argument blocks would have to be written from
-         nothing. Worth seeing before choosing it. #}
+      {# No sitting means no arguments to quote. #}
       <td class="seance-count">{{ seances.get(item.id, 0) }}</td>
       <td>{{ item.procedure }}</td>
       <td><span class="status status-{{ item.status }}">{{ item.status | import_status }}</span></td>
@@ -115,8 +103,7 @@
 </div>
 
 {% if pages > 1 %}
-{# Every value here comes back from the query string, so every one of them is
-   encoded — not just the one that happened to contain a space. #}
+{# All values come from the query string, so all are URL-encoded. #}
 {% set filters = 'statut=' ~ (statut | urlencode) ~ '&procedure=' ~ (procedure | urlencode) ~ '&tri=' ~ (tri | urlencode) %}
 <nav class="pagination" aria-label="Pages">
   {% if page > 1 %}<a href="/admin/imports?{{ filters }}&page={{ page - 1 }}">← Précédent</a>{% endif %}

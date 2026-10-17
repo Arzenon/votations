@@ -2,10 +2,7 @@
 {% block title %}Vie privée et cookies - Votations Françaises{% endblock %}
 {% block description %}Ce que Votations Françaises enregistre sur votre appareil et sur ses serveurs, et ce qu'il n'enregistre pas.{% endblock %}
 {% block content %}
-{# Écrite pour être vérifiable plutôt que rassurante : chaque affirmation ici
-   correspond à quelque chose qu'un lecteur peut retrouver dans le code ou dans
-   l'export en accès libre. D'où l'absence de formules du type « nous respectons
-   votre vie privée » : elles ne s'observent pas. #}
+{# Chaque affirmation doit pouvoir se vérifier dans le code ou dans l'export. #}
 <article class="legal">
   <h1>Vie privée et cookies</h1>
 
@@ -117,10 +114,8 @@
     <h2>Ce qui n'est pas collecté</h2>
     <ul>
       <li>Aucune création de compte, aucune adresse électronique, aucun nom.</li>
-      {# Deux mécanismes, et le dire exactement est le sujet de cette page : le
-         journal d'accès de l'application est éteint, celui du serveur web ne
-         garde que les erreurs et l'adresse en est retirée avant écriture. Écrire
-         « désactivés des deux côtés » était plus court et faux du second. #}
+      {# Le journal d'accès de l'appli est éteint ; celui de Caddy ne garde que les
+         erreurs, sans l'adresse IP. #}
       <li>Aucune adresse IP dans les journaux : celui de l'application est désactivé, et celui du serveur web ne conserve que les erreurs, dont l'adresse est retirée avant écriture - précisément parce qu'elle associerait une adresse à l'heure d'un vote.</li>
       <li>Aucune mesure d'audience, aucun traceur publicitaire, aucune ressource chargée depuis un autre domaine.</li>
       <li>Aucune donnée de navigation ni de localisation.</li>

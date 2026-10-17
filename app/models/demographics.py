@@ -1,15 +1,9 @@
-"""Aggregate demographic tallies.
+"""Aggregate demographic counters.
 
-The privacy invariant of this table: **it never stores a token, an identity, or a
-per-voter row.** It holds only counters — "for a given law, N people in this age
-bracket voted FOR". A voter's demographics are added to these counters once, at
-their first vote, and the originating event is never kept. There is therefore no
-record anywhere that links a person to both their demographics and their vote, so
-no Article 9 (sensitive) personal data is created server-side.
-
-Each voter contributes to one *marginal* counter per dimension (age, sexe) — never
-to a joint (age × sexe) cell — so the smallest value stored at rest stays as large
-as possible, which strengthens the anonymity guarantee.
+This table never stores a token, an identity or a per-voter row, only counts
+like "for this law, N people aged 35-49 voted for". So nothing links a person
+to both their profile and their vote. Each dimension is counted separately
+(no age x sex cells), which keeps the stored counts as large as possible.
 """
 
 import enum
@@ -41,10 +35,8 @@ class Sexe(enum.StrEnum):
 
 
 class Region(enum.StrEnum):
-    # Declared largest-population-first, which is only how this list is *written*.
-    # What a visitor sees is alphabetical — see DIMENSION_ORDER below. The member
-    # *values* are what lands in the counters and in the open-data export, so they
-    # are the part that must never move.
+    # Listed by population; displayed alphabetically (DIMENSION_ORDER). The values
+    # are stored in the counters and the export, so never change them.
     IDF = "Île-de-France"
     ARA = "Auvergne-Rhône-Alpes"
     HDF = "Hauts-de-France"
@@ -61,9 +53,7 @@ class Region(enum.StrEnum):
     OM = "Outre-mer"
 
 
-# The single source of truth for the dimensions: everything else — display
-# order, validation, labels — is derived from this mapping, so adding a
-# dimension is one line and the three views can never disagree.
+# Display order and validation are derived from this mapping.
 DIMENSION_ENUMS: dict[str, type[enum.StrEnum]] = {
     DIMENSION_AGE: AgeBracket,
     DIMENSION_SEXE: Sexe,
@@ -82,13 +72,7 @@ DIMENSION_LABELS = {
 
 
 def _alphabetical(values) -> list[str]:
-    """Sort French labels the way a French reader expects to find them.
-
-    Sorting the raw strings would file « Île-de-France » after « Provence » —
-    ``Î`` sits well past ``Z`` in code-point order — so the key strips diacritics
-    first and the accented name lands under I, where someone looking for it will
-    actually look.
-    """
+    """Sort ignoring accents, so "Île-de-France" comes under I."""
 
     def key(value: str) -> str:
         stripped = unicodedata.normalize("NFKD", value)
@@ -97,25 +81,22 @@ def _alphabetical(values) -> list[str]:
     return sorted(values, key=key)
 
 
-# Canonical display order per dimension — used for the ballot's dropdowns and for
-# the rows of the results table. Age runs youngest to oldest and sexe keeps its
-# declared order, both of which are meaningful; régions are alphabetical, because
-# a list of fourteen is something people scan for their own rather than read.
+# Display order for the ballot dropdowns and the results tables. Regions are
+# alphabetical, the others keep their declared order.
 DIMENSION_ORDER = {
     DIMENSION_AGE: [m.value for m in AgeBracket],
     DIMENSION_SEXE: [m.value for m in Sexe],
     DIMENSION_REGION: _alphabetical(m.value for m in Region),
 }
 
-# Allowed (dimension, category) pairs, used to validate incoming form values.
+# Allowed categories per dimension, for form validation.
 VALID_CATEGORIES = {dim: set(order) for dim, order in DIMENSION_ORDER.items()}
 
-# Approximate national reference shares (%), used only to show how far the
-# self-selected sample diverges from the population — never to weight results.
-# Sources: ordres de grandeur INSEE (population adulte pour l'âge, population
-# totale pour le sexe et la région). Volontairement approximatifs.
+# Approximate national shares (%), only used to compare the sample with the
+# population, never to weight results. Ordres de grandeur INSEE (population
+# adulte pour l'âge, population totale pour le sexe et la région).
 INSEE_REFERENCE = {
-    # Fallback only — kept close to the INSEE-derived adult shares (18+).
+    # Fallback, close to the INSEE adult shares (18+).
     DIMENSION_AGE: {
         "18-24": 10.2,
         "25-34": 14.6,
@@ -126,7 +107,7 @@ INSEE_REFERENCE = {
     DIMENSION_SEXE: {
         "femme": 51.5,
         "homme": 48.5,
-        # "autre" n'est pas mesuré par l'INSEE → pas de référence.
+        # "autre" n'est pas mesuré par l'INSEE, donc pas de référence.
     },
     DIMENSION_REGION: {
         "Île-de-France": 18.3,
@@ -154,28 +135,17 @@ class DemographicTally(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # Not indexed on its own: `uq_demo_cell` above leads with this column, so it
-    # already answers both the per-law read and the ON DELETE CASCADE. A second
-    # index on the same prefix only cost writes.
+    # No separate index: uq_demo_cell starts with this column.
     law_id: Mapped[int] = mapped_column(ForeignKey("laws.id", ondelete="CASCADE"))
-    dimension: Mapped[str] = mapped_column(String(16))  # "age" | "sexe"
-    category: Mapped[str] = mapped_column(String(32))  # e.g. "35-49" | "femme"
-    choice: Mapped[str] = mapped_column(String(16))  # for | against | abstain
+    dimension: Mapped[str] = mapped_column(String(16))  # "age", "sexe", "region"
+    category: Mapped[str] = mapped_column(String(32))  # e.g. "35-49", "femme"
+    choice: Mapped[str] = mapped_column(String(16))  # for, against, abstain
 
-    #: The live counter, moved by every ballot.
+    # Live counter, updated by every ballot.
     count: Mapped[int] = mapped_column(Integer, default=0)
 
-    #: The value the public results page is allowed to *show* while the vote is
-    #: still open — `count` as it stood at the law's last snapshot.
-    #:
-    #: The two exist separately because the suppression rule above protects a
-    #: single reading and not a sequence of them. Serving `count` live meant two
-    #: reads of a public page, thirty seconds apart, could be subtracted from one
-    #: another: the difference was one ballot, and it named that voter's choice
-    #: *and* their age, sex and région together — reconstructing exactly the joint
-    #: cell this table refuses to store, from pages anyone may fetch.
-    #:
-    #: This column moves in steps of at least MIN_BUCKET_VOLUME profiled votes and
-    #: at most once an hour, so a difference between two readings can never be
-    #: attributed to a person. See `app.crud.demographics.refresh_snapshot`.
+    # What the results page shows while the vote is open: `count` at the last
+    # snapshot. Showing `count` live would let anyone diff two page loads and
+    # recover a single voter's choice with their age, sex and region. See
+    # `app.crud.demographics.refresh_snapshot`.
     published_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

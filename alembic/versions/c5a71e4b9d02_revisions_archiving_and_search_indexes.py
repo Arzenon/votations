@@ -15,9 +15,7 @@ down_revision: str | None = 'a1c4e9f27b30'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Columns the public search scans with an unanchored ILIKE. A btree index cannot
-# serve `%term%`, so these need trigram indexes or every search is a sequential
-# scan of the whole corpus — twice, once for the count and once for the page.
+# Columns searched with ILIKE '%term%', which needs trigram indexes.
 _SEARCH_COLUMNS = ("title", "official_ref", "summary_text")
 
 
@@ -45,10 +43,7 @@ def _has_trigram(conn) -> bool:
 
 
 def upgrade() -> None:
-    # --- Archiving replaces deletion -----------------------------------------
-    # Deleting a law cascaded away every vote cast on it. An archived law leaves
-    # the public site but keeps its votes and can be restored; purging is a
-    # separate, explicit act.
+    # --- Archiving instead of deletion (which also deleted the votes) --------
     op.add_column('laws', sa.Column('archived_at', sa.DateTime(timezone=True), nullable=True))
     op.create_index(op.f('ix_laws_archived_at'), 'laws', ['archived_at'], unique=False)
 

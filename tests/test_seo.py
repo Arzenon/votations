@@ -1,10 +1,4 @@
-"""What each page tells a machine about itself.
-
-Metadata is the part of a page nobody looks at, which is exactly why it drifts:
-a `<title>` stays the site's name for a year, a canonical points at the wrong
-URL, a structured-data block goes on describing a field somebody removed. None
-of it fails visibly. So it is asserted here instead.
-"""
+"""Page metadata: canonical URLs, robots, structured data, HEAD."""
 
 from __future__ import annotations
 
@@ -34,12 +28,7 @@ def robots(html: str) -> str | None:
 
 
 def structured_data(html: str) -> dict:
-    """The page's JSON-LD, parsed.
-
-    That this parses at all is half the test: the block is built as a Python dict
-    and rendered through Jinja's ``tojson``, so a value that escaped its quoting
-    would show up here as a decode error rather than as a silent break-out.
-    """
+    """The page's JSON-LD, parsed (a parse error would mean broken escaping)."""
     block = re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S)
     assert block, "aucun bloc de données structurées sur la page"
     return json.loads(block.group(1))
@@ -50,19 +39,14 @@ def nodes_of(html: str, kind: str) -> list[dict]:
 
 
 def test_the_canonical_url_drops_the_query_string(client, db_session):
-    """Each page of a modification history is the same page, not a new one.
-
-    Left alone, `?revisions=` offered a crawler one near-identical URL per page
-    of a table that sits at the bottom of the results — the rest of the page,
-    which is what anybody would rank, being identical every time.
-    """
+    """The canonical URL has no query string (e.g. ?revisions=)."""
     law = make_law(db_session, slug="loi-canon", title="Loi canon")
     page = client.get(f"/loi/{law.slug}/resultats?revisions=3").text
     assert canonical(page) == "http://testserver/loi/loi-canon/resultats"
 
 
 def test_og_url_says_exactly_what_the_canonical_says(client):
-    """Two vocabularies, one address — or a shared link counts as two links."""
+    """og:url equals the canonical URL."""
     page = client.get("/vie-privee").text
     assert canonical(page) == "http://testserver/vie-privee"
     assert og_url(page) == canonical(page)
@@ -78,19 +62,19 @@ def test_every_public_page_states_where_it_lives(client, db_session):
 
 
 def test_the_search_page_refuses_indexing_but_keeps_its_links(client):
-    """`?q=` is an unbounded space of thin pages; the links on it are not."""
+    """The search page is noindex, follow."""
     assert robots(client.get("/recherche?q=retraites&page=2").text) == "noindex, follow"
 
 
 def test_the_pages_that_are_indexed_say_nothing_about_robots(client, db_session):
-    """A `noindex` that spread would be silent and total."""
+    """Indexed pages have no robots meta."""
     law = make_law(db_session, slug="loi-indexee", title="Loi indexée")
     for path in ("/", "/vie-privee", f"/loi/{law.slug}", f"/loi/{law.slug}/resultats"):
         assert robots(client.get(path).text) is None, path
 
 
 def test_the_sitemap_does_not_offer_a_page_it_refuses_to_index(client):
-    """Listing a noindex page in a sitemap is a contradiction, reported as one."""
+    """The sitemap doesn't list the noindex search page."""
     assert "/recherche" not in client.get("/sitemap.xml").text
 
 
@@ -105,7 +89,7 @@ def test_the_home_page_declares_the_site_and_where_a_search_goes(client):
 
 
 def test_a_law_is_described_as_legislation(client, db_session):
-    """The facts the Journal Officiel publishes, said in schema.org's words."""
+    """A law is described as schema.org Legislation."""
     from datetime import date
 
     law = make_law(
@@ -127,11 +111,7 @@ def test_a_law_is_described_as_legislation(client, db_session):
 
 
 def test_a_law_with_nothing_to_say_says_nothing_rather_than_null(client, db_session):
-    """A hand-written law has no promulgation date and may have no reference.
-
-    `"legislationDate": null` states that the value is known to be nothing, which
-    is not what an absent staged row means.
-    """
+    """Missing values are omitted, not null."""
     law = make_law(db_session, slug="loi-nue", title="Loi nue")
     node = nodes_of(client.get(f"/loi/{law.slug}").text, "Legislation")[0]
     assert "legislationDate" not in node
@@ -140,7 +120,7 @@ def test_a_law_with_nothing_to_say_says_nothing_rather_than_null(client, db_sess
 
 
 def test_the_results_page_declares_the_open_data_as_a_dataset(client, db_session):
-    """The charter's promise — the raw figures are downloadable — said to a machine."""
+    """The results page declares the open data as a Dataset."""
     law = make_law(db_session, slug="loi-donnees", title="Loi données")
     dataset = nodes_of(client.get(f"/loi/{law.slug}/resultats").text, "Dataset")[0]
 
@@ -151,20 +131,12 @@ def test_the_results_page_declares_the_open_data_as_a_dataset(client, db_session
         "text/csv": "http://testserver/loi/loi-donnees/export.csv",
         "application/json": "http://testserver/loi/loi-donnees/export.json",
     }
-    # No licence is claimed anywhere: « accès libre » in the footer is not the
-    # name of one, and inventing it would be a legal claim made by a template.
+    # No licence declared (none has been chosen).
     assert "license" not in dataset
 
 
 def test_the_results_page_marks_up_only_what_it_shows(client, db_session):
-    """The rule the whole module rests on, asserted where it was first broken.
-
-    The results page shows a votation's figures, not the law's presentation. A
-    full `Legislation` node there carried « Ce que dit la loi » into the markup of
-    a page that never displays it — and, because that text is also the newest
-    entry in the modification history, put page one's content on page two of a
-    table that is paginated precisely to avoid shipping it whole.
-    """
+    """The results page markup doesn't include the law summary, which it doesn't show."""
     law = make_law(
         db_session,
         slug="loi-visible",
@@ -180,12 +152,7 @@ def test_the_results_page_marks_up_only_what_it_shows(client, db_session):
 
 
 def test_a_title_cannot_break_out_of_the_structured_data(client, db_session):
-    """`tojson` escapes `<`, so a law cannot close the script block that quotes it.
-
-    The admin form does not filter the title — it is prose, and prose contains
-    what it contains — so this is the only thing standing between a pasted title
-    and a script tag on a public page.
-    """
+    """A title containing </script> can't break out of the JSON-LD block."""
     hostile = "Loi </script><script>alert(1)</script> suite"
     law = make_law(db_session, slug="loi-hostile", title=hostile)
     page = client.get(f"/loi/{law.slug}").text
@@ -199,30 +166,19 @@ def test_a_title_cannot_break_out_of_the_structured_data(client, db_session):
 
 
 def test_head_is_answered_wherever_get_is(client, db_session):
-    """Link checkers and uptime probes ask this way; every URL answered 405.
-
-    `/connexion` and the sitemap matter more than they look: they arrive through
-    `include_router`, which is how forty of this site's routes arrive, and an
-    earlier fix that walked `app.routes` reached only the handful declared on the
-    application itself — while passing on `/robots.txt`.
-    """
+    """HEAD works wherever GET does, including routes from included routers."""
     law = make_law(db_session, slug="loi-tete", title="Loi tête")
     for path in ("/", "/robots.txt", "/sitemap.xml", "/connexion", f"/loi/{law.slug}"):
         assert client.request("HEAD", path).status_code == 200, path
 
 
 def test_head_does_not_open_a_route_that_writes(client, open_law):
-    """Only reads gained a method."""
+    """HEAD doesn't work on POST routes."""
     assert client.request("HEAD", f"/loi/{open_law.slug}/vote").status_code == 405
 
 
 def test_the_voting_window_is_dated_in_the_zone_the_site_publishes_in():
-    """`temporalCoverage` was the last date on the site still cut in UTC.
-
-    A votation opening at 00:30 Paris is stored as 22:30 or 23:30 UTC the day
-    before, so `.date()` on the stored instant declared to a search engine that it
-    had opened a day early. Every other date here goes through `local_day`.
-    """
+    """temporalCoverage uses Paris dates, not UTC."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 

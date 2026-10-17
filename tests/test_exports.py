@@ -1,4 +1,4 @@
-"""Export must contain NO identifying information."""
+"""The export contains no identifying information."""
 
 import csv
 import io
@@ -37,14 +37,11 @@ def test_json_export_has_no_voter_token(client, open_law, db_session):
 
 # --- Timestamp resolution -----------------------------------------------------
 #
-# The evolution curve is withheld below MIN_BUCKET_VOLUME to prevent
-# re-identification. Publishing the exact instant of every vote would hand all of
-# that back: the curve can be rebuilt at any resolution, and anyone who knows when
-# a person voted reads their choice straight off the file.
+# Exact timestamps would let anyone who knows when someone voted find their vote.
 
 
 def _seed(db_session, law, n=60):
-    """Seed n votes. The default clears MIN_BUCKET_VOLUME so times are published."""
+    """Create n votes (by default above MIN_BUCKET_VOLUME)."""
     base = datetime(2026, 5, 4, 9, 30, 15, 123456, tzinfo=UTC)
     for i in range(n):
         db_session.add(
@@ -67,30 +64,26 @@ def test_export_timestamps_are_rounded(client, open_law, db_session):
     rows = _rows(client, open_law)
     assert rows, "the export must not be empty"
     for row in rows:
-        # A date, not an instant: no hour, no minute, no microsecond.
+        # A date only.
         assert row["created_at"].startswith("2026-05-04")
         assert ":" not in row["created_at"]
 
 
 def test_a_low_volume_votation_publishes_no_times_at_all(client, open_law, db_session):
-    """The evolution curve is withheld below the threshold; so is the time column.
-
-    Otherwise the export would hand back exactly what that gate withholds, at any
-    resolution the reader chooses.
-    """
+    """Below the threshold, the export has no timestamps (like the curve)."""
     settings = get_settings()
     _seed(db_session, open_law, n=settings.min_bucket_volume - 1)
     rows = _rows(client, open_law)
     assert len(rows) == settings.min_bucket_volume - 1
     assert {row["created_at"] for row in rows} == {""}
-    # And the file says why, rather than leaving a reader guessing.
+    # And the file explains why.
     note = client.get(f"/loi/{open_law.slug}/export.json").json()["votes_note"]
     assert "omis" in note
     assert str(settings.min_bucket_volume) in note
 
 
 def test_the_export_never_reveals_more_than_the_results_page(client, open_law, db_session):
-    """The two must agree: whatever the page withholds, the file withholds."""
+    """The export never shows more than the results page."""
     settings = get_settings()
     _seed(db_session, open_law, n=settings.min_bucket_volume - 1)
     page = client.get(f"/loi/{open_law.slug}/resultats").text
@@ -99,17 +92,15 @@ def test_the_export_never_reveals_more_than_the_results_page(client, open_law, d
 
 
 def test_export_rows_are_not_in_chronological_order(client, open_law, db_session):
-    """Row order must not reconstruct the sequence the votes arrived in."""
+    """Row order doesn't reveal the order in which votes arrived."""
     _seed(db_session, open_law, n=60)
     rows = _rows(client, open_law)
     assert len(rows) == 60
-    # The votes alternate against/for as they were cast; an id- or time-ordered
-    # export would reproduce that pattern exactly.
+    # Votes alternate against/for; sorting by id or time would show that.
     order = [r["choice"] for r in rows]
     alternating = ["against" if i % 2 == 0 else "for" for i in range(60)]
     assert order != alternating
-    # They are ordered on the published columns and nothing else, so votes sharing
-    # a day are grouped by choice — carrying no more than the file already states.
+    # Sorted by the published columns only, so grouped by choice within a day.
     assert order == sorted(order)
 
 
@@ -124,15 +115,13 @@ def test_export_is_reproducible(client, open_law, db_session):
 def test_the_json_export_says_what_it_rounded(client, open_law, db_session):
     _seed(db_session, open_law)
     data = client.get(f"/loi/{open_law.slug}/export.json").json()
-    # The note no longer names the resolution — it states the guarantee that
-    # matters, and the rounding is visible in the rows themselves.
     assert data["votes_note"] == "L'export ne révèle rien de plus que la page de résultats."
     for vote in data["votes"]:
         assert vote["created_at"] == "2026-05-04"
 
 
 def test_exact_resolution_is_available_but_not_the_default(client, open_law, db_session):
-    """An operator may opt in, knowingly — the shipped default does not."""
+    """Exact timestamps are possible but not the default."""
     settings = get_settings()
     assert settings.export_time_resolution == "day"
     _seed(db_session, open_law)
@@ -140,9 +129,7 @@ def test_exact_resolution_is_available_but_not_the_default(client, open_law, db_
     settings.export_time_resolution = "exact"
     try:
         stamps = [row["created_at"] for row in _rows(client, open_law)]
-        # Written in the display zone like everything else the site publishes,
-        # so the assertion is on the instant rather than on how it is spelled:
-        # the same moment is "09:30:15+00:00" and "11:30:15+02:00".
+        # Compare instants, since the output is in the display zone.
         moments = {datetime.fromisoformat(s).astimezone(UTC) for s in stamps}
         assert datetime(2026, 5, 4, 9, 30, 15, 123456, tzinfo=UTC) in moments
     finally:
@@ -150,7 +137,7 @@ def test_exact_resolution_is_available_but_not_the_default(client, open_law, db_
 
 
 def test_a_large_export_is_streamed_not_buffered(client, open_law, db_session):
-    """The endpoint is public and unauthenticated: it must not build the file in RAM."""
+    """A large export is streamed, not built in memory."""
     _seed(db_session, open_law, n=250)
     with client.stream("GET", f"/loi/{open_law.slug}/export.csv") as response:
         assert response.status_code == 200
@@ -160,7 +147,7 @@ def test_a_large_export_is_streamed_not_buffered(client, open_law, db_session):
     assert len("".join(chunks).strip().splitlines()) == 251  # header + rows
 
 
-# --- A8: the exports stream and are throttled --------------------------------
+# --- Streaming and throttling ---------------------------------------------------
 
 
 def test_the_json_export_is_valid_and_streamed(client, db_session, open_law):
@@ -190,7 +177,7 @@ def test_exports_are_rate_limited_far_below_voting(client, open_law, monkeypatch
     assert codes[2:] == [429, 429]
 
 
-# --- Days are days where the reader lives ------------------------------------
+# --- Days in the display zone ------------------------------------------------
 
 
 def _vote_at(db_session, law, moment: datetime, n: int = 60, tag: str = "a") -> None:
@@ -207,12 +194,7 @@ def _vote_at(db_session, law, moment: datetime, n: int = 60, tag: str = "a") -> 
 
 
 def test_a_vote_just_after_midnight_in_paris_counts_as_that_day(client, open_law, db_session):
-    """Truncating in UTC filed 00:30 Paris under the previous day.
-
-    Visibly wrong on a curve headed « jour par jour », and wrong in the export
-    too — which must round on the same boundaries as the curve, or it partitions
-    the votes a second, different way.
-    """
+    """A vote at 00:30 Paris counts for that day, not the previous one (UTC)."""
     assert get_settings().display_timezone == "Europe/Paris"
     # 2026-05-03 22:30 UTC is 2026-05-04 00:30 in Paris (CEST, +02:00).
     _vote_at(db_session, open_law, datetime(2026, 5, 3, 22, 30, tzinfo=UTC))
@@ -226,9 +208,8 @@ def test_a_vote_just_after_midnight_in_paris_counts_as_that_day(client, open_law
 
 
 def test_the_export_and_the_curve_agree_on_the_boundary(client, open_law, db_session):
-    """Whatever the rule is, both sides must apply the same one."""
-    # 23:00 and 01:00 Paris: the same UTC day, two different days where the
-    # reader lives. Both sides must land on the same pair.
+    """The export and the curve use the same day boundaries."""
+    # 23:00 and 01:00 Paris: same UTC day, two Paris days.
     _vote_at(db_session, open_law, datetime(2026, 5, 3, 21, 0, tzinfo=UTC), n=30, tag="veille")
     _vote_at(db_session, open_law, datetime(2026, 5, 3, 23, 0, tzinfo=UTC), n=30, tag="apres")
 
@@ -241,12 +222,9 @@ def test_the_export_and_the_curve_agree_on_the_boundary(client, open_law, db_ses
 
 
 def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open_law):
-    """Every yield costs an anyio thread hop on the pool that serves the site.
+    """The export is sent in chunks, not one per vote.
 
-    Starlette wraps a sync generator in `iterate_in_threadpool`, which runs each
-    `next()` through `anyio.to_thread` — the same default limiter the lifespan
-    pins to `db_max_threads` — and then sends one ASGI message per piece. One
-    yield per vote made a large votation cost a hundred thousand of each.
+    Each yield costs a thread pool round trip and an ASGI message.
     """
     import anyio
 
@@ -254,9 +232,7 @@ def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open
 
     _seed(db_session, open_law, n=4000)
 
-    # `body_iterator` is what Starlette actually sends from, one ASGI message per
-    # item — already wrapped in `iterate_in_threadpool`, which is the cost being
-    # measured. Draining it is therefore the honest way to count the pieces.
+    # One ASGI message per item of body_iterator.
     chunks: list[str] = []
 
     async def drain() -> None:
@@ -267,7 +243,7 @@ def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open
 
     rows = "".join(chunks).strip().splitlines()
     assert len(rows) == 4001, "header + every vote, whatever the chunking"
-    assert len(chunks) < 100, f"{len(chunks)} chunks for 4000 votes — batching is gone"
+    assert len(chunks) < 100, f"{len(chunks)} chunks for 4000 votes, batching is gone"
     assert max(len(c) for c in chunks) <= _CHUNK_CHARS + 200, (
         "a chunk grew past the buffer - the point was to bound memory too"
     )
@@ -277,7 +253,7 @@ def test_an_export_hands_over_bufferfuls_not_one_chunk_per_vote(db_session, open
 
 
 def _scans(monkeypatch) -> list[int]:
-    """Counts how many times an export walked the votes."""
+    """Count how many times the export scanned the votes."""
     from app.routes.public import exports
 
     seen: list[int] = []
@@ -292,13 +268,7 @@ def _scans(monkeypatch) -> list[int]:
 
 
 def test_head_on_an_export_answers_without_scanning_the_votes(client, open_law, monkeypatch):
-    """`HeadAsGet` hands the handler a GET, and the server throws the body away.
-
-    Which is free everywhere except here, where *building* the body is a scan of
-    every vote on the votation — on the two URLs `robots.txt` marks as not worth
-    crawling, and which a link checker or an uptime probe therefore knocks on
-    first.
-    """
+    """HEAD on an export doesn't scan the votes."""
     scans = _scans(monkeypatch)
     for suffix in ("csv", "json"):
         r = client.head(f"/loi/{open_law.slug}/export.{suffix}")
@@ -309,7 +279,7 @@ def test_head_on_an_export_answers_without_scanning_the_votes(client, open_law, 
 
 
 def test_get_still_scans_and_still_returns_the_rows(client, open_law, db_session, monkeypatch):
-    """The counterpart, so the short-circuit cannot swallow the real answer."""
+    """GET still scans and returns the rows."""
     db_session.add(Vote(law_id=open_law.id, voter_token="t", choice="for"))
     db_session.commit()
 
@@ -320,6 +290,6 @@ def test_get_still_scans_and_still_returns_the_rows(client, open_law, db_session
 
 
 def test_head_on_a_page_is_unaffected(client, open_law):
-    """Only the exports branch; every other URL answers HEAD as it always did."""
+    """HEAD on other pages is unaffected."""
     for path in ("/", f"/loi/{open_law.slug}", "/robots.txt"):
         assert client.head(path).status_code == 200, path

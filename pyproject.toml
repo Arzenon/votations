@@ -14,12 +14,8 @@ dependencies = [
     "itsdangerous>=2.2",
     "python-multipart>=0.0.12",
     "httpx>=0.27",
-    # The one dependency here with an upper bound, because it is the one whose
-    # major version has already moved under us once. 1.x replaced `httpx` with
-    # `httpx2` and dropped surface this project never used; a future 2.x is a
-    # decision to take deliberately, not something a fresh `pip install -e .`
-    # should make on its own — the lockfile pins the exact version for the image,
-    # and this keeps a non-Docker install on the same major as the image.
+    # Upper bound: the major version already changed once (1.x). Keeps installs
+    # outside Docker on the same major as the lockfile.
     "anthropic>=1,<2",
     # Entity-expansion-safe XML parsing for the Journal Officiel archives.
     "defusedxml>=0.7",
@@ -31,9 +27,7 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.15",
     "mypy>=1.14",
-    # Stubs for the one third-party import mypy cannot infer. Pillow is
-    # deliberately absent: it builds `app/static/og.png` by hand and is not a
-    # dependency of the application — see `scripts/make_og_image.py`.
+    # Type stubs. Pillow isn't a dependency (see `scripts/make_og_image.py`).
     "types-defusedxml>=0.7",
 ]
 
@@ -50,7 +44,7 @@ select = [
     "I",    # import order
     "UP",   # pyupgrade
     "B",    # bugbear
-    "S",    # bandit — security smells
+    "S",    # bandit (security)
     "SIM",  # simplifications
     "C4",   # comprehensions
     "DTZ",  # naive datetimes: the bug class behind the vote-window offset
@@ -62,45 +56,35 @@ select = [
 ignore = [
     # Calling Depends()/Form() in argument defaults is the idiomatic FastAPI pattern.
     "B008",
-    # French error messages are written for the person reading them, not extracted
-    # into constants.
+    # French error messages are written inline.
     "TRY003",
-    # Ambiguous-unicode flags the typographic apostrophes and « » the French copy
-    # uses on purpose.
+    # Allow typographic apostrophes and « » in French text.
     "RUF001",
     "RUF002",
     "RUF003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests assert on fixtures they receive but do not name, and use obvious fake
-# secrets by design.
+# Tests use assert and fake secrets.
 "tests/*" = ["S101", "S105", "S106", "S311", "ARG001", "SLF001"]
-# Seeding sample data uses a seeded PRNG for reproducibility, not for secrets.
+# Seeded random for sample data, not for secrets.
 "scripts/seed.py" = ["S311"]
 
 [tool.mypy]
 python_version = "3.14"
 files = ["app", "scripts"]
 
-# Deliberately not `strict`. The point here is to check the types the code
-# already declares — and this codebase declares a lot of them, on every model
-# column, every CRUD signature and every helper — rather than to demand an
-# annotation on each of the forty route handlers, whose signatures FastAPI
-# already reads and validates at runtime. `check_untyped_defs` is what makes the
-# unannotated bodies get checked anyway, which is where the value is.
+# Not strict: route handlers don't need annotations (FastAPI validates them).
+# check_untyped_defs still checks their bodies.
 check_untyped_defs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_unreachable = true
 no_implicit_optional = true
-# An `Any` that arrives from an untyped third-party call is silent by design;
-# one produced by our own code usually means a signature that lost its type.
 disallow_any_generics = false
 
 [[tool.mypy.overrides]]
-# Pillow is a tool for regenerating one committed PNG, not a dependency; the
-# script that imports it is run by hand from a throwaway virtualenv.
+# Pillow is only used by scripts/make_og_image.py, run by hand.
 module = ["PIL.*"]
 ignore_missing_imports = true
 

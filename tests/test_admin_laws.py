@@ -11,7 +11,7 @@ from app.crud.laws import REVISIONS_PAGE_SIZE
 from app.models import Law, LawRevision
 from tests.helpers import admin_headers, make_law
 
-# --- B2: the public record of edits made after publication -------------------
+# --- Public history of edits after publication --------------------------------
 
 
 def test_editing_a_published_law_is_recorded_and_shown(client, db_session):
@@ -57,7 +57,7 @@ def test_the_law_page_points_at_the_history_when_there_is_one(client, db_session
     assert "historique des modifications" in page.text.lower()
 
 
-# --- B3: archiving replaces deletion -----------------------------------------
+# --- Archiving instead of deletion --------------------------------------------
 
 
 def test_archiving_hides_a_law_without_destroying_its_votes(client, db_session, open_law):
@@ -90,7 +90,7 @@ def test_an_archived_law_can_be_restored(client, db_session, open_law):
 
 
 def test_deleting_asks_on_a_page_the_server_renders(client, open_law):
-    """The confirmation used to be a JS attribute; with JS off it did nothing."""
+    """Deletion is confirmed on a server-rendered page (works without JS)."""
     client.post(
         f"/admin/lois/{open_law.id}/archiver", headers=admin_headers(), follow_redirects=False
     )
@@ -103,13 +103,7 @@ def test_deleting_asks_on_a_page_the_server_renders(client, open_law):
 def test_the_data_can_still_be_downloaded_from_the_page_that_destroys_it(
     client, db_session, open_law
 ):
-    """« Téléchargez d'abord l'export » has to point at a file that exists.
-
-    Purging is reachable only from the archive, and an archived votation answers
-    404 on every public route — the export included, by design. So the link that
-    tells an administrator to keep the data before destroying it pointed at a
-    404, on the one screen where being wrong is irreversible.
-    """
+    """The deletion page links to an export that works for archived laws."""
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
     client.post(
         f"/admin/lois/{open_law.id}/archiver", headers=admin_headers(), follow_redirects=False
@@ -118,7 +112,7 @@ def test_the_data_can_still_be_downloaded_from_the_page_that_destroys_it(
     page = client.get(f"/admin/lois/{open_law.id}/supprimer", headers=admin_headers())
     offered = f"/admin/lois/{open_law.id}/export.csv"
     assert offered in page.text
-    # The public route still refuses it, which is what archiving means.
+    # The public route still refuses it.
     assert client.get(f"/loi/{open_law.slug}/export.csv").status_code == 404
 
     export = client.get(offered, headers=admin_headers())
@@ -146,7 +140,7 @@ def test_purging_an_archived_law_removes_it_for_good(client, db_session, open_la
     assert db_session.get(Law, law_id) is None
 
 
-# --- Aperçu d'une loi non publiée --------------------------------------------
+# --- Preview of an unpublished law ---------------------------------------------
 
 
 def test_an_unpublished_law_can_be_previewed_by_the_admin(client, db_session):
@@ -228,9 +222,7 @@ def test_ignoring_an_imported_row_keeps_its_link_to_the_law(db_session, open_law
 
 # --- Import freshness ---------------------------------------------------------
 #
-# The import service retries forever on failure, so a source that moves — and the
-# export URL carries the legislature number, so it does move — would stop the
-# imports in silence. The dashboard is where that silence becomes visible.
+# The dashboard warns when the import has stopped (e.g. the export URL changed).
 
 
 def _stage_import(db_session, *, seen_at):
@@ -265,12 +257,12 @@ def test_a_stale_import_is_announced_on_the_dashboard(client, db_session, monkey
 
     page = client.get("/admin", headers=admin_headers()).text
     assert "Import automatique en retard" in page
-    # It names the service to look at, rather than leaving the reader guessing.
+    # Names the service to check.
     assert "assemblee-refresh" in page
 
 
 def test_never_having_imported_counts_as_stale(client, db_session):
-    """An import that has never once succeeded is the loudest failure of all."""
+    """No import ever counts as stale."""
     page = client.get("/admin", headers=admin_headers()).text
     assert "Import automatique en retard" in page
     assert "Aucun import n'a encore abouti" in page
@@ -289,13 +281,10 @@ def _edit(client, law_id: int, summary: str) -> None:
 
 
 def test_a_long_history_is_paginated_rather_than_shipped_whole(client, db_session):
-    """Every edit adds a row holding the whole before *and* after value.
+    """The revision history is paginated.
 
-    Unbounded, on a public page: a law corrected a few hundred times shipped all
-    of it in one table to every reader of its results.
-
-    The count is read back rather than assumed: saving the form also blanks the
-    dates it does not carry, so the first edit records more than one change.
+    The count is read back: saving the form also clears the dates, so the
+    first edit records several changes.
     """
     law = make_law(db_session, slug="loi-suivie", title="Loi suivie", published=True)
     for i in range(25):
@@ -334,8 +323,7 @@ def test_the_admin_form_says_it_is_showing_only_the_recent_ones(client, db_sessi
 
 
 def test_the_preview_renders_unsaved_text_and_saves_nothing(client, db_session):
-    """Checking your own work used to require saving it first — and on a new law,
-    creating it. The answer arrived after the text had been kept."""
+    """The preview shows unsaved text and saves nothing."""
     before = db_session.query(Law).count()
 
     r = client.post(
@@ -354,12 +342,7 @@ def test_the_preview_renders_unsaved_text_and_saves_nothing(client, db_session):
 
 
 def test_the_preview_route_is_not_swallowed_by_the_update_route(client, db_session):
-    """`POST /lois/apercu` and `POST /lois/{law_id}` share a shape.
-
-    Registered the other way round, "apercu" is read as a law id and FastAPI
-    answers 422 before the preview is ever reached. This is the whole of that
-    regression, and it is invisible until someone clicks the button.
-    """
+    """POST /lois/apercu isn't caught by POST /lois/{law_id} (route order)."""
     r = client.post(
         "/admin/lois/apercu", headers=admin_headers(), data={"title": "T", "summary_text": "x"}
     )
@@ -367,7 +350,7 @@ def test_the_preview_route_is_not_swallowed_by_the_update_route(client, db_sessi
 
 
 def test_previewing_an_existing_law_keeps_its_identity(client, db_session):
-    """The prose is the unsaved prose; the tally, the history and the URL are real."""
+    """Previewing an existing law keeps its tally, history and URL."""
     law = make_law(db_session, slug="loi-apercu", title="Titre enregistré")
 
     r = client.post(
@@ -383,7 +366,7 @@ def test_previewing_an_existing_law_keeps_its_identity(client, db_session):
 
 
 def test_a_preview_of_an_unsaved_law_offers_no_dead_link(client, db_session):
-    """It has no id, so every /admin/lois/<id> built from it was `/admin/lois/None`."""
+    """No /admin/lois/None link in the preview of an unsaved law."""
     r = client.post(
         "/admin/lois/apercu",
         headers=admin_headers(),
@@ -394,7 +377,7 @@ def test_a_preview_of_an_unsaved_law_offers_no_dead_link(client, db_session):
 
 
 def test_the_preview_never_refuses_a_half_typed_form(client, db_session):
-    """You preview precisely to find out what is still wrong; refusing is useless."""
+    """The preview accepts an incomplete form."""
     r = client.post(
         "/admin/lois/apercu",
         headers=admin_headers(),
@@ -408,7 +391,7 @@ def test_the_preview_never_refuses_a_half_typed_form(client, db_session):
 
 
 def test_the_preview_reads_the_dates_so_the_ballot_is_right(client, db_session):
-    """The window decides whether the page shows a ballot or a closed notice."""
+    """The preview parses the dates, which decide what the page shows."""
     closed = client.post(
         "/admin/lois/apercu",
         headers=admin_headers(),
@@ -432,11 +415,7 @@ def test_the_preview_requires_the_admin_guard(client, db_session):
 
 
 def test_a_draft_is_linked_to_its_preview_not_to_a_404(client, db_session):
-    """`/loi/<slug>` answers 404 for anything unpublished, by design.
-
-    Linking every title there made the title of every draft in the dashboard a
-    dead link — which is how you find out, by clicking it.
-    """
+    """Drafts in the dashboard link to their preview (the public URL is a 404)."""
     draft = make_law(db_session, slug="loi-brouillon", title="Loi en brouillon", published=False)
 
     dashboard = client.get("/admin", headers=admin_headers())
@@ -476,12 +455,7 @@ def _staged(db_session, uid, *, procedure, seances=0, promulgated=None):
 
 
 def test_the_queue_can_be_narrowed_to_one_procedure(client, db_session):
-    """Seventy staged laws is a corpus to choose from, not a to-do list.
-
-    Seventeen of them are treaty ratifications nobody would put to a vote, and
-    clearing those needs them on one screen rather than scattered through two
-    pages of everything else.
-    """
+    """The import queue can be filtered by procedure."""
     _staged(db_session, "DLR17N001", procedure="Projet de ratification des traités")
     _staged(db_session, "DLR17N002", procedure="Projet de ratification des traités")
     _staged(db_session, "DLR17N003", procedure="Proposition de loi ordinaire")
@@ -497,7 +471,7 @@ def test_the_queue_can_be_narrowed_to_one_procedure(client, db_session):
 
 
 def test_the_procedure_choices_carry_their_counts(client, db_session):
-    """The number beside a choice must be what choosing it will show."""
+    """Each procedure option shows its count."""
     for i in range(3):
         _staged(db_session, f"DLR17N10{i}", procedure="Projet de ratification des traités")
     _staged(db_session, "DLR17N200", procedure="Proposition de loi ordinaire")
@@ -508,11 +482,7 @@ def test_the_procedure_choices_carry_their_counts(client, db_session):
 
 
 def test_the_queue_can_be_ranked_by_how_much_a_text_was_argued_over(client, db_session):
-    """Sitting count is the best proxy here for "would a citizen want a say".
-
-    It is also what tells you the arguments block will have something to draw on:
-    a law adopted with no public sitting has no attributed positions to source.
-    """
+    """The queue can be sorted by number of sittings."""
     _staged(db_session, "DLR17N301", procedure="Proposition de loi ordinaire", seances=1)
     _staged(db_session, "DLR17N302", procedure="Proposition de loi ordinaire", seances=12)
     _staged(db_session, "DLR17N303", procedure="Proposition de loi ordinaire", seances=4)
@@ -535,7 +505,7 @@ def test_an_unknown_sort_falls_back_rather_than_failing(client, db_session):
 
 
 def test_the_filters_survive_turning_the_page(client, db_session):
-    """Pagination that drops the filter silently undoes the triage."""
+    """Filters are kept across pages."""
     for i in range(3):
         _staged(db_session, f"DLR17N6{i:02}", procedure="Proposition de loi ordinaire", seances=i)
 
@@ -545,20 +515,16 @@ def test_the_filters_survive_turning_the_page(client, db_session):
     ).text
     if "pagination" in page:
         assert "procedure=Proposition" in page.split("pagination")[1]
-    # The controls themselves must come back showing the current choice.
+    # The controls show the current choice.
     assert 'value="Proposition de loi ordinaire" selected' in page
     assert 'value="seances" selected' in page
 
 
-# --- La date de promulgation, saisie et tracée --------------------------------
+# --- Promulgation date ------------------------------------------------------------
 
 
 def test_the_promulgation_date_is_saved_and_shown(client, db_session):
-    """The column the home page orders by has to be reachable from the form.
-
-    Otherwise a law written by hand can never be placed in the timeline, and the
-    only laws that sort correctly are the ones the import happened to stage.
-    """
+    """The promulgation date can be set in the form."""
     law = make_law(db_session, slug="loi-promulguee", promulgated_on=None)
     client.post(
         f"/admin/lois/{law.id}",
@@ -574,11 +540,7 @@ def test_the_promulgation_date_is_saved_and_shown(client, db_session):
 
 
 def test_changing_the_promulgation_date_is_recorded_publicly(client, db_session):
-    """It orders the front page, so moving it moves what readers see first.
-
-    Every other field an administrator can edit is in the public record; this one
-    changes the shape of the site, which is a stronger reason than most.
-    """
+    """Changing the promulgation date is recorded in the public history."""
     law = make_law(db_session, slug="loi-redatee", promulgated_on=date(2026, 1, 5))
     client.post(
         f"/admin/lois/{law.id}",
@@ -587,7 +549,7 @@ def test_changing_the_promulgation_date_is_recorded_publicly(client, db_session)
         follow_redirects=False,
     )
     entry = db_session.query(LawRevision).filter_by(law_id=law.id, field="promulgated_on").one()
-    # Rendered as a French day, not an ISO string: this lands on a public page.
+    # Shown as a French date, not ISO.
     assert entry.old_value == "5 janvier 2026"
     assert entry.new_value == "9 mars 2026"
     assert "Date de promulgation" in client.get(f"/loi/{law.slug}/resultats").text
@@ -606,12 +568,7 @@ def test_an_unreadable_promulgation_date_is_refused_with_a_message(client, db_se
 
 
 def test_previewing_an_unsaved_law_touches_no_memo_and_no_query(client, db_session):
-    """The previewed `Law` has no id, and two helpers typed `int` were given None.
-
-    They answered zero — `law_id IS NULL` matches nothing — and `tally` then filed
-    that answer in the per-law memo under the key `None`, in a table keyed by law
-    id and shared by every reader.
-    """
+    """Previewing an unsaved law (id None) runs no tally query and writes no memo."""
     from app.crud import results as results_crud
 
     results_crud.reset_cache()
@@ -621,8 +578,7 @@ def test_previewing_an_unsaved_law_touches_no_memo_and_no_query(client, db_sessi
         data={
             "title": "Loi jamais enregistrée",
             "summary_text": "Un résumé.",
-            # A closing date in the past, so the page renders its tally rather
-            # than a ballot — which is the branch that used to reach `tally`.
+            # Closed, so the page shows a tally.
             "opens_at": "2020-01-01T10:00",
             "closes_at": "2020-02-01T10:00",
         },

@@ -7,11 +7,7 @@ from tests.helpers import cast_ballot
 
 
 def _dimension(db, law, dimension, **kwargs):
-    """One dimension's breakdown, via the function the application actually calls.
-
-    `all_breakdowns` is the only entry point the app uses; a single-dimension
-    variant existed solely for these tests and loaded every dimension anyway.
-    """
+    """One dimension's breakdown, via `all_breakdowns`."""
     return next(
         bd for bd in demo_crud.all_breakdowns(db, law, **kwargs) if bd.dimension == dimension
     )
@@ -47,7 +43,7 @@ def test_no_per_voter_demographics_stored(open_law, db_session):
 
 def test_demographics_recorded_once_despite_vote_change(open_law, db_session):
     cast_ballot(db_session, open_law, "tok-3", VoteChoice.FOR, age_bracket="25-34", sexe="homme")
-    # Voter changes their mind and resubmits demographics — must NOT double-count.
+    # The voter resubmits their profile: no double counting.
     cast_ballot(
         db_session, open_law, "tok-3", VoteChoice.AGAINST, age_bracket="25-34", sexe="homme"
     )
@@ -63,12 +59,9 @@ def test_invalid_values_ignored(open_law, db_session):
 
 
 def _seed_cells(db, law, dimension, data):
-    """data: {category: {choice: count}} — as a law whose snapshot is published.
+    """Seed {category: {choice: count}} as already published (snapshot taken).
 
-    Both counters are written, and the law is dated, because that is the state
-    these tests are about: what the *suppression rule* does with figures the
-    votation has already published. Whether a figure may be published at all is
-    the snapshot rule, tested separately in test_privacy.
+    These tests are about suppression; the snapshot rule is in test_privacy.
     """
     for category, choices in data.items():
         for choice, count in choices.items():
@@ -87,7 +80,7 @@ def _seed_cells(db, law, dimension, data):
 
 
 def test_breakdown_hidden_below_threshold(open_law, db_session):
-    # One tiny cell (2) is below the default threshold (10) → whole table hidden.
+    # One cell (2) is below the threshold (10): the whole table is hidden.
     _seed_cells(
         db_session,
         open_law,
@@ -126,7 +119,7 @@ def test_region_recorded_as_marginal(open_law, db_session):
         db_session, open_law, "tok-r", VoteChoice.FOR, age_bracket="35-49", region="Bretagne"
     )
     assert _cell(db_session, open_law.id, "region", "Bretagne", "for").count == 1
-    # No joint age×region cell is ever created — only independent marginals.
+    # No age x region cells, only separate counters.
     dims = {d.dimension for d in db_session.query(DemographicTally).all()}
     assert dims == {"age", "region"}
 
@@ -176,8 +169,8 @@ def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session
 
     data = client.get(f"/loi/{open_law.slug}/export.json").json()
     dims = {d["dimension"] for d in data["demographics"]}
-    assert "sexe" in dims  # above threshold → exported
-    assert "age" not in dims  # below threshold → suppressed
+    assert "sexe" in dims  # above threshold: exported
+    assert "age" not in dims  # below threshold: suppressed
     # Per-vote rows still carry no demographic fields.
     for row in data["votes"]:
         assert set(row.keys()) == {"law_id", "choice", "created_at"}

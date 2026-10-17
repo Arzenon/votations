@@ -1,7 +1,6 @@
-"""The pages that are not about one law: home, search, legal notices, sitemap.
+"""Pages not tied to a law: home, search, legal pages, sitemap.
 
-Every route here renders the same bytes for every visitor, which is why they all
-opt into :data:`~app.routes.public.common.PUBLIC_PAGE_CACHE`.
+All are the same for every visitor and use ``PUBLIC_PAGE_CACHE``.
 """
 
 from __future__ import annotations
@@ -23,27 +22,15 @@ from app.templating import TAGLINE, templates
 router = APIRouter()
 
 
-# A search box is not a place to paste a novel. Long enough for any real query,
-# short enough that the tsquery it becomes stays a handful of terms and the
-# unanchored ILIKE beside it stays cheap — see `app.crud.laws._apply_search`.
+# Keeps the tsquery and the ILIKE cheap.
 MAX_QUERY_CHARS = 120
 
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, db: Session = Depends(get_db)):
     bands = laws_crud.published_by_state(db)
-    # One query for every card's count, the same way the administration's own
-    # listing does it — not one per law. Participation is shown but never sorted
-    # on: ordering the page by it would make visibility follow votes and votes
-    # follow visibility, which is the loop the charter's anti-manipulation rule
-    # exists to refuse.
-    #
-    # One query is not the same thing as a cheap one: it groups every vote ever
-    # cast on up to a hundred and fifty votations, to draw a hundred and fifty
-    # cards, on the busiest page of the site. `max_age` lets that answer be
-    # reused for as long as this page's own Cache-Control already tells the
-    # reader it may be — the same number, deliberately — and a ballot forgets the
-    # law it was cast on, so what is reused is never a figure that has moved.
+    # Participation is shown but never used for sorting: sorting by votes would
+    # bring more votes to the most visible laws.
     tallies = results_crud.tallies_for(
         db,
         [law.id for _, laws in bands for law in laws],
@@ -56,10 +43,6 @@ def home(request: Request, db: Session = Depends(get_db)):
         {
             "bands": bands,
             "tallies": tallies,
-            # The number the database cut the excerpt at. The template held it as
-            # a literal, twice — once to slice and once to decide the ellipsis —
-            # against a constant that only exists in Python, and the whole point
-            # of fetching one character more than is shown is that the two agree.
             "excerpt_chars": laws_crud.EXCERPT_CHARS,
             "jsonld": seo.graph(seo.website(origin, description=TAGLINE)),
         },
@@ -94,13 +77,8 @@ def search(
 
 @router.get("/vie-privee", response_class=HTMLResponse)
 def privacy(request: Request):
-    """What is stored, where, and for how long.
-
-    Kept as an ordinary page rather than a consent banner: both cookies this site
-    sets are exempt from consent under article 82 of the loi Informatique et
-    Libertés — they are written only when someone votes, and the vote cannot work
-    without them — so the obligation here is to inform, not to ask.
-    """
+    """Privacy page. No consent banner: both cookies are strictly necessary for
+    voting, so exempt under article 82 of the loi Informatique et Libertés."""
     return templates.TemplateResponse(
         request,
         "vie_privee.html",
@@ -111,13 +89,7 @@ def privacy(request: Request):
 
 @router.get("/mentions-legales", response_class=HTMLResponse)
 def legal_notice(request: Request):
-    """The host, and why the publisher is not named — LCEN art. 6-III.
-
-    Only the host is mandatory here. Article 6-III-2 lets a non-professional
-    publisher keep their own name and address off the page provided the host
-    holds them, so those fields do not exist in the configuration at all: a field
-    nobody is obliged to fill is a field that gets filled by accident.
-    """
+    """Mentions légales (LCEN art. 6-III). Only the host is mandatory."""
     settings = get_settings()
     return templates.TemplateResponse(
         request,
@@ -125,7 +97,6 @@ def legal_notice(request: Request):
         {
             "contact_email": settings.legal_contact_email,
             "host": settings.legal_host,
-            # The host alone decides whether the page is complete.
             "complete": bool(settings.legal_host),
         },
         headers=PUBLIC_PAGE_CACHE,
@@ -134,21 +105,11 @@ def legal_notice(request: Request):
 
 @router.get("/sitemap.xml", include_in_schema=False)
 def sitemap(request: Request, db: Session = Depends(get_db)):
-    """Every public URL, for search engines.
-
-    Built from the same query the home page uses, so an archived or unpublished
-    law can never appear here — a sitemap that lists a 404 is worse than none.
-    """
+    """All public URLs, for search engines. Only public laws are listed."""
     base = str(request.base_url).rstrip("/")
-    # `/recherche` is deliberately absent: it carries `noindex` (see the template
-    # for why), and a sitemap is a list of pages one is *asking* to have indexed.
-    # Listing a page there and refusing it on the page itself is a contradiction
-    # search engines report as an error, on the one file whose job is to be a
-    # plain statement of what this site holds.
+    # No /recherche: it's noindex.
     static_pages = ["/", "/connexion", "/vie-privee", "/mentions-legales"]
-    # (location, last modified). The static pages have no date; annotated because
-    # otherwise the element type is read off the first comprehension alone, and
-    # the law entries below stop type-checking against it.
+    # (location, last modified)
     urls: list[tuple[str, str | None]] = [(f"{base}{path}", None) for path in static_pages]
     for slug, changed_at in laws_crud.public_urls(db):
         moment = changed_at.date().isoformat()

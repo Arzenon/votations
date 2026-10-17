@@ -1,10 +1,4 @@
-"""Settings: what the application refuses to boot on, and what an operator must decide.
-
-Several of these settings *are* the privacy guarantees the charter makes, so a
-typo in one of them has to stop the process rather than quietly serve something
-else. The rest of the file is the other half of that: `.env.example` must list
-every value with no safe default, and nothing that has one.
-"""
+"""Settings: what the app refuses to start with, and what `.env.example` lists."""
 
 from __future__ import annotations
 
@@ -19,12 +13,12 @@ from app.config import InsecureConfiguration, Settings, check_production_config
 
 
 def test_development_runs_on_defaults():
-    """Local work and the test suite must stay frictionless."""
+    """Development works with the defaults."""
     check_production_config(Settings())
 
 
 def test_production_refuses_a_placeholder_secret_key():
-    """On the shipped key anyone can forge a voter cookie and vote without limit."""
+    """Production refuses the placeholder SECRET_KEY."""
     with pytest.raises(InsecureConfiguration) as exc:
         check_production_config(Settings(environment="production"))
     assert "SECRET_KEY" in str(exc.value)
@@ -85,7 +79,7 @@ def test_the_error_says_how_to_generate_a_key():
 
 
 def test_a_non_ascii_admin_password_is_refused_at_boot():
-    """HTTP Basic cannot carry it here, so it could only ever lock the admin out."""
+    """A non-ASCII admin password is refused (HTTP Basic can't carry it)."""
     with pytest.raises(ValueError, match="ASCII"):
         Settings(admin_password="clé-très-sûre")
 
@@ -93,11 +87,11 @@ def test_a_non_ascii_admin_password_is_refused_at_boot():
         Settings(admin_username="administratrice-éé")
 
 
-# --- A4 / E7: the configuration refuses values that used to fail open ---------
+# --- Invalid values are refused ------------------------------------------------
 
 
 def test_a_typo_in_the_export_resolution_is_refused_at_boot():
-    """`EXPORT_TIME_RESOLUTION=days` silently published exact vote timestamps."""
+    """A typo like EXPORT_TIME_RESOLUTION=days is refused."""
     with pytest.raises(ValueError):
         Settings(export_time_resolution="days")
 
@@ -126,33 +120,17 @@ def test_production_refuses_a_defeated_anonymity_threshold():
         check_production_config(settings)
 
 
-# --- `.env.example` is the other half of the configuration surface -------------
+# --- .env.example -----------------------------------------------------------------
 #
-# The file used to document all forty-odd settings, which made it a reference
-# nobody read to the end: the five values that actually have to be filled in were
-# buried among pool sizes and refresh cadences. It now carries only what an
-# operator has to decide, and both halves of that are asserted below — a missing
-# entry is a value somebody forgets to set, and an extra one is how the file
-# grows back into a wall of text.
-#
-# What is asserted is the *current* deployment, not an older one. Four settings
-# that used to be listed here — the environment, the cookie flag, the database
-# URL and the proxy hop count — moved into `docker-compose.prod.yml`'s own
-# `environment:` block, which overrides `.env` on purpose; and two variables that
-# are not application settings at all moved into `.env`, because compose reads
-# them to name the Postgres password and the domain Caddy certifies. The three
-# sets below are that arrangement written down.
+# Only lists what an operator has to decide, no more and no less.
 
 ENV_EXAMPLE = Path(__file__).resolve().parent.parent / ".env.example"
 PROD_COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.prod.yml"
 
-# `.env` carries two different kinds of thing, and this file knew about only one
-# of them — which is how it came to disagree with a deployment that had moved on.
 
-# Settings of `Settings` an operator must decide on. Adding one here without
-# adding it to `.env.example` fails the test, and vice versa — that is the point.
+# Settings the operator must set. Must match `.env.example`.
 ESSENTIAL = {
-    # No safe default: the app refuses to boot on the shipped values.
+    # No safe default.
     "secret_key",
     "admin_username",
     "admin_password",
@@ -160,34 +138,21 @@ ESSENTIAL = {
     "min_bucket_volume",
     "min_cell_count",
     "export_time_resolution",
-    # The host is legally required of any French site open to the public; the
-    # publisher's own identity is not, for a non-professional publisher, and is
-    # deliberately not a setting at all. The contact address is optional.
+    # Legal notices (the host is mandatory).
     "legal_contact_email",
     "legal_host",
-    # The switch for an optional feature; absent, the feature is simply gone.
+    # Optional feature.
     "anthropic_api_key",
 }
 
-# And the variables `.env` carries that are **not** application settings at all:
-# `docker compose` reads them itself, to name the Postgres password and the
-# domain Caddy obtains a certificate for. They belong in the example because
-# `up` refuses to start without them, and nowhere near `Settings` because the
-# app has never heard of them.
+# Variables read by docker compose, not by the app.
 DEPLOYMENT_ONLY = {
     "site_domain",
     "postgres_password",
 }
 
-# Settings the *stack* imposes, and which must therefore stay out of the example.
-#
-# `docker-compose.prod.yml` sets these in its `environment:` block, which wins
-# over `env_file` — deliberately: they are properties of that deployment rather
-# than preferences, and the compose file says so. Documenting them in `.env`
-# would invite an operator to set `COOKIE_SECURE=false` there and watch it change
-# nothing, which is a worse failure than not mentioning them. All four also have
-# a working default in `Settings`, so the rule below already covers them; this
-# names them so that the day the stack stops imposing one, something says so.
+# Set by docker-compose.prod.yml's `environment:` (which overrides .env), so
+# they must not be in the example.
 IMPOSED_BY_THE_STACK = {
     "ENVIRONMENT",
     "COOKIE_SECURE",
@@ -205,21 +170,17 @@ def _documented() -> set[str]:
 
 
 def test_every_essential_setting_really_exists():
-    """Catches a setting renamed or removed without updating this list."""
+    """Every setting listed here exists."""
     unknown = ESSENTIAL - set(Settings.model_fields)
     assert not unknown, f"listés comme essentiels mais absents de Settings : {sorted(unknown)}"
 
 
 def test_the_deployment_variables_are_not_application_settings():
-    """The other direction, and the one that keeps the split honest.
-
-    A real setting parked in `DEPLOYMENT_ONLY` would escape every rule above: not
-    checked against `Settings`, not required to have a default, silently exempt.
-    """
+    """DEPLOYMENT_ONLY variables aren't app settings."""
     disguised = DEPLOYMENT_ONLY & set(Settings.model_fields)
     assert not disguised, (
         "ce sont des réglages de l'application : ils relèvent d'ESSENTIAL, "
-        f"pas de DEPLOYMENT_ONLY — {sorted(disguised)}"
+        f"pas de DEPLOYMENT_ONLY : {sorted(disguised)}"
     )
 
 
@@ -229,26 +190,16 @@ def test_the_example_documents_everything_it_should():
 
 
 def test_the_example_documents_nothing_else():
-    """Anything with a working default belongs in app/config.py, not here.
-
-    This is the half that keeps the file short. Without it, every new setting
-    gets added "for completeness" and the file drifts back to being unreadable.
-    """
+    """`.env.example` contains nothing else."""
     extra = _documented() - EXPECTED
     assert not extra, (
         "ces réglages ont une valeur par défaut qui marche : documentez-les dans "
-        f"app/config.py plutôt que dans .env.example — {sorted(extra)}"
+        f"app/config.py plutôt que dans .env.example : {sorted(extra)}"
     )
 
 
 def test_the_settings_the_stack_imposes_stay_out_of_the_example():
-    """Why four settings with no safe default are nevertheless absent from `.env`.
-
-    They are absent *because* the production compose file sets them itself. That
-    is a fact about another file, so it is read rather than assumed: if one of
-    them is ever dropped from `environment:`, an operator has to be told about it
-    in `.env.example`, and this is what will say so.
-    """
+    """Settings imposed by the prod compose file are really set there."""
     compose = PROD_COMPOSE.read_text(encoding="utf-8")
     for name in sorted(IMPOSED_BY_THE_STACK):
         assert re.search(rf"^\s+{name}:", compose, re.MULTILINE), (
@@ -289,11 +240,7 @@ def test_no_fallback_is_the_ordinary_case():
 
 
 def test_production_refuses_a_placeholder_among_the_fallbacks():
-    """A fallback is honoured exactly as the current key is.
-
-    A weak one there is a forgeable key in production, just one nobody is
-    looking at.
-    """
+    """A placeholder among the fallback keys is refused too."""
     settings = Settings(
         environment="production",
         secret_key="x" * 40,

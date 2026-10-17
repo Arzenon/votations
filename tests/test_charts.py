@@ -6,7 +6,7 @@ import re
 
 from app.config import get_settings
 
-# --- Courbe d'évolution -------------------------------------------------------
+# --- Evolution curve -------------------------------------------------------------
 
 
 def _bucket(label, **counts):
@@ -17,11 +17,11 @@ def _bucket(label, **counts):
 
 
 def test_the_chart_stays_inside_its_plot_area():
-    """A smoothed curve must never draw a day below zero votes."""
+    """The smoothed curve never goes below zero."""
 
     from app.charts import build_evolution_chart
 
-    # A spike between two quiet days is what makes a naive spline overshoot.
+    # A spike between two quiet days makes a naive spline overshoot.
     chart = build_evolution_chart(
         [
             _bucket("2026-05-01", **{"for": 1}),
@@ -46,7 +46,7 @@ def test_the_chart_axis_stops_on_a_round_number():
 
 
 def test_the_chart_thins_its_date_labels():
-    """Whatever the span, the dates must stay far enough apart to be read."""
+    """Date labels are thinned out."""
     from app.charts import build_evolution_chart
 
     for days in (2, 7, 20, 30, 45, 120):
@@ -79,11 +79,11 @@ def test_the_results_page_draws_the_curve(client, open_law, db_session, monkeypa
     assert "<svg" in page
     assert 'role="img"' in page
     assert "Évolution des votes, par jour" in page
-    # The figures stay available underneath, not replaced by the picture.
+    # The data table is still there.
     assert "Voir les chiffres jour par jour" in page
 
 
-# --- Un scrutin d'un an --------------------------------------------------------
+# --- A year-long vote ----------------------------------------------------------
 
 
 def _days(n):
@@ -101,12 +101,7 @@ def _days(n):
 
 
 def test_dots_are_dropped_once_they_stop_marking_anything():
-    """`r="3"` circles closer together than their own diameter merge into a band.
-
-    The guard is on the number of *drawn points*, not on the number of days, so
-    it now bites in a narrower range than it used to: past three months the days
-    are grouped (see below) and the points thin out on their own.
-    """
+    """Dots are dropped when there are too many points."""
     from app.charts import MAX_DOTS, build_evolution_chart
 
     short = build_evolution_chart(_days(MAX_DOTS))
@@ -118,14 +113,7 @@ def test_dots_are_dropped_once_they_stop_marking_anything():
 
 
 def test_a_long_votation_is_drawn_week_by_week():
-    """At launch every votation runs a year, and 365 points is not a curve.
-
-    Spaced 1.8 px apart on a 720-unit canvas the three series overlap into a
-    smear, and the figure costs 90 kB of path data on a page this site promises
-    to serve over slow connections. Grouping the days is what makes it legible
-    again rather than merely smaller — a year drawn by week is 53 points, far
-    enough apart that they get their dots back.
-    """
+    """A year-long vote is drawn week by week (53 points instead of 365)."""
     from app.charts import MAX_POINTS, build_evolution_chart
 
     days = _days(365)
@@ -136,12 +124,11 @@ def test_a_long_votation_is_drawn_week_by_week():
     assert all(s.line and s.area for s in chart.series)
     assert len(chart.x_ticks) <= 7
 
-    # Grouping moves nothing: a week's point is the sum of its days.
+    # A week's point is the sum of its days.
     for serie in chart.series:
         assert serie.total == sum(b.counts[serie.key] for b in days), serie.key
 
-    # And the description says which unit it is describing, since the table
-    # underneath the figure is still day by day.
+    # The description names the unit, since the table stays daily.
     assert "Votes par semaine" in chart.description
     assert "en une semaine" in chart.description
 
@@ -149,23 +136,18 @@ def test_a_long_votation_is_drawn_week_by_week():
 
 
 def test_the_curve_only_starts_grouping_past_three_months():
-    """One point per day for as long as that is still readable, and no sooner."""
+    """Grouping only starts after three months."""
     from app.charts import build_evolution_chart
 
     assert build_evolution_chart(_days(90)).period.days == 1
     assert build_evolution_chart(_days(91)).period.days == 7
-    # And it keeps widening rather than letting the point count run away.
+    # Then it keeps widening.
     assert build_evolution_chart(_days(1000)).period.days == 14
     assert build_evolution_chart(_days(3000)).period.days == 28
 
 
 def test_a_one_day_mobilisation_still_shows_as_a_spike():
-    """The whole reason this curve exists, and the reason grouping sums.
-
-    An average would dissolve a single loud day into the quiet ones around it,
-    which is exactly the reading « une mobilisation organisée laisse un pic »
-    depends on. A sum carries it into the point that contains it.
-    """
+    """A one-day spike still shows when grouped (sum, not average)."""
     from app.charts import build_evolution_chart
 
     days = _days(365)
@@ -174,27 +156,19 @@ def test_a_one_day_mobilisation_still_shows_as_a_spike():
     days[200].counts = {"for": 500, "against": 1, "abstain": 0}
 
     pour = next(s for s in build_evolution_chart(days).series if s.key == "for")
-    # A quiet week sums to 7; the week holding the spike must still tower over it.
+    # A quiet week sums to 7; the spike week must stand out.
     assert pour.peak >= 500
 
 
 def test_the_axis_never_draws_more_labels_than_it_promises():
-    """`MAX_X_LABELS` said seven and a year-long votation drew eight.
-
-    The stride divided the number of days rather than the gaps between labels, so
-    a full set could still have the final day appended on top of it.
-    """
+    """The axis never has more than MAX_X_LABELS labels."""
     from app.charts import MAX_X_LABELS, _short_date, build_evolution_chart
 
     for n in (1, 2, 3, 7, 8, 30, 60, 61, 90, 180, 365, 400, 733):
         days = _days(n)
         chart = build_evolution_chart(days)
         assert len(chart.x_ticks) <= MAX_X_LABELS, f"{n} jours -> {len(chart.x_ticks)} étiquettes"
-        # The last day is always named: it is where the curve stops, and a reader
-        # cannot date the end of the votation from anything else on the figure.
-        # True whatever the grouping — a point is labelled with the day its period
-        # opens, so past three months this is the one tick that has to say
-        # otherwise, or a votation closing mid-week would be dated days early.
+        # The last label is the actual last day, even when grouped by week.
         assert chart.x_ticks[-1][1] == _short_date(days[-1].label), f"{n} jours"
         # And the first, or the axis starts nowhere.
         assert chart.x_ticks[0][1] == _short_date(days[0].label), f"{n} jours"
@@ -204,13 +178,7 @@ def test_the_axis_never_draws_more_labels_than_it_promises():
 
 
 def test_the_day_by_day_table_is_dated_in_french(client, open_law, monkeypatch):
-    """The buckets carry an ISO label because the chart parses it back.
-
-    Printing that label straight put a third date format in one section — beside
-    an axis in jj/mm and a history table in jj/mm/aaaa — on a site that routes
-    every other date through `app.labels` precisely so no machine-readable string
-    reaches a French page.
-    """
+    """The daily table shows French dates, not ISO."""
     from datetime import UTC, datetime
 
     from app.config import display_zone
@@ -222,17 +190,13 @@ def test_the_day_by_day_table_is_dated_in_french(client, open_law, monkeypatch):
         client.cookies.clear()
 
     page = client.get(f"/loi/{open_law.slug}/resultats").text
-    # The day a voter would say they voted on, which is the zone the buckets are
-    # cut in — not the server's idea of today.
+    # Today in the display zone.
     today = datetime.now(UTC).astimezone(display_zone()).date()
 
     assert f'<th scope="row">{french_date(today)}</th>' in page, (
         "le tableau doit dater ses lignes en français"
     )
-    # Scoped to the row header, not to the document: the page legitimately
-    # carries ISO dates elsewhere — `temporalCoverage` in the structured data is
-    # one, and schema.org wants exactly that form there. What must not be ISO is
-    # the cell a reader looks at.
+    # Only check the row header: the JSON-LD has ISO dates on purpose.
     assert f'<th scope="row">{today.isoformat()}' not in page, (
         "la forme ISO ne doit pas être ce que le tableau affiche"
     )

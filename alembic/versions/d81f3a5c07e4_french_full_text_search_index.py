@@ -15,14 +15,8 @@ down_revision: str | None = 'c5a71e4b9d02'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# Must stay equivalent to `app.models.law.SEARCH_VECTOR_SQL`, which is where the
-# expression now lives — beside the table it indexes. If the two drift the planner
-# stops using this index and every search falls back to a sequential scan.
-#
-# `coalesce` and `||`, not `concat_ws`: an index expression must be IMMUTABLE and
-# `concat_ws` is not. Column names are unqualified here because that is the form
-# CREATE INDEX reads most naturally; the query qualifies them, which matches all
-# the same since Postgres compares parsed expressions rather than strings.
+# Must match `app.models.law.SEARCH_VECTOR_SQL`, otherwise the index isn't used.
+# coalesce and || because concat_ws isn't IMMUTABLE.
 _VECTOR = (
     "to_tsvector('french'::regconfig, "
     "coalesce(title, '') || ' ' || coalesce(summary_text, ''))"
@@ -30,15 +24,12 @@ _VECTOR = (
 
 
 def upgrade() -> None:
-    # A GIN index on the expression rather than a stored tsvector column: the
-    # column would need a trigger or a generated column to stay in step, and this
-    # keeps the definition in exactly one place per side (here, and in the query).
+    # Expression index rather than a stored tsvector column, which would need a
+    # trigger or a generated column.
     op.execute(f"CREATE INDEX ix_laws_fts ON laws USING gin ({_VECTOR})")
 
-    # The trigram indexes from the previous revision covered `title` and
-    # `summary_text` for the old substring search. Full-text replaces that for the
-    # prose; only `official_ref` is still matched with ILIKE, so the other two are
-    # now dead weight on every insert and update.
+    # Full-text search replaces ILIKE on title and summary_text, so their
+    # trigram indexes are no longer needed.
     conn = op.get_bind()
     for column in ("title", "summary_text"):
         conn.execute(sa.text(f"DROP INDEX IF EXISTS ix_laws_{column}_trgm"))
@@ -47,8 +38,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_laws_fts")
 
-    # Restore the trigram indexes, if the extension is available — it may not be,
-    # in which case search still worked before and will work again, unindexed.
+    # Restore the trigram indexes if pg_trgm is available.
     conn = op.get_bind()
     has_trgm = conn.execute(
         sa.text("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")

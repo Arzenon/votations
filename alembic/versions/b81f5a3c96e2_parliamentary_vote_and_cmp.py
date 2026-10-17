@@ -1,29 +1,11 @@
-"""how the Assemblée settled the text, and whether a CMP was needed
+"""Assemblée vote counts and whether a CMP was convened
 
-« Adoptée par 357 voix contre 177 » and « adoptée par 269 voix contre 0 » do not
-say the same thing to somebody about to give their own opinion, and the site said
-neither. Both are published as open data and neither was being read.
+The counts come from the scrutins export (94 of 147 laws in the 17th
+legislature have one). The CMP flag comes from the dossiers export. Null when
+there was no public scrutin (about a third of laws).
 
-Two sources, one already in hand:
-
-* **the counts** come from the scrutins export, joined on the vote reference a
-  dossier's decision act carries. Measured over the 17th legislature: 94 of 147
-  promulgated laws have a usable count, 29 of them adopted without a single vote
-  against;
-* **the commission mixte paritaire** is in the dossiers file the import already
-  downloads every day, so it costs nothing. 56 of 147, and it means the two
-  chambers did not agree on their own - a fact about how contested a text was,
-  and one nobody has to characterise.
-
-Null throughout is a real state, not a gap: a third of these laws were adopted
-without a public scrutin, and the page says so.
-
-The columns sit on both tables for the same reason `promulgated_on` does - the
-daily job refreshes the staged row, and the values are copied onto the votation
-when an administrator creates one. They are deliberately absent from the
-administration form and from `TRACKED_FIELDS`: they are Parliament's record, not
-presentation somebody writes, and an administrator editing a vote count is not an
-operation worth making easy.
+Added to both tables: refreshed on the staged row and copied onto the law. Not
+editable in the admin and not tracked in revisions.
 
 Revision ID: b81f5a3c96e2
 Revises: 9e3c04a7d1f6

@@ -17,18 +17,13 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # `titreLoi` is a sentence fragment — « visant à renforcer … » — kept beside
-    # the readable dossier title it duplicates. Nothing has ever read it: no page
-    # renders it, no query filters on it, and the presentation of a law is
-    # written by hand from `title`, `law_code` and the official text. The daily
-    # import refreshed it on every run regardless.
+    # titreLoi ("visant à renforcer ...") duplicates the dossier title and was
+    # never read.
     op.drop_column('imported_laws', 'law_title')
 
 
 def downgrade() -> None:
-    # Restored empty rather than repopulated: the value is one field of one
-    # record in an export that is refetched daily, so the next import run would
-    # have filled it in anyway if anything still wanted it.
+    # Restored empty; the next import would fill it.
     op.add_column(
         'imported_laws',
         sa.Column('law_title', sa.Text(), nullable=False, server_default=''),

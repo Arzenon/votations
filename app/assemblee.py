@@ -1,18 +1,9 @@
-"""Discover newly promulgated laws from the Assemblée Nationale open data.
+"""Find newly promulgated laws in the Assemblée nationale open data.
 
-Downloads the ``Dossiers_Legislatifs`` export (Licence Ouverte, no
-authentication) and extracts every dossier that reached promulgation — i.e. the
-text is now a law of the Republic, with an official number and a Journal
-Officiel reference.
-
-Design notes:
-- The HTTP getter is injectable so the parsing is unit-testable offline.
-- Any failure raises :class:`AssembleeFetchError`; callers leave the cache intact.
-- The export is a mechanical XML→JSON conversion, so single-element collections
-  collapse from a list to a bare object. Every collection is normalised through
-  :func:`~app.opendata.as_list` and the acts are walked recursively — never indexed.
-- The legislature number is part of the export URL and changes once per
-  legislature, which is why it lives in settings rather than in this module.
+Downloads the ``Dossiers_Legislatifs`` export and keeps the dossiers that
+reached promulgation. Any failure raises `AssembleeFetchError` and existing
+rows are kept. The export is converted from XML, so collections go through
+`as_list` and acts are walked recursively.
 """
 
 from __future__ import annotations
@@ -30,47 +21,33 @@ from app.opendata import Getter, as_list, getter
 
 log = get_logger("assemblee")
 
-# Entries of interest inside the archive; the export also ships a `json/document/`
-# tree of bill/report notices, which carries no promulgation information.
+# The archive also has a json/document/ tree, not needed here.
 DOSSIER_PREFIX = "json/dossierParlementaire/"
 
-# The act that records promulgation and carries the law number and JO reference.
-# A sibling "PROM" act exists but its dateActe is always null.
+# Promulgation act, with the law number and JO reference. (The "PROM" act
+# always has a null dateActe.)
 PROMULGATION_ACTE = "PROM-PUB"
 
-# A decision act: the chamber settling what it does with the text. Their vote
-# references are the ones worth reading a count from.
-#
-# **Matched on the suffix, and that is the guard that matters.** The same dossier
-# also carries `…-MOTION-VOTE` acts - the vote on a motion de rejet préalable -
-# whose polarity is inverted: « pour 190 » there means a hundred and ninety votes
-# to throw the text out. Collecting those and reading them as adoption figures
-# would print the exact opposite of what happened, on the one number a reader has
-# no way of checking. Over this legislature there are eleven of them.
+# Decision acts, whose votes are on the text itself. Matching the suffix
+# excludes "-MOTION-VOTE" acts, where "pour" means voting to reject the text.
 DECISION_SUFFIX = "-DEC"
 
-# The act recording that a commission mixte paritaire was convened. It means the
-# two chambers did not agree on their own, which is a fact about how contested a
-# text was and one the dossier already carries - no second download.
+# A commission mixte paritaire was convened (the chambers disagreed).
 CMP_ACTE = "CMP"
 
-# Acts recording a sitting where the text was discussed. Each carries the sitting
-# (reunionRef) and the agenda item within it (odjRef) — together they identify
-# which part of which compte rendu concerns this law.
+# Sitting where the text was discussed: reunionRef + odjRef identify the part
+# of the compte rendu about this law.
 SEANCE_ACTE = "AN1-DEBATS-SEANCE"
 
 AN_DOSSIER_URL_TEMPLATE = "https://www.assemblee-nationale.fr/dyn/{legislature}/dossiers/{uid}"
 
-# The largest single dossier worth reading, uncompressed. Real ones are tens of
-# kilobytes; a `zipfile` member declares its own uncompressed size, and reading
-# one without looking first is how a few kilobytes of archive become gigabytes of
-# memory. The same rule the Journal Officiel reader already applies to its tar
-# members — see `app.legifrance.MAX_MEMBER_BYTES`.
+# Max uncompressed size of a dossier (real ones are tens of kB). Protects
+# against zip bombs.
 MAX_DOSSIER_BYTES = 32 * 1024 * 1024
 
 
 class AssembleeFetchError(RuntimeError):
-    """Raised on any network/HTTP/archive/parse problem so callers keep old rows."""
+    """Network, archive or parse failure. Callers keep the existing rows."""
 
 
 @dataclass
@@ -79,46 +56,32 @@ class PromulgatedLaw:
 
     dossier_uid: str
     legislature: str
-    title: str  # titreDossier.titre — the readable dossier title
+    title: str  # titreDossier.titre
     law_code: str  # "2026-532"
     procedure: str  # procedureParlementaire.libelle
     promulgated_on: date
     jo_date: date | None
     jo_number: str | None
-    nor: str | None  # NOR reference — the join key to Légifrance
+    nor: str | None  # key to Légifrance
     legifrance_url: str | None
     dossier_url: str
-    # [{"reunion_ref": ..., "odj_ref": ...}] — the sittings where the text was
-    # debated, in chronological order. Empty for a text adopted without debate.
+    # [{"reunion_ref": ..., "odj_ref": ...}], oldest first. Empty if no debate.
     seances: list[dict] = field(default_factory=list)
-    # Every recorded vote this dossier's decision acts refer to, oldest first
-    # across all readings. Not stored: it is what `app.scrutins.final_vote` reads
-    # to pick the one that adopted the text, and only the counts are kept.
+    # Votes referenced by decision acts, oldest first. Not stored:
+    # `app.scrutins.final_vote` uses them to find the final vote.
     vote_refs: list[str] = field(default_factory=list)
-    # Whether the two chambers needed a commission mixte paritaire.
     cmp_convened: bool = False
-    # The Assemblée's final vote on the whole text, once resolved against the
-    # scrutins export. None throughout when no public scrutin was held - which is
-    # a third of promulgated laws, and a state the page states rather than hides.
+    # Final vote on the whole text, from the scrutins export. None when there
+    # was no public scrutin.
     an_vote_for: int | None = None
     an_vote_against: int | None = None
     an_vote_abstain: int | None = None
-    # Whether the scrutins export was consulted for this text. False after a
-    # failed download, which is what stops the page claiming there was no vote
-    # when the truth is that nobody looked.
+    # False if the scrutins download failed, so we don't claim there was no vote.
     an_vote_checked: bool = False
 
 
-# A generous timeout: the archive is ~10 MB and served from a public portal.
-#
-# The size ceiling exists for the same reason as the per-dossier one above — the
-# download used to be the one step with nothing bounding it — and is sized against
-# the container rather than only against the source. A download peaks at roughly
-# twice this figure (see `app.opendata.fetch`), and the blob is copied again into
-# a `BytesIO` below, so the job holds ~3× the cap at its worst moment inside a
-# 1 GB limit. At 256 MB, which is what this used to be, the ceiling was set above
-# the point where the job is killed for reaching it, which makes it no ceiling at
-# all. Six times the largest real export is ample.
+# The archive is about 10 MB. The job can use about 3x this cap in memory
+# (see `app.opendata.fetch`), within the container's 1 GB limit.
 MAX_EXPORT_BYTES = 64 * 1024 * 1024
 _default_getter = getter(timeout=120.0, max_bytes=MAX_EXPORT_BYTES, error=AssembleeFetchError)
 
@@ -129,51 +92,32 @@ def _iter_actes(node: object) -> Iterator[dict]:
         if not isinstance(acte, dict):
             continue
         yield acte
-        # `actesLegislatifs` may be present but null, so coalesce before indexing.
+        # actesLegislatifs can be null.
         yield from _iter_actes((acte.get("actesLegislatifs") or {}).get("acteLegislatif"))
 
 
 @dataclass
 class _Actes:
-    """Everything one dossier's tree of actes has to say, read in a single pass.
+    """What we read from a dossier's acts, collected in a single pass."""
 
-    There were four readers here — promulgation, sittings, vote references,
-    commission mixte paritaire — and each walked the whole tree from the top,
-    three of them repeating the same ``(dossier.get("actesLegislatifs") or
-    {}).get("acteLegislatif")`` to get there. Four copies of one accessor is four
-    places to get the null-coalescing wrong, and a fifth thing worth reading off
-    an acte would have been a fifth walk by default.
-
-    One pass, so a promulgated dossier is walked once instead of four times.
-    """
-
-    #: The PROM-PUB acte, or None — which is what says this dossier never became
-    #: a law and is the first thing every caller checks.
+    # The PROM-PUB act; None if the dossier never became law.
     promulgation: dict | None = None
-    #: Sittings where the text was discussed, oldest first, without duplicates.
+    # Sittings, oldest first, deduplicated.
     seances: list[dict] = field(default_factory=list)
-    #: Every vote a decision act refers to, in export order — which is
-    #: chronological, and is what lets `app.scrutins.final_vote` take the *last*
-    #: adoption: a law read three times has three recorded votes and only the
-    #: final one settles it.
-    #:
-    #: Only `…-DEC` acts. The dossier also carries `…-MOTION-VOTE`, whose figures
-    #: are a vote on a motion de rejet and therefore inverted — see
-    #: `DECISION_SUFFIX`.
+    # Votes from "-DEC" acts only (see DECISION_SUFFIX), in chronological order.
     vote_refs: list[str] = field(default_factory=list)
-    #: Whether a commission mixte paritaire was convened on this text.
     cmp_convened: bool = False
 
 
 def _read_actes(dossier: dict) -> _Actes:
-    """Walk this dossier's actes once, collecting everything read off them."""
+    """Walk the dossier's acts once."""
     out = _Actes()
     seen: set[tuple[str, str]] = set()
     root = (dossier.get("actesLegislatifs") or {}).get("acteLegislatif")
 
     for acte in _iter_actes(root):
         code = acte.get("codeActe") or ""
-        # The first PROM-PUB wins, as the previous reader's early return did.
+        # The first PROM-PUB wins.
         if code == PROMULGATION_ACTE and out.promulgation is None:
             out.promulgation = acte
         elif code == CMP_ACTE:
@@ -195,7 +139,7 @@ def _read_actes(dossier: dict) -> _Actes:
 
 
 def _parse_date(value: str | None) -> date | None:
-    """Accept both the datetime form and the offset-only date form of the export."""
+    """Parse the export's dates (with or without a time)."""
     if not value:
         return None
     try:
@@ -205,12 +149,7 @@ def _parse_date(value: str | None) -> date | None:
 
 
 def _build(dossier: dict, actes: _Actes) -> PromulgatedLaw | None:
-    """Map one dossier and its actes to a law, or None if it is not one.
-
-    None covers both « this dossier never reached promulgation » — by far the
-    commonest case, 2 900 of the 3 047 in a legislature — and « it did, but the
-    acte is missing what identifies the law ».
-    """
+    """Build a law from a dossier, or None if not promulgated or incomplete."""
     acte = actes.promulgation
     if acte is None:
         return None
@@ -241,12 +180,8 @@ def _build(dossier: dict, actes: _Actes) -> PromulgatedLaw | None:
 
 
 def _import_floor(settings) -> date | None:
-    """Oldest promulgation the import will accept.
-
-    A rolling window by default (``AN_IMPORT_SINCE_DAYS``) so the job does not
-    quietly accumulate a growing backlog the way a hard-coded date does; set
-    ``AN_IMPORT_SINCE`` to pin an absolute date, or clear both to take everything.
-    """
+    """Oldest promulgation date imported (``AN_IMPORT_SINCE`` or
+    ``AN_IMPORT_SINCE_DAYS``), or None for everything."""
     pinned = _parse_date(settings.an_import_since)
     if pinned:
         return pinned
@@ -268,8 +203,6 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
     since = _import_floor(settings)
     laws: list[PromulgatedLaw] = []
 
-    # Closed on the way out: the archive holds the whole 10 MB blob open, and this
-    # runs in a container with a memory limit precisely because it does.
     try:
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
             entries = [
@@ -282,22 +215,10 @@ def fetch_promulgated_laws(get: Getter | None = None) -> list[PromulgatedLaw]:
 
             for info in entries:
                 if info.file_size > MAX_DOSSIER_BYTES:
-                    # Read the declared size, not the member: no real dossier is
-                    # this large, so this is a malformed or hostile archive.
+                    # Malformed or hostile archive.
                     continue
-                # One malformed dossier must not abort the whole import — and
-                # until this covered the *reading* as well as the decoding, it
-                # did not say so. `json.loads` was inside and `_build` was not,
-                # while `_build` is where the shapes actually vary: this is a
-                # mechanical XML→JSON conversion, so a collection holding one
-                # element arrives as a bare object (which is why `as_list` exists)
-                # and a field the source writes as text can arrive as a mapping.
-                # `_parse_date` on a dict raises TypeError, `.get` on a list
-                # raises AttributeError, and either one threw away the other
-                # three thousand dossiers on its way out.
-                #
-                # `RecursionError` for the same reason one line down: `json.loads`
-                # raises it, not ValueError, on a deeply nested document.
+                # Skip a malformed dossier rather than abort the import. Fields
+                # can have unexpected types after the XML conversion.
                 try:
                     dossier = json.loads(archive.read(info))["dossierParlementaire"]
                     law = _build(dossier, _read_actes(dossier))

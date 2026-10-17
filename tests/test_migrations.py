@@ -1,10 +1,4 @@
-"""The migrations must build exactly the schema the models describe.
-
-The suite migrates the test database rather than calling ``create_all``, so a
-missing migration now breaks every test rather than only the production upgrade.
-This file closes the other half: that the migrated schema and the model metadata
-actually agree, and that the chain runs both ways.
-"""
+"""The migrations build the same schema as the models, and run both ways."""
 
 from __future__ import annotations
 
@@ -20,7 +14,7 @@ from tests.conftest import TEST_DATABASE_URL, alembic_config
 
 
 def test_the_migrated_schema_matches_the_models(engine):
-    """Catch drift the moment a model changes without a migration."""
+    """The migrated schema matches the models."""
     with engine.connect() as connection:
         context = MigrationContext.configure(
             connection,
@@ -35,7 +29,7 @@ def test_the_migrated_schema_matches_the_models(engine):
 
 
 def test_there_is_exactly_one_head(engine):
-    """Two heads mean two branches, and `upgrade head` becomes ambiguous."""
+    """There's a single head."""
     script = ScriptDirectory.from_config(alembic_config(TEST_DATABASE_URL))
     assert len(script.get_heads()) == 1, script.get_heads()
 
@@ -48,24 +42,13 @@ def test_every_revision_is_reachable_from_base(engine):
 
 
 def test_the_unused_voter_token_index_is_gone(engine):
-    """`voter_token` is only ever read with `law_id`, which the unique key covers."""
+    """There's no separate index on voter_token."""
     indexes = {ix["name"] for ix in inspect(engine).get_indexes("votes")}
     assert "ix_votes_voter_token" not in indexes
 
 
 def test_the_profiled_votes_index_is_partial(engine):
-    """It exists to be small, and a full index on `law_id` would not be.
-
-    `refresh_snapshot` counts a law's profiled votes on every ballot until the
-    law takes its first snapshot — which needs MIN_BUCKET_VOLUME profiled votes
-    and, the profile being optional, may never happen. Answering that from an
-    index over *every* vote on the law is a full scan on the busiest write in the
-    application; this index holds only the rows it counts.
-
-    Read from `pg_indexes` rather than from the reflected metadata, because what
-    matters is the predicate Postgres actually stored — that is the thing the
-    planner has to prove the query implies.
-    """
+    """ix_votes_law_profiled is partial (read from pg_indexes)."""
     from sqlalchemy import text
 
     with engine.connect() as connection:
@@ -78,14 +61,7 @@ def test_the_profiled_votes_index_is_partial(engine):
 
 
 def test_counting_profiled_votes_can_use_that_index(engine):
-    """The predicate and the query have to be spelled the same way.
-
-    Postgres applies a partial index only where it can *prove* the WHERE implies
-    the index predicate, and it cannot prove that of `IS true` — the same lesson
-    `ix_laws_home` and `laws._published` already carry, and the reason Alembic
-    cannot catch this one: it compares an index on its columns and its
-    uniqueness, never on its `where`.
-    """
+    """count_profiled uses the partial index (same predicate as the query)."""
     from sqlalchemy import func, select
     from sqlalchemy.dialects import postgresql
 
@@ -102,18 +78,18 @@ def test_counting_profiled_votes_can_use_that_index(engine):
 
 
 def test_a_dossier_cannot_claim_two_votations(engine):
-    """`create_law` refuses it, and `scripts.content` had no way to know that."""
+    """A dossier can't be linked to two laws."""
     names = {c["name"] for c in inspect(engine).get_unique_constraints("imported_laws")}
     assert "uq_imported_law_law_id" in names
 
 
 def test_the_chain_downgrades_and_upgrades_again(engine):
-    """A migration you cannot undo is a migration you cannot deploy carefully."""
+    """All migrations downgrade and upgrade again."""
     config = alembic_config(TEST_DATABASE_URL)
     try:
         command.downgrade(config, "base")
         command.upgrade(config, "head")
-    except Exception as exc:  # pragma: no cover - the assertion is the message
+    except Exception as exc:  # pragma: no cover
         pytest.fail(f"la chaîne de migrations ne fait pas l'aller-retour : {exc}")
 
     with engine.connect() as connection:
@@ -128,15 +104,9 @@ def test_the_chain_downgrades_and_upgrades_again(engine):
 
 
 def test_conditionally_created_indexes_are_not_compared():
-    """Both hand-written indexes are excluded from autogenerate, for two reasons.
-
-    `ix_laws_fts` is a functional index Alembic cannot compare; the trigram index
-    exists only where `pg_trgm` could be installed. Comparing either made the
-    drift check report a difference on a schema that was perfectly correct — and
-    a drift check that cries wolf is one nobody reads.
-    """
+    """The two hand-written indexes are excluded from the drift check."""
     for name in ("ix_laws_fts", "ix_laws_official_ref_trgm"):
         assert not include_object(None, name, "index", True, None)
-    # Anything else is still compared, or the check would protect nothing.
+    # Other indexes are still compared.
     assert include_object(None, "ix_laws_created_at", "index", True, None)
     assert include_object(None, "laws", "table", True, None)

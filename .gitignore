@@ -9,6 +9,7 @@ venv/
 *.egg-info/
 build/
 dist/
+.idea/
 
 # Les instantanés de contenu, pas le dossier qui les reçoit.
 exports/*

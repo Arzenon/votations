@@ -11,9 +11,7 @@
   {% endif %}
 </p>
 
-{# The import job runs in its own container and retries forever, so a source that
-   moves (the export URL carries the legislature number) would otherwise fail in
-   silence. Say so here rather than nowhere. #}
+{# Warn when the import has stopped (it would otherwise fail silently). #}
 {% if import_is_stale %}
 <p class="disclaimer" role="status">
   <strong>Import automatique en retard.</strong>
@@ -37,10 +35,7 @@
     {% for law in laws %}
     {% set state = law.status() %}
     <tr>
-      {# A draft has no public URL — `/loi/<slug>` answers 404 for anything not
-         published, by design — so linking every title there made the title of
-         every draft a dead link. Send those to the preview instead, which is the
-         page the administrator wanted anyway. #}
+      {# Drafts link to the preview (their public URL is a 404). #}
       <td>
         {% if law.is_public %}
         <a href="/loi/{{ law.slug }}">{{ law.title }}</a>
@@ -50,8 +45,7 @@
         {% endif %}
       </td>
       <td><span class="status status-{{ state }}">{{ state | law_status }}</span></td>
-      {# The form takes and shows Paris time; `strftime` on the stored instant
-             showed UTC, so a vote entered to close at 20 h read back as 18 h here. #}
+      {# In Paris time, like the form. #}
       <td>{% if law.closes_at %}{{ law.closes_at | french_datetime }}{% else %}-{% endif %}</td>
       <td>
         {{ tallies[law.id].total }}
@@ -61,11 +55,9 @@
       </td>
       <td class="actions">
         <a href="/admin/lois/{{ law.id }}">Éditer</a>
-        {# Same 404 as the title link above: the export route refuses anything the
-           public may not see. A draft has no votes to export either. #}
+        {# No export link for drafts. #}
         {% if law.is_public %}<a href="/loi/{{ law.slug }}/export.csv">Export</a>{% endif %}
-        {# Archiving, not deleting, and via a page the server renders: this used
-           to destroy every vote on one click that JavaScript had to intercept. #}
+        {# Archives (doesn't delete), via a confirmation page. #}
         <a class="link-danger" href="/admin/lois/{{ law.id }}/archiver">Archiver…</a>
       </td>
     </tr>

@@ -1,10 +1,4 @@
-"""The shared fetcher every open-data source goes through.
-
-Four modules read government exports, and all four fetch bytes here. The parsing
-each of them does is tested against injected fixtures elsewhere; what is tested
-here is the one thing those tests cannot see, because they never reach the
-network: how much of a response this is willing to read.
-"""
+"""The shared fetcher used by all open data sources: size limits, and picking the scrutin."""
 
 from __future__ import annotations
 
@@ -23,11 +17,11 @@ from app.opendata import fetch, getter
 
 
 class _Boom(RuntimeError):
-    """Stands in for a source module's own exception class."""
+    """Stand-in for a source's exception class."""
 
 
 def _served(monkeypatch, response: httpx.Response) -> None:
-    """Answer every request with this response, through httpx's own transport."""
+    """Answer every request with this response, via httpx's mock transport."""
 
     def stream(method, url, **kwargs):
         kwargs.pop("follow_redirects", None)
@@ -43,19 +37,14 @@ def test_a_body_within_the_cap_comes_back_whole(monkeypatch):
 
 
 def test_an_oversized_body_is_refused_rather_than_read(monkeypatch):
-    """The failure this prevents is an OOM, not a parse error.
-
-    Both archive readers cap the members they unpack and then handed the download
-    itself no limit at all, so the only thing between a bad day upstream and the
-    host was a container memory limit.
-    """
+    """An oversized body is refused rather than read into memory."""
     _served(monkeypatch, httpx.Response(200, content=b"x" * 300_000))
     with pytest.raises(_Boom, match="trop volumineuse"):
         fetch("https://example.test/f", timeout=5, max_bytes=100_000, error=_Boom)
 
 
 def test_the_cap_is_measured_not_believed(monkeypatch):
-    """A `Content-Length` is a claim by the sender; the bytes are the fact."""
+    """The limit is checked on the actual bytes, not Content-Length."""
     _served(
         monkeypatch,
         httpx.Response(200, content=b"x" * 300_000, headers={"content-length": "10"}),
@@ -78,12 +67,7 @@ def test_a_built_getter_carries_the_cap(monkeypatch):
 
 
 def test_every_source_declares_a_ceiling():
-    """A source added without one would be the old behaviour, quietly restored.
-
-    `fetch` has no default for `max_bytes` precisely so that cannot happen by
-    omission; this pins that each source has in fact chosen a number, and that
-    each number is in the right order of magnitude for what that source serves.
-    """
+    """Each source has a size limit of the right order of magnitude."""
     ceilings = {
         # (module error class, ceiling, what the source actually sends)
         LegifranceFetchError: (MAX_ARCHIVE_BYTES, 8 * 1024 * 1024),
@@ -96,7 +80,7 @@ def test_every_source_declares_a_ceiling():
         assert ceiling <= 256 * 1024 * 1024, f"{error.__name__}: ceiling too high to bound anything"
 
 
-# --- Choisir le bon scrutin ----------------------------------------------------
+# --- Picking the right scrutin ------------------------------------------------
 
 
 def _scrutin(uid, sort="adopté", objet="l'ensemble du projet de loi.", pour=300, contre=100):
@@ -106,7 +90,7 @@ def _scrutin(uid, sort="adopté", objet="l'ensemble du projet de loi.", pour=300
 
 
 def test_the_last_adoption_is_the_one_that_settles_the_law():
-    """A law read three times has three recorded votes; only the final one counts."""
+    """The last adoption is the one that counts."""
     from app.scrutins import final_vote
 
     index = {
@@ -125,12 +109,7 @@ def test_a_vote_that_did_not_adopt_the_text_is_ignored():
 
 
 def test_a_vote_on_part_of_a_text_is_not_a_vote_on_the_text():
-    """Three lois de finances carry one, and one of them reads « l'ensemble de… ».
-
-    The Assemblée rejected « la première partie » in first reading and the law was
-    adopted later in commission mixte paritaire, so a check for « l'ensemble »
-    passes it straight through.
-    """
+    """A vote on part of a text doesn't count, even "l'ensemble de la première partie"."""
     from app.scrutins import final_vote
 
     partielle = _scrutin("p", objet="l'ensemble de la première partie du projet de loi de finances")
@@ -144,11 +123,11 @@ def test_a_law_with_no_recorded_vote_resolves_to_nothing():
     assert final_vote(["inconnu"], {}) is None
 
 
-# --- Lire l'archive des scrutins ----------------------------------------------
+# --- Reading the scrutins archive ---------------------------------------------
 
 
 def _scrutins_zip(entries: dict[str, str]) -> bytes:
-    """An in-memory copy of the scrutins export."""
+    """An in-memory scrutins export."""
     from app.scrutins import MEMBER
 
     buf = io.BytesIO()
@@ -178,13 +157,7 @@ def test_a_scrutin_is_read_out_of_the_archive_by_name():
 
 
 def test_a_scrutin_larger_than_the_cap_is_not_read():
-    """The same rule the dossiers and JO readers apply, in the third reader.
-
-    A zip member declares its own uncompressed size, and the download cap bounds
-    the *compressed* bytes only — so reading a member without looking first is how
-    a few kilobytes of archive become gigabytes of memory. This reader was the one
-    that did not look.
-    """
+    """A scrutin above the size cap isn't read (zip bomb)."""
     from app.scrutins import MAX_MEMBER_BYTES, fetch_votes
 
     blob = _scrutins_zip({"gros": "p" * (MAX_MEMBER_BYTES + 10)})

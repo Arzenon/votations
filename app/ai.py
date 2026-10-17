@@ -1,38 +1,15 @@
-"""AI-assisted first draft of a law's neutral presentation.
+"""AI-assisted first draft of a law's presentation.
 
-Two halves, and they work in opposite ways on purpose.
+`generate_draft` writes the two factual blocks ("Ce que dit la loi" and "Ce que
+ça change en pratique") from the Journal Officiel text.
 
-**The factual blocks are written.** Given the official text published at the
-Journal Officiel, :func:`generate_draft` produces a draft of the first two blocks
-of the charter's presentation structure:
+Arguments are quoted, not written: `select_arguments` gets the speeches from
+the sitting records (see `app.debates`), the model returns a speech id and a
+quote, and the quote is checked against that speech. Speaker, date and link
+come from our own data, never from the model.
 
-1. « Ce que dit la loi » — a factual summary of the official text.
-2. « Ce que ça change en pratique » — the concrete consequences, in plain French.
-
-**The argument blocks are not written — they are quoted.** Arguments have to be
-sourced and attributed, and asking a model to compose them would be asking it to
-invent, which is what the charter forbids. So :func:`select_arguments` makes
-invention mechanically impossible instead: it is given the speeches actually
-delivered in public sitting (see :mod:`app.debates`), the model returns the id of
-a speech and a span it claims to have copied from it, and the span is checked
-against that speech before it is kept. Attribution never comes from the model —
-speaker, date and link are copied from the record we fetched.
-
-This division is why the Journal Officiel alone is not enough: it carries no
-argumentative material at all, no exposé des motifs and no debates. The comptes
-rendus do.
-
-Design notes:
-- The client is injectable so the prompts and parsing are testable offline.
-- A draft is **stored** on the staged row that produced it
-  (:attr:`~app.models.imported_law.ImportedLaw.draft`), because generating one is
-  billable and reopening a form must not pay for it twice. Storing it publishes
-  nothing: it pre-fills a form that a person edits and validates, and only
-  « Enregistrer » writes a law.
-- Nothing here runs on its own. A draft happens when an administrator asks for
-  one, never on the daily import.
-- The input is measured before sending, so an outsized text is refused rather
-  than silently billed.
+Drafts only run when an admin asks, are stored to avoid paying twice, and only
+pre-fill a form. Inputs are measured before sending so huge texts are refused.
 """
 
 from __future__ import annotations
@@ -47,40 +24,24 @@ from app.config import get_settings
 from app.debates import Speech
 from app.legifrance import LawText
 
-if TYPE_CHECKING:  # the SDK is imported lazily below, so the feature stays optional
+if TYPE_CHECKING:  # the SDK is imported lazily, the feature is optional
     from anthropic.types import MessageParam
 
 
 class AiDraftError(RuntimeError):
-    """Raised when no draft can be produced; the admin writes the blocks by hand."""
+    """No draft could be produced; the admin writes the blocks by hand."""
 
 
-#: Requests the SDK may make per call — the original, plus its retries.
-#:
-#: The SDK's own default is three, and it retries a timeout as readily as a 429.
-#: That matters here because the caller hands each call a *timeout* taken from
-#: what is left of the draft's budget: three attempts at that timeout is three
-#: times the budget, which is precisely the promise
-#: ``AI_DRAFT_DEADLINE_SECONDS`` makes and could not keep.
-#:
-#: Two, rather than one, because these calls cost minutes and money and a 429 or
-#: a 502 is worth a second go. The caller divides the remaining budget by this,
-#: so the retry fits inside the budget instead of doubling it — see
-#: ``app.drafting._within``.
+# Attempts per call, retry included (the SDK default is 3). The timeout is
+# divided by this so retries fit in the draft's budget, see
+# `app.drafting._within`.
 AI_ATTEMPTS = 2
 
 
 def build_client() -> Any:
-    """An Anthropic client, or the refusal that says the feature is switched off.
+    """An Anthropic client, or AiDraftError if no key is configured.
 
-    Public because one draft makes four requests across the two functions below —
-    a token count and a completion each — and they are worth making down one
-    connection. Each function used to build its own client and drop it
-    unreferenced, so a draft opened two TLS connections to do the work of one and
-    closed neither on purpose.
-
-    The SDK import stays inside the function: with no key configured the feature
-    is simply absent, and it must not become an import-time dependency of the app.
+    Shared by the four requests of a draft. Imports the SDK lazily.
     """
     settings = get_settings()
     if not settings.anthropic_api_key:
@@ -93,7 +54,7 @@ def build_client() -> Any:
 
 
 class LawDraft(BaseModel):
-    """The two factual blocks. Anything not supported by the text stays empty."""
+    """The two factual blocks."""
 
     summary_text: str
     practical_changes: str
@@ -222,11 +183,7 @@ def _user_prompt(law: LawText) -> str:
     if law.signed_on:
         header += f"Promulguée le : {law.signed_on:%d/%m/%Y}\n"
     body = f"{header}\nTexte officiel :\n\n{law.plain_text}"
-    # The Journal Officiel sometimes carries its own plain-language notice. It is
-    # official, factual and already written for a non-specialist — exactly the
-    # register « Ce que ça change en pratique » is asking for — so it is given as
-    # source material rather than discarded. Still source material: the rules
-    # above forbid going beyond what the text says, and this is part of the text.
+    # The JO sometimes includes a plain-language notice, useful for the second block.
     if law.notice:
         body += f"\n\nNotice publiée au Journal Officiel :\n\n{law.notice}"
     return body
@@ -235,12 +192,7 @@ def _user_prompt(law: LawText) -> str:
 def _refuse_if_oversized(
     client: Any, *, system: str, messages: list[MessageParam], what: str
 ) -> None:
-    """Measure the request before sending it, so an outlier is refused not billed.
-
-    Applied to both calls. The argument selection used to rely on a character
-    budget alone — a ratio times a ratio — which is a good enough way to decide
-    what to trim and no way at all to decide what is too expensive to send.
-    """
+    """Count tokens first and refuse oversized requests instead of paying for them."""
     settings = get_settings()
     try:
         counted = client.messages.count_tokens(
@@ -252,7 +204,7 @@ def _refuse_if_oversized(
     if counted > settings.ai_max_input_tokens:
         raise AiDraftError(
             f"{what} trop volumineux ({counted} jetons, limite "
-            f"{settings.ai_max_input_tokens}) — à rédiger à la main"
+            f"{settings.ai_max_input_tokens}), à rédiger à la main"
         )
 
 
@@ -287,12 +239,8 @@ def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
 
 # --- Argument selection ------------------------------------------------------
 #
-# The factual draft above asks the model not to invent. Here invention is made
-# mechanically impossible instead: the model returns the id of a speech and a
-# span it claims to have copied from it, and we verify that span really occurs
-# in that speech before keeping it. Attribution never comes from the model —
-# speaker, date and link are copied from the Speech record we fetched, so a real
-# quote cannot be pinned on the wrong person.
+# The model returns (speech id, quote) and we check the quote really appears in
+# that speech. Attribution comes from our Speech record, not from the model.
 
 
 class ArgumentPick(BaseModel):
@@ -303,14 +251,8 @@ class ArgumentPick(BaseModel):
 class ArgumentSelection(BaseModel):
     pour: list[ArgumentPick]
     contre: list[ArgumentPick]
-    #: What the debate turned on, in one or two sentences. See the rule in
-    #: ARGUMENTS_SYSTEM_PROMPT: a subject, never a position.
-    #:
-    #: Optional, deliberately. The prompt asks for it in as many words, but a
-    #: response that omitted it would otherwise fail validation and take the
-    #: verified quotations down with it - and those are the part of this call
-    #: that cannot be produced any other way. A missing sentence costs an empty
-    #: encart; a missing selection costs the whole argument block.
+    # What the debate was about (a subject, never a position). Optional so that
+    # a response without it doesn't fail validation and lose the quotes.
     sujet_debat: str = ""
 
 
@@ -321,9 +263,7 @@ class SelectedArguments:
     pour: list[dict] = field(default_factory=list)
     contre: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
-    #: One or two sentences naming what the debate turned on. Unlike everything
-    #: else on this dataclass it is *written* rather than quoted, which is why the
-    #: prompt constrains its form so tightly and why a person relays it.
+    # Written by the model, unlike the quotes.
     sujet_debat: str = ""
 
     @property
@@ -392,7 +332,7 @@ def _pool_prompt(law: LawText, speeches: list[Speech]) -> str:
     blocks = [
         f"[{s.speech_id}] {s.speaker}"
         + (f" ({s.quality})" if s.quality else "")
-        + f" — {s.section}\n{s.text}"
+        + f", {s.section}\n{s.text}"
         for s in speeches
     ]
     return (
@@ -417,18 +357,18 @@ def _fit_budget(speeches: list[Speech], budget_chars: int) -> list[Speech]:
 
 
 def _verify(pick: ArgumentPick, by_id: dict[str, Speech]) -> tuple[dict | None, str]:
-    """Confirm the quote occurs in the cited speech, and build the argument from ours."""
+    """Check the quote appears in the cited speech and build the argument from it."""
     speech = by_id.get(pick.speech_id)
     if speech is None:
-        return None, f"identifiant inconnu ({pick.speech_id}) — écarté"
+        return None, f"identifiant inconnu ({pick.speech_id}), écarté"
 
     quote = re.sub(r"\s+", " ", pick.quote or "").strip().strip("«»\"' ")
     if len(quote) < 40:
-        return None, f"passage trop court chez {speech.speaker} — écarté"
+        return None, f"passage trop court chez {speech.speaker}, écarté"
 
     start = speech.text.find(quote)
     if start < 0:
-        return None, f"passage introuvable dans l'intervention de {speech.speaker} — écarté"
+        return None, f"passage introuvable dans l'intervention de {speech.speaker}, écarté"
 
     # Store our own substring, not the model's string.
     return {
@@ -452,22 +392,16 @@ def select_arguments(
         raise AiDraftError("aucune intervention exploitable dans les comptes rendus")
     client = build_client() if client is None else client
 
-    # Roughly 3.6 characters per token in French; leave room for the instructions.
+    # About 3.6 characters per token in French, with room for the instructions.
     budget = int(settings.ai_max_input_tokens * 3.6 * 0.8)
-    # The **last** ones, not the first. Sittings arrive oldest-first — the import
-    # sorts them by date ascending — so slicing from the front kept the earliest
-    # readings and discarded the latest, which is backwards: the closer a debate
-    # is to the vote, the closer the text being argued about is to the one that
-    # was actually adopted. Every other cut below is by length, on purpose; this
-    # one is by position, and position here means date.
+    # Keep the most recent speeches: later debates are about a text closer to
+    # the one adopted. Speeches are sorted oldest first.
     pool = _fit_budget(speeches[-settings.ai_max_speeches * 4 :], budget)
     if len(pool) > settings.ai_max_speeches:
         order = {s.speech_id: i for i, s in enumerate(pool)}
         longest = sorted(pool, key=lambda s: len(s.text), reverse=True)
         pool = sorted(longest[: settings.ai_max_speeches], key=lambda s: order[s.speech_id])
-    # Counted once, against everything we were given: the pool is trimmed twice
-    # (a window on the most recent, then the budget) and each step alone
-    # under-reports.
+    # Count against the full input, since the pool was trimmed twice.
     dropped = len(speeches) - len(pool)
     notes = []
     if dropped:
@@ -519,10 +453,7 @@ def select_arguments(
     if not (result.pour or result.contre):
         raise AiDraftError("aucun passage n'a pu être vérifié dans les comptes rendus")
     if from_joint:
-        # The one place a verified quote can still be misleading. The passage is
-        # genuinely what its author said, on a day this text was debated — but
-        # jointly with another, so the argument may be about the neighbour.
-        # Nothing downstream can tell; a person reading the two texts can.
+        # In a joint debate, a genuine quote may be about the other text.
         result.notes.append(
             f"{from_joint} passage(s) proviennent d'une discussion commune à "
             "plusieurs textes : vérifiez qu'ils portent bien sur cette loi avant "
@@ -530,7 +461,7 @@ def select_arguments(
         )
     if not result.is_symmetric:
         result.notes.append(
-            f"déséquilibre : {len(result.pour)} pour / {len(result.contre)} contre — "
+            f"déséquilibre : {len(result.pour)} pour / {len(result.contre)} contre, "
             "à compléter ou à assumer explicitement"
         )
     return result

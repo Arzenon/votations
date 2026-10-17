@@ -4,20 +4,9 @@
 {
 	servers {
 		timeouts {
-			# `write` is the one that matters. An open-data export is the only
-			# response on the site whose length is unbounded: it holds a pooled
-			# database connection for as long as the client takes to read it, and
-			# `EXPORT_MAX_CONCURRENT` caps how many may stream at once but not for
-			# how long. Four clients reading one byte a minute could therefore
-			# hold four connections indefinitely, inside every rate limit, and
-			# nothing would ever take them back.
-			#
-			# Half an hour, not ten minutes: this is a hard deadline on the whole
-			# response, so it also applies to somebody honestly downloading a large
-			# votation over a poor connection — and the charter names slow
-			# connections explicitly. Cutting that download mid-file, silently,
-			# would be a worse failure than the one being prevented. Thirty minutes
-			# is far more than any real export needs and still bounds the hold.
+			# `write` matters for exports, which hold a DB connection while the
+			# client reads: slow clients could hold them indefinitely. 30 minutes
+			# leaves room for a large export on a slow connection.
 			read_body 1m
 			read_header 10s
 			write 30m
@@ -26,17 +15,7 @@
 	}
 }
 
-# Everything that must hold on *every* hostname this stack answers on, defined
-# once and imported by each site block below.
-#
-# It exists because the `www.` block had neither the headers nor the log filter.
-# That block only issues a
-# redirect, so the missing CSP costs nothing — but the missing HSTS does: a
-# visitor whose first ever request is to `www.` is not pinned to HTTPS until the
-# apex answers, and the missing log filter means that if the access log is ever
-# turned up on that vhost it records `remote_ip` while the apex is careful not
-# to. Two properties of the deployment that were true of one hostname and not
-# the other, for no reason anybody chose.
+# Headers and log settings shared by every hostname, including www.
 (commun) {
 	header {
 		# The site embeds nothing and is embedded nowhere.
@@ -45,29 +24,19 @@
 		Referrer-Policy same-origin
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
-		# Everything the pages need is served from this origin: no CDN, no
-		# analytics, no web fonts. Scripts and styles live in files, never inline
-		# (see /static/app.js), so no 'unsafe-inline' is required anywhere.
+		# Everything is served from this origin, no inline scripts or styles.
 		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
 
 		# No camera, microphone, geolocation or interest-cohort involvement.
 		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()"
 
-		# Caddy adds this by default; the software in use is nobody's business.
+		# Caddy adds this header by default.
 		-Server
 	}
 
-	# `level ERROR` is not the same thing as "no access log": it keeps the
-	# entries for requests that failed, and those still carry `remote_ip`. On a
-	# 5xx during `POST /loi/…/vote` that is an address next to the instant of a
-	# vote attempt — precisely the pairing /vie-privee promises this site does
-	# not record, on the page written to be checkable rather than reassuring.
-	#
-	# So the addresses are dropped from the entry and everything else is kept: a
-	# 5xx still names its method, path and status, which is what makes the log
-	# worth having at all. Caddy redacts `Cookie` on its own; it is deleted here
-	# too, because "on its own" is a default someone else owns — and the voter
-	# token is the one header that must never reach a log line.
+	# Errors only, and without the IP address: a 5xx on a vote would otherwise
+	# log an IP next to the time of a vote. Cookies are removed too (the voter
+	# token must never be logged).
 	log {
 		output stderr
 		level ERROR
@@ -87,39 +56,19 @@
 
 	encode zstd gzip
 
-	# Refuse oversized bodies at the edge. Every form on the site posts a few
-	# kilobytes at most, so anything larger is a mistake or an attempt.
+	# Forms post a few kB at most (the admin form fits in 256 kB).
 	request_body {
 		max_size 256KB
 	}
 
-	# The liveness probe is for the container, not for the internet. Docker runs
-	# it against localhost:8000 inside the app container, so it never comes
-	# through here — which makes refusing it at the edge free. It carries no
-	# personal data, but it does answer "is the database up?" to anybody who
-	# asks, and that is a question the public has no reason to be able to ask.
+	# The health check is only for Docker (run inside the container).
 	respond /sante 404
 
-	# The app is not published outside the compose network: this is the only door.
+	# The app is only reachable through here.
 	reverse_proxy app:8000 {
-		# Overwrite rather than append, so the header the app reads holds the
-		# peer address and nothing the caller wrote. The vote rate limit is keyed
-		# on exactly that.
-		#
-		# Caddy already does this on its own: with no `trusted_proxies` declared
-		# it treats every peer as untrusted and *replaces* an incoming
-		# X-Forwarded-For instead of appending to it (verified against 2.10 —
-		# declaring the peer trusted is what switches it back to appending). So
-		# this line is redundant today, and Caddy says so with a warning on every
-		# start. It is kept because "redundant today" is a statement about
-		# somebody else's default, on the one value that decides whose votes get
-		# rate-limited; the app's own `TRUSTED_PROXY_HOPS` reads the chain from
-		# the right for the same reason, and neither guarantee should be the only
-		# one.
-		#
-		# X-Real-IP is set for the same reason and read by nothing here — the app
-		# uses X-Forwarded-For alone. It is conventional enough that a future
-		# component would expect it, and wrong enough to leave forgeable.
+		# Replace (not append) X-Forwarded-For, used by the rate limit. Caddy
+		# already does this without trusted_proxies (hence a warning at start),
+		# but we don't rely on that default. X-Real-IP isn't used by the app.
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Real-IP {remote_host}
 	}

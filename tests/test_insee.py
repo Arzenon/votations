@@ -32,17 +32,12 @@ QUINQUENNAL = {
     "Y_GE95": 100.0,  # 65+ = 200
     "Y_LT5": 999.0,
     "Y5T9": 999.0,
-    "Y10T14": 999.0,  # minors — must be excluded
+    "Y10T14": 999.0,  # minors, must be excluded
 }
 
 
 def fake_get(url: str) -> bytes:
-    """Stand-in for the Melodi API, keyed on the GEO/SEX/AGE query parameters.
-
-    Returns bytes, like every other injected getter in the app: Melodi answers
-    JSON, but the seam is the same one the Journal Officiel and the Assemblée
-    nationale use, and decoding belongs to the module that knows the format.
-    """
+    """Fake Melodi API, keyed on the GEO/SEX/AGE query parameters. Returns bytes."""
     return json.dumps(_fake_payload(url)).encode()
 
 
@@ -51,7 +46,7 @@ def _fake_payload(url: str) -> dict:
     geo = q["GEO"][0]
     _prefix, level, code = geo.split("-", 2)
     if level == "FRANCE" and code == "F":
-        # Sexe slice (AGE=_T) vs age slice (SEX=_T) distinguished by the filter.
+        # Sex query (AGE=_T) vs age query (SEX=_T).
         if q.get("AGE") == ["_T"]:
             return {
                 "observations": [
@@ -72,7 +67,7 @@ def test_fetch_reference_parses_sex_age_and_region():
     assert data.source_year == 2026
     assert data.values["sexe"] == {"femme": 52.0, "homme": 48.0}
 
-    # Age: brackets are quinquennal sums (18-24 prorates 15-19), minors excluded.
+    # Age: sums of five-year groups (18-24 takes part of 15-19), no minors.
     age = data.values["age"]
     assert set(age) == {"18-24", "25-34", "35-49", "50-64", "65+"}
     assert abs(sum(age.values()) - 100.0) < 0.5

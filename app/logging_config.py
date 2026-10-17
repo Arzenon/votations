@@ -1,13 +1,8 @@
 """Application logging.
 
-Deliberately address-free. Uvicorn's access log and Caddy's are both switched off
-in production because they pair a client IP with the timestamp of a vote; this
-logger exists so that operational failures are still visible, and it must stay
-within that constraint.
-
-**Never log a client address, an X-Forwarded-For value, a cookie, or a voter
-token.** Log law ids, import ids, statuses and error classes — things that
-describe the system, not the person using it.
+Access logs are off in production because they pair an IP with the time of a
+vote. Never log an IP address, X-Forwarded-For, a cookie or a voter token.
+Log ids, statuses and error classes.
 """
 
 from __future__ import annotations

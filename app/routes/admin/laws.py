@@ -1,4 +1,4 @@
-"""Administration of the laws themselves: dashboard, CRUD, archiving."""
+"""Admin pages for laws: dashboard, create/edit, preview, archiving."""
 
 from __future__ import annotations
 
@@ -34,10 +34,6 @@ def dashboard(
     stale_after = settings.an_import_stale_after_hours
     hours_since = None
     if last_import is not None:
-        # Both sides in UTC. Reading the zone off the stored value and asking for
-        # "now" in it worked only because the column is timestamptz; the day it
-        # handed back a naive value, this would have compared local wall-clock
-        # time against a UTC instant and mis-stated the delay by the offset.
         hours_since = (utcnow() - as_utc(last_import)).total_seconds() / 3600
     return templates.TemplateResponse(
         request,
@@ -63,7 +59,7 @@ def archived_laws(
     page: int = 1,
     db: Session = Depends(get_db),
 ):
-    """Laws withdrawn from the site. Restorable, or purgeable on purpose."""
+    """Archived laws, which can be restored or permanently deleted."""
     listing = laws_crud.list_all(db, page=page, archived=True)
     return templates.TemplateResponse(
         request,
@@ -84,20 +80,12 @@ def new_law_form(
     import_id: int | None = None,
     db: Session = Depends(get_db),
 ):
-    # A staged law pre-fills the factual fields only (title, official reference,
-    # Légifrance link). The four narrative blocks stay empty on purpose: they are
-    # written and validated by a person before anything is published.
+    # A staged law pre-fills the factual fields (title, reference, link).
     prefill = imports_crud.get_by_id(db, import_id) if import_id else None
     if import_id and prefill is None:
         raise HTTPException(404)
-    # A draft already generated for this law is shown straight away: it has been
-    # paid for, and hiding it behind another click helps nobody.
-    #
-    # A failed run leaves its banner up until the administrator dismisses it —
-    # see `dismiss_draft_failure`. Clearing it here, while rendering, made a GET
-    # destroy the only record of why the draft had not happened: a link
-    # prefetch, a browser preload or a stray double-tap consumed the message
-    # before anyone read it.
+    # Show an existing draft right away. A failure banner stays until dismissed
+    # (see `dismiss_draft_failure`), not cleared by this GET.
     draft, arguments, notes, eli_url = cached_draft(prefill)
     return templates.TemplateResponse(
         request,
@@ -112,9 +100,7 @@ def new_law_form(
 def edit_law_form(
     request: Request,
     law_id: int,
-    # Show the cached AI draft in the four written fields instead of what is
-    # stored. Nothing is written by asking: the draft is loaded into the form and
-    # saved only if « Enregistrer » is pressed afterwards.
+    # Load the stored AI draft into the form (saved only on "Enregistrer").
     brouillon: int = 0,
     db: Session = Depends(get_db),
 ):
@@ -122,15 +108,11 @@ def edit_law_form(
     if law is None:
         raise HTTPException(404)
 
-    # The staged row this law came from, when it came from one. Without it the
-    # whole AI drafting feature lived on the *creation* form only and vanished
-    # the moment the law was saved — « Régénérer » included, so a presentation
-    # could never be redrafted once it existed.
+    # The staged row, if any, so drafting is available on the edit form too.
     prefill = imports_crud.get_by_law_id(db, law.id)
     draft, arguments, notes, _eli = cached_draft(prefill) if brouillon else (None, None, [], "")
 
-    # The most recent page only. The full history, paginated, is the public one on
-    # the results page — which is where a reader checks it, and where it belongs.
+    # Latest page only; the full history is on the public results page.
     history = laws_crud.revisions(db, law.id)
     return templates.TemplateResponse(
         request,
@@ -148,14 +130,9 @@ def edit_law_form(
 
 
 def _preview(request: Request, db: Session, law: Law) -> HTMLResponse:
-    """Render one law through the real public template, saving nothing.
+    """Render a law with the public template and context, without saving.
 
-    The public page's own context builder, not a copy of it: a copy drifts, and a
-    preview that has drifted from the page is worse than no preview.
-
-    The ballot is shown in the state the voting window implies, with its submit
-    button disabled: nothing here can accept a vote, and the vote route would
-    refuse one anyway while the law is not public.
+    The ballot reflects the voting window, with the submit button disabled.
     """
     return templates.TemplateResponse(
         request,
@@ -172,12 +149,7 @@ def _preview(request: Request, db: Session, law: Law) -> HTMLResponse:
 
 @router.get("/lois/{law_id}/apercu", response_class=HTMLResponse)
 def preview_law(request: Request, law_id: int, db: Session = Depends(get_db)):
-    """The stored law, as the public page will show it once published.
-
-    A plain link, so it can be bookmarked and so the administration's own listing
-    has somewhere to point a draft at — a draft's public URL is a 404 by design,
-    which used to make its title in the dashboard a dead link.
-    """
+    """Preview of the saved law (an unpublished law's public URL is a 404)."""
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
@@ -191,50 +163,26 @@ def preview_edits(
     form: LawForm = Depends(preview_form),
     law_id: int | None = Form(None),
 ):
-    """The page as the form currently reads, **without saving anything**.
+    """Preview of the form's current content, without saving.
 
-    The preview above can only show what is already stored, so seeing your own
-    work meant saving it first — and for a law that does not exist yet, creating
-    it. That is the wrong order: the reason to look at the public page is to
-    decide whether the text is good enough to keep, and the answer arrived after
-    the text had been kept.
-
-    So this one takes the posted form and renders it. The ``Law`` it builds is
-    never added to the session and never committed; it exists for the length of
-    one render. ``law_id`` identifies the row being edited, which is what lets an
-    existing law keep its real tally, its real history and its real URL while the
-    prose on the page is the unsaved prose in the textarea.
+    The `Law` built here is never added to the session. ``law_id`` lets an
+    existing law keep its id, slug, tally and history in the preview.
     """
     law = Law(**form.columns())
     stored = laws_crud.get_by_id(db, law_id) if law_id else None
     if stored is not None:
-        # Borrow the identity of the row being edited, and nothing else: the
-        # counts and the history on the page below are read by this id.
+        # Only the identity of the saved row.
         law.id = stored.id
         law.slug = stored.slug
         law.created_at = stored.created_at
     else:
-        # A law that does not exist yet still has a URL to show — the one it will
-        # get on save. Derived, not reserved: nothing is written here.
+        # The slug it would probably get on save.
         law.slug = laws_crud.slugify(form.title)
     return _preview(request, db, law)
 
 
 def _parliament_record(item: ImportedLaw | None) -> dict:
-    """How Parliament settled this text, copied from the staged row.
-
-    Not part of the form, and that is the point: these are the Assemblée's own
-    figures, and an administrator retyping a vote count is not an operation this
-    platform should offer. They are copied once, here, exactly as
-    `promulgated_on` is - and a law written by hand simply has none, which the
-    page renders as « adoptée sans scrutin public ».
-
-    The columns are read from `imports_crud.PARLIAMENT_RECORD` rather than named
-    again here. The same five were written out in three places, and this was the
-    copy that would have been forgotten: a sixth column would reach the daily
-    refresh and the nightly propagation, so a law created after it would take the
-    value a day late rather than at creation, and nothing would have said so.
-    """
+    """The Assemblée vote record, copied from the staged row (not editable)."""
     if item is None:
         return {}
     return {name: getattr(item, name) for name in imports_crud.PARLIAMENT_RECORD}
@@ -248,15 +196,8 @@ def create_law(
 ):
     item = imports_crud.get_by_id(db, import_id) if import_id else None
 
-    # One dossier, one votation. Creating a second from the same staged row does
-    # not just duplicate the law — `set_status` below would re-point the import
-    # at the new one, so the original quietly loses the link to its own draft and
-    # nothing on either page says a twin exists.
-    #
-    # This is a guard, not the fix: the way to reach it was a banner pointing at
-    # the creation form from a page where a law already existed. But the link was
-    # only the way in, and a route that silently re-parents a votation should
-    # refuse on its own.
+    # One law per dossier. Otherwise `set_status` would move the import's link
+    # to the new law and the first one would lose its draft.
     if item is not None and item.law_id:
         raise HTTPException(
             status_code=409,
@@ -289,12 +230,7 @@ def update_law(
 
 @router.get("/lois/{law_id}/archiver", response_class=HTMLResponse)
 def confirm_archive(request: Request, law_id: int, db: Session = Depends(get_db)):
-    """Ask before withdrawing a law, on a page rather than in a JS dialog.
-
-    The confirmation used to be a ``data-confirm`` attribute handled by
-    ``app.js``. With JavaScript off — which the rest of the site is built to
-    survive — one click destroyed a votation and every vote on it.
-    """
+    """Confirmation page before archiving (works without JavaScript)."""
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
@@ -319,26 +255,10 @@ def confirm_archive(request: Request, law_id: int, db: Session = Depends(get_db)
 
 @router.get("/lois/{law_id}/export.csv")
 def export_law_csv(request: Request, law_id: int, db: Session = Depends(get_db)):
-    """The open-data CSV for any law, archived ones included.
+    """CSV export for any law, including archived ones (to save data before a purge).
 
-    The public route refuses an archived law — that is what archiving means — and
-    the page that offers to destroy a votation for good is reached only from the
-    archive. So the one link whose job is to say « keep the data first » pointed
-    at a 404, on the only screen where that mattered.
-
-    The rows are the same the public export serves, reductions and all: archiving
-    withdraws a votation from the site, it does not exempt it from the anonymity
-    rules. What this route adds is reach, not detail.
-
-    Held to the same concurrency cap as the public exports, and to no other
-    limit. The cap protects the connection pool, and a connection held by an
-    administrator starves the public pages exactly as anyone else's would — this
-    route used to take one of those slots without ever checking for one, which is
-    the one way the cap could be exceeded. The per-address *rate* limit is
-    deliberately not applied: it exists to slow a caller looping over downloads,
-    and refusing an administrator for downloading several archived votations in a
-    sitting would only obstruct the « keep the data before you purge it » step
-    this route exists for.
+    Same rows and anonymity rules as the public export. Subject to the
+    concurrency cap but not the rate limit.
     """
     refused = at_capacity(request)
     if refused is not None:
@@ -349,22 +269,9 @@ def export_law_csv(request: Request, law_id: int, db: Session = Depends(get_db))
     return csv_response(db, law, head=is_head(request))
 
 
-# --- What a route does about a law that is not there --------------------------
-#
-# Two answers, and the rule is which kind of request it was.
-#
-# A **GET** for a page about a law — the form, the preview, a confirmation — is a
-# request to *see* something that does not exist, and 404 is the only true thing
-# to say about it. So is a POST that carries a payload for one particular row:
-# `update_law` cannot apply an edit to a law that is gone, and pretending
-# otherwise would report a save that did not happen.
-#
-# A **POST that only asks for a state** — archive it, restore it, purge it — is
-# idempotent, and the state it asks for is already the case. Answering 404 there
-# would turn the ordinary browser accident (back, then submit again) into an
-# error page about something that in fact went perfectly well. These three
-# therefore redirect, exactly as they do on success. `archive` is idempotent for
-# real, not only in its status code — see `laws_crud.archive`.
+# Missing law: GETs and `update_law` return a 404. Archive, restore and purge
+# are idempotent and redirect as on success, so resubmitting the form after
+# going back doesn't show an error.
 
 
 @router.post("/lois/{law_id}/archiver")
@@ -385,13 +292,12 @@ def restore_law(law_id: int, db: Session = Depends(get_db)):
 
 @router.get("/lois/{law_id}/supprimer", response_class=HTMLResponse)
 def confirm_purge(request: Request, law_id: int, db: Session = Depends(get_db)):
-    """The second of the two decisions that deleting a votation now takes."""
+    """Confirmation page before permanent deletion."""
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
     if not law.is_archived:
-        # Purging is reachable only from the archive, so that destroying data is
-        # never one click away from the everyday dashboard.
+        # Only archived laws can be deleted.
         raise HTTPException(
             status_code=409,
             detail="Cette votation doit d'abord être archivée avant de pouvoir être supprimée.",

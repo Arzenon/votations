@@ -65,8 +65,8 @@ def _zip(entries: dict[str, object]) -> bytes:
     return buf.getvalue()
 
 
-# The export is an XML→JSON conversion: a single acte collapses from a list to a
-# bare object, and actes nest inside actes. Both shapes must parse identically.
+# Converted from XML: a single acte is a bare object instead of a list, and
+# actes can be nested. Both must parse.
 SINGLE_ACTE = _prom_acte("2026-532", "SPOX2409232L", 24)
 NESTED_ACTES = [
     {"uid": "L17-AN1", "codeActe": "AN1-DEPOT", "dateActe": None},
@@ -101,7 +101,7 @@ def _fetch(entries=None, since=""):
 def test_parses_promulgated_laws_whatever_the_collection_shape():
     laws = _fetch()
 
-    # Only the two promulgated dossiers, newest first; the one still in navette is skipped.
+    # The two promulgated dossiers, newest first; the one in navette is skipped.
     assert [law.law_code for law in laws] == ["2026-533", "2026-532"]
 
     nested, single = laws
@@ -217,7 +217,7 @@ def test_creating_a_law_from_an_import_prefills_and_links(client, db_session):
     imports_crud.sync(db_session, records=_fetch())
     item = next(i for i in imports_crud.list_by_status(db_session).rows if i.law_code == "2026-532")
 
-    # The form carries the factual fields only — the narrative blocks stay empty.
+    # Only the factual fields are pre-filled.
     r = client.get(f"/admin/lois/nouvelle?import_id={item.id}", headers=_admin_auth())
     assert r.status_code == 200
     assert "LOI n° 2026-532 du 24 juin 2026" in r.text
@@ -249,12 +249,10 @@ def test_unknown_import_id_is_404(client, db_session):
 
 
 def test_an_oversized_field_skips_its_row_and_keeps_the_others(db_session):
-    """One dossier the columns cannot hold must not throw away the whole export.
+    """A row with an oversized field is skipped; the others are imported.
 
-    The export goes in as a single statement, so Postgres refuses the *statement*
-    rather than the row: an over-long title used to take every other law with it,
-    the job exited non-zero, and the container retried in a minute — for ever, on
-    a value the Assemblée nationale was not going to change on our account.
+    Everything is one statement, so a single bad row used to fail the whole
+    import, forever.
     """
     records = _fetch()
     limit = ImportedLaw.__table__.c["title"].type.length
@@ -272,7 +270,7 @@ def test_an_oversized_field_skips_its_row_and_keeps_the_others(db_session):
 
 
 def test_a_row_that_fits_exactly_is_kept(db_session):
-    """The check is a refusal of what cannot be stored, not a margin of its own."""
+    """A value exactly at the column limit is kept."""
     records = _fetch()
     limit = ImportedLaw.__table__.c["title"].type.length
     records[0].title = "T" * limit
@@ -282,17 +280,16 @@ def test_a_row_that_fits_exactly_is_kept(db_session):
 
 
 def test_a_dossier_larger_than_the_cap_is_not_read(db_session):
-    """A zip member declares its own uncompressed size; read that, not the member."""
+    """A dossier above the size cap isn't read (zip bomb)."""
     huge = json.dumps(
         {"dossierParlementaire": {"uid": "X", "padding": "p" * (assemblee.MAX_DOSSIER_BYTES + 10)}}
     )
     blob = _zip({"huge": huge})
-    # No promulgation acte anywhere, so the honest answer is an empty list rather
-    # than an error — the point is that it got there without inflating the member.
+    # Empty list, reached without decompressing the member.
     assert assemblee.fetch_promulgated_laws(get=lambda url: blob) == []
 
 
-# --- Scrutins et commission mixte paritaire ------------------------------------
+# --- Scrutins and CMP ----------------------------------------------------------
 
 
 def _dossier_with(actes):
@@ -324,12 +321,7 @@ def _built(actes):
 
 
 def test_only_decision_acts_contribute_a_vote_reference():
-    """A motion vote has the opposite polarity and must never be collected.
-
-    « pour 190 » on a motion de rejet préalable means a hundred and ninety votes
-    to throw the text out. Reading that as an adoption figure would print the
-    exact opposite of what happened, on the one number a reader cannot check.
-    """
+    """Only decision acts give vote references, not motions (where "pour" means reject)."""
     law = _built(
         [
             {"codeActe": "AN1-DEBATS-DEC", "voteRefs": {"voteRef": "VT-DEC"}},
@@ -341,7 +333,7 @@ def test_only_decision_acts_contribute_a_vote_reference():
 
 
 def test_vote_references_come_back_in_reading_order():
-    """The last adoption is the one that settles a law, so order is load-bearing."""
+    """Vote references are in chronological order (the last adoption counts)."""
     law = _built(
         [
             {"codeActe": "AN1-DEBATS-DEC", "voteRefs": {"voteRef": "VT-1"}},
@@ -359,13 +351,7 @@ def test_a_commission_mixte_paritaire_is_noticed():
 
 
 def test_a_created_votation_picks_up_a_vote_published_later(client, db_session):
-    """The copy used to happen once, at creation, and never again.
-
-    Two things followed. A law created before this data existed kept empty counts
-    for ever - and the page read that as « adoptée sans scrutin public ». And the
-    Assemblée can publish a scrutin *after* a votation is created, which simply
-    never reached the page.
-    """
+    """A scrutin published after the law was created is copied onto it."""
     from app.crud import imports as imports_crud
     from app.models import STATUS_IMPORTED, ImportedLaw, Law
 
@@ -395,14 +381,12 @@ def test_a_created_votation_picks_up_a_vote_published_later(client, db_session):
     assert (law.an_vote_for, law.an_vote_against, law.an_vote_abstain) == (301, 142, 7)
     assert law.cmp_convened and law.an_vote_checked
 
-    # Idempotent: a second run writes nothing at all. That matters beyond the
-    # wasted update - `laws.updated_at` is what the sitemap publishes as lastmod,
-    # so touching every law nightly would claim the whole site changes daily.
+    # A second run writes nothing (updated_at feeds the sitemap's lastmod).
     assert imports_crud.propagate_parliament_record(db_session) == 0
 
 
 def test_propagation_leaves_a_law_with_no_staged_row_alone(db_session):
-    """A law written by hand has no dossier, and must keep claiming nothing."""
+    """A law entered by hand isn't touched."""
     from app.crud import imports as imports_crud
     from app.models import Law
 
@@ -416,17 +400,10 @@ def test_propagation_leaves_a_law_with_no_staged_row_alone(db_session):
 
 
 def test_propagation_writes_no_entry_in_the_public_history(db_session):
-    """The record of changes answers one question: « was this the text I voted on ? »
+    """Propagating vote counts adds nothing to the public history.
 
-    A vote count arriving from the Assemblée is not an answer to it. Nobody here
-    wrote it, it was always true of the law, and it is not part of the
-    presentation somebody could have rewritten while people were voting - so it
-    must not appear in the history as though it were.
-
-    That holds because these columns are absent from `TRACKED_FIELDS` *and*
-    because propagation goes through a Core UPDATE rather than `laws_crud.update`,
-    which is the only place a `LawRevision` is ever written. Two independent
-    reasons, and this pins both.
+    These columns aren't in TRACKED_FIELDS, and propagation doesn't go through
+    `laws_crud.update`.
     """
     from app.crud import imports as imports_crud
     from app.models import STATUS_IMPORTED, ImportedLaw, Law, LawRevision

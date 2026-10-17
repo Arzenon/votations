@@ -2,9 +2,7 @@
 {% block body_class %}admin-wide{% endblock %}
 {% block title %}{{ titre }} - Administration{% endblock %}
 {% block content %}
-{# A confirmation the server renders, not a JavaScript dialog. Withdrawing or
-   destroying a votation is exactly the operation that must not depend on a
-   `data-confirm` attribute the browser may never run. #}
+{# Server-rendered confirmation, so it works without JavaScript. #}
 <p class="breadcrumb"><a href="/admin">← Administration</a></p>
 
 <h1>{{ titre }}</h1>
@@ -24,10 +22,7 @@
 <p class="disclaimer" role="alert">
   <strong>{{ tally.total }} votes seront définitivement effacés.</strong>
   Téléchargez d'abord
-  {# The administration's own export, not the public one: this page is reached
-     only from the archive, and an archived votation answers 404 on every public
-     route — which made the one link that says « keep the data first » a dead
-     link, on the only screen where that matters. #}
+  {# Admin export, since the public one returns 404 for archived laws. #}
   <a href="/admin/lois/{{ law.id }}/export.csv">l'export CSV</a> si ces données
   doivent être conservées : elles ne pourront pas être reconstituées.
 </p>

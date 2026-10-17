@@ -1,15 +1,11 @@
 #!/bin/sh
-# Periodic INSEE reference refresh (containerised "cron").
-# INSEE publishes population estimates once a year (1 January), so a monthly
-# cadence is ample. Retries quickly at first (the usual failure is the app still
-# applying migrations), then backs off — see docker/periodic.sh.
+# Monthly INSEE refresh (estimates are published yearly). Retries with backoff,
+# see docker/periodic.sh.
 set -e
 
 . "$(dirname "$0")/periodic.sh"
 
-# Touched after each successful run; the compose healthcheck watches its age, so
-# a job that has quietly stopped succeeding shows up as unhealthy instead of as
-# a container that is still "running".
+# Touched after each successful run; the healthcheck watches its age.
 HEARTBEAT="${HEARTBEAT_FILE:-/tmp/refresh-alive}"
 
 run_periodically \

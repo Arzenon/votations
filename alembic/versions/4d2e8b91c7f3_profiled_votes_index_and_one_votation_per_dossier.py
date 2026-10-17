@@ -1,40 +1,13 @@
-"""the profiled-votes index, and one votation per dossier as a constraint
+"""profiled-votes index, and one votation per dossier
 
-Two things, both of them a question the schema was not answering.
+`ix_votes_law_profiled`: `refresh_snapshot` counts profiled votes on every
+ballot until the first snapshot. Without this index that meant scanning every
+vote on the law. The predicate must stay the bare column (Postgres won't match
+`IS true`) and identical to the model, since Alembic doesn't compare it.
 
-**`ix_votes_law_profiled`.** `refresh_snapshot` asks « how many of this law's
-votes carried a profile » on *every ballot*, until the law takes its first
-snapshot — which needs MIN_BUCKET_VOLUME profiled votes and, the profile being
-optional, may never happen. `ix_votes_law_choice` answered it from its included
-column by walking every vote on the law, so a votation with a hundred thousand
-ballots and forty profiles paid a hundred-thousand-entry scan per ballot, on the
-busiest write in the application. This index holds the profiled votes and nothing
-else.
-
-The predicate is the bare column, and `app.crud.results.count_profiled` spells
-its WHERE the same way, because Postgres uses a partial index only where it can
-prove the query implies the predicate — and it cannot prove that of `IS true`.
-The same lesson `ix_laws_home` already carries. Note that Alembic compares an
-index on its columns and its uniqueness and never on its `where`, so nothing
-would catch these two spellings drifting apart: keep them identical.
-
-**`uq_imported_law_law_id`.** One dossier, one votation. `create_law` refuses to
-build a second law from a staged row that already has one, and that guard is the
-right place to explain the rule to an administrator — but it is not the only way
-in. `scripts.content` re-applies the review decisions carried in a snapshot, and
-nothing there stopped two dossiers claiming the same law; `get_by_law_id` then
-returned whichever row came back first, so the AI draft shown on a law's form
-could have belonged to a different dossier.
-
-A plain unique constraint, not a partial index: SQL treats NULLs as distinct, so
-every staged row still awaiting a decision keeps its NULL and none of them
-collide. It also gives `law_id` the btree index it never had, read on every visit
-to a law's form and walked by the `ON DELETE SET NULL` of a purge.
-
-Existing duplicates are cleared first, keeping the row that was staged first —
-otherwise the constraint would refuse to be created on the one kind of database
-that needs it. The link is only ever a convenience (it is what offers the draft
-again); the law and the dossier both survive intact.
+`uq_imported_law_law_id`: one dossier per law, enforced in the database since
+`scripts.content` can also set law_id. NULLs don't collide. Existing duplicates
+are cleared first, keeping the first staged row.
 
 Revision ID: 4d2e8b91c7f3
 Revises: 8f717193ba71
@@ -63,8 +36,7 @@ def upgrade() -> None:
         postgresql_where=_PROFILED,
     )
 
-    # Keep the dossier that was staged first — the one a law was almost certainly
-    # created from — and release the others' claim on it.
+    # Keep the first staged dossier (most likely the one the law came from).
     op.execute(
         """
         UPDATE imported_laws SET law_id = NULL
@@ -79,7 +51,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The links cleared above are not restored: nothing recorded which they were,
-    # and inventing one would point a dossier at a votation it did not produce.
+    # Cleared links can't be restored.
     op.drop_constraint('uq_imported_law_law_id', 'imported_laws', type_='unique')
     op.drop_index('ix_votes_law_profiled', table_name='votes', postgresql_where=_PROFILED)

@@ -1,15 +1,9 @@
-"""MVP auth provider: anonymous, signed browser token.
+"""Anonymous auth provider: a random token in a signed cookie.
 
-Collects *no* personal data. A random token is minted **when someone first votes**
-— not when they read — and stored in a signed cookie; the value persisted in the
-DB is the SHA-256 of that token, so a database leak reveals neither the cookie nor
-any link between votes and a browser. This gives best-effort one-vote-per-law
-without any identity.
-
-On the digest: the token is 256 bits from :mod:`secrets`, so a plain hash is not
-guessable and a keyed digest would add nothing an attacker could exploit. It is
-left unkeyed deliberately — rotating SECRET_KEY must not silently re-open every
-past votation to a second vote from the same person.
+The token is created on the first vote, not on reading. The database stores
+its SHA-256, so a leak reveals neither the cookie nor which votes come from
+the same browser. The hash is unkeyed on purpose: the token is 256 random
+bits, and rotating SECRET_KEY mustn't let everyone vote again.
 """
 
 from __future__ import annotations
@@ -27,15 +21,11 @@ _COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
 
 
 class AnonymousProvider:
-    # Rendered only if a provider ever sets `login_enabled`; nothing shows it today.
     login_label = "Se connecter"
-    # No login flow, and none scheduled: FranceConnect is closed to this project
-    # for legal reasons, not for want of maturity. See `app.auth.base`.
     login_enabled = False
 
     def __init__(self) -> None:
         settings = get_settings()
-        # Every key that may verify, newest signing — see `Settings.signing_keys`.
         self._serializer = URLSafeSerializer(settings.signing_keys, salt="voter-token")
 
     def _hash(self, raw_token: str) -> str:
@@ -55,7 +45,6 @@ class AnonymousProvider:
                 max_age=_COOKIE_MAX_AGE,
                 httponly=True,
                 samesite="lax",
-                # HTTPS-only in production; plain HTTP locally would drop it.
                 secure=get_settings().cookie_secure,
             )
         return self._hash(raw)

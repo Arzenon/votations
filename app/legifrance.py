@@ -1,18 +1,10 @@
-"""Fetch the official text of a promulgated law from the DILA open data.
+"""Fetch a law's official text from the DILA open data.
 
-The Journal Officiel is published as twice-daily incremental archives on
-``echanges.dila.gouv.fr`` (Licence Ouverte, no authentication). A law is located
-by its **NOR**, the reference the Assemblée nationale import already stores, in
-the archive covering its publication date.
-
-Design notes:
-- The HTTP getter is injectable so the parsing is unit-testable offline.
-- Any failure raises :class:`LegifranceFetchError`; nothing is cached or stored.
-- Text is fetched on demand, never persisted: a single law can run to 230 000
-  characters, and the official text is always one request away.
-- A law published on day D usually lands in D's early-morning archive (a few
-  hundred kB) but sometimes only in the evening one, so candidates are tried
-  oldest-first and the search stops at the first hit.
+The Journal Officiel is published as twice-daily archives on
+``echanges.dila.gouv.fr``. A law is found by its NOR in the archive for its
+publication date. Nothing is stored: a law can be 230,000 characters and the
+text is always one request away. A law usually lands in the morning archive of
+its JO date, sometimes in the evening one, so candidates are tried in order.
 """
 
 from __future__ import annotations
@@ -23,7 +15,7 @@ import tarfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from xml.etree.ElementTree import Element  # type only — parsing goes through defusedxml
+from xml.etree.ElementTree import Element  # type only, parsing uses defusedxml
 
 from defusedxml import ElementTree as ET
 from defusedxml.ElementTree import ParseError
@@ -34,22 +26,19 @@ from app.opendata import Getter, getter
 # Archive names look like `JORFSIMPLE_20260818-223511.tar.gz`.
 DUMP_RE = re.compile(r"JORFSIMPLE_(\d{8})-(\d{6})\.tar\.gz")
 
-# Each archive holds ~14 000 XML files, of which only a few hundred are the
-# texts themselves (the rest are `versions.xml` bookkeeping) — filter by name
-# before parsing anything.
+# About 14,000 XML files per archive, only a few hundred are texts. Filter by
+# name before parsing.
 TEXT_MEMBER_RE = re.compile(r"/JORFTEXT\d+\.xml$")
 
 # How many daily archives to try before giving up (jo_date, then the day after).
 MAX_CANDIDATES = 6
 
-# The largest single JO text worth reading. The biggest real ones (a loi de
-# finances) run to a few hundred kilobytes; anything past this is a malformed or
-# hostile archive member and is skipped rather than read into memory.
+# Max size of one JO text. The largest (lois de finances) are a few hundred kB.
 MAX_MEMBER_BYTES = 16 * 1024 * 1024
 
 
 class LegifranceFetchError(RuntimeError):
-    """Raised on any network/archive/parse problem, or when the law is absent."""
+    """Network, archive or parse failure, or law not found."""
 
 
 @dataclass
@@ -66,54 +55,34 @@ class LawText:
     law_code: str  # NUM, e.g. "2026-791"
     title: str  # TITREFULL
     nature: str  # NATURE, e.g. "LOI"
-    signed_on: date | None  # DATE_TEXTE — the promulgation date
+    signed_on: date | None  # DATE_TEXTE, the promulgation date
     eli_url: str | None  # canonical Légifrance (ELI) URL
     notice: str = ""  # plain-language notice, when the JO carries one
     articles: list[Article] = field(default_factory=list)
-    source_dump: str = ""  # provenance: which archive it came from
+    source_dump: str = ""  # which archive it came from
 
     @property
     def plain_text(self) -> str:
-        """The whole law as plain text, ready to hand to a reader or a model."""
+        """The whole law as plain text."""
         body = "\n\n".join(f"Article {a.num}. {a.text}".strip() for a in self.articles)
         return f"{self.title}\n\n{body}".strip()
 
 
-# Archives run from ~200 kB to ~8 MB; the index itself is a small HTML page. Four
-# times the largest real one, so a truncated read is a message and a retry rather
-# than the host's memory. The per-member cap above still applies once the archive
-# is open.
-#
-# Sized against the container, not only against the source. A download costs
-# roughly twice this at its peak (see `app.opendata.fetch`) and the archive is
-# then copied again into a `BytesIO` here, so one draft can hold ~3× — and drafts
-# run *inside the app container*, `draft_workers` of them at once, in the 1 GB the
-# compose file grants the process that also serves the site. At 128 MB, which is
-# what this used to be, two concurrent drafts could have taken the whole site down
-# with them; the guard was set above the level at which it kills what it protects.
+# Archives are 200 kB to 8 MB. Drafts run in the app container (1 GB, several
+# at once) and use about 3x this in memory, so keep it modest.
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 
-#: Per-operation socket timeout. Generous, because the archives are large and the
-#: portal is not fast; it is not a bound on how long a download may take in
-#: total — see :func:`bounded_getter` for callers that need one.
+# Per socket operation, not per download (see `bounded_getter`).
 TIMEOUT = 180.0
 
 _default_getter = getter(timeout=TIMEOUT, max_bytes=MAX_ARCHIVE_BYTES, error=LegifranceFetchError)
 
 
 def bounded_getter(remaining: Callable[[], float]) -> Getter:
-    """The default getter, with every request held to the caller's own budget.
+    """A getter limited by the caller's time budget (for the drafting job).
 
-    For the drafting job, which promises to give up rather than hold a worker
-    (see ``AI_DRAFT_DEADLINE_SECONDS``). Locating one law can mean seven requests
-    — the archive index, then up to six daily archives — and at 180 s of socket
-    timeout each, with no total bound on any of them, "seven requests" was the
-    only thing the promise actually rested on.
-
-    A budget that runs out mid-search raises
-    :class:`~app.opendata.DeadlineExceeded`, which :func:`fetch_law_text` does not
-    catch: the loop stops at that candidate rather than trying the rest and
-    reporting the law as missing.
+    DeadlineExceeded isn't caught by `fetch_law_text`, so the search stops
+    instead of reporting the law as missing.
     """
     return getter(
         timeout=TIMEOUT,
@@ -129,7 +98,7 @@ def _base_url() -> str:
 
 
 def list_dumps(get: Getter | None = None) -> dict[str, list[str]]:
-    """Map ``YYYYMMDD`` → archive names, each list ordered oldest-first."""
+    """Map ``YYYYMMDD`` to archive names, oldest first."""
     get = get or _default_getter
     index = get(_base_url()).decode("utf-8", "replace")
     dumps: dict[str, list[str]] = {}
@@ -168,15 +137,13 @@ def _parse_date(value: str | None) -> date | None:
 def _parse_law(data: bytes, nor: str, source: str) -> LawText | None:
     """Build a LawText from one JORFTEXT document, or None if it isn't our law."""
     try:
-        # defusedxml: the archives are fetched over the network, and a few
-        # kilobytes of nested entities would otherwise expand to gigabytes.
+        # defusedxml protects against entity expansion attacks.
         root = ET.fromstring(data)
     except ParseError:
         return None
     if (root.findtext("NOR") or "").strip().upper() != nor.strip().upper():
         return None
-    # Ordinary and organic laws both carry NATURE "LOI"; anything else with this
-    # NOR (a rectificatif, a decree) is not the text we were asked for.
+    # Ordinary and organic laws are both "LOI"; skip rectificatifs, decrees, etc.
     nature = (root.findtext("NATURE") or "").strip()
     if nature.upper() != "LOI":
         return None
@@ -210,7 +177,7 @@ def _search_archive(blob: bytes, nor: str, source: str) -> LawText | None:
                 if not (member.isfile() and TEXT_MEMBER_RE.search(member.name)):
                     continue
                 if member.size > MAX_MEMBER_BYTES:
-                    continue  # no single JO text is this large; skip rather than read
+                    continue
                 handle = archive.extractfile(member)
                 if handle is None:
                     continue

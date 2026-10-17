@@ -1,11 +1,7 @@
-{# Ballot + live confirmation. Works as a plain form (no JS); HTMX enhances it
-   to swap this fragment in place.
+{# Ballot. Works as a plain form; HTMX swaps this fragment in place.
 
-   `notice` carries the reason a vote was refused. It only ever arrives on the
-   HTMX path: without JavaScript a refusal is a redirect or an error page, and
-   the message belongs there instead. `law` is absent in the one case where the
-   votation itself has gone — archived or unpublished between the page load and
-   the submit — and then there is nothing left to draw but the message. #}
+   `notice` is a refusal message (HTMX only). `law` is None if the vote was
+   archived or unpublished in the meantime: then only the message is shown. #}
 <div id="ballot">
   {% if notice %}
   <p class="vote-notice" role="alert">{{ notice }}</p>
@@ -18,14 +14,9 @@
       <legend>Votre vote</legend>
       {% for choice in choices %}
       <label class="choice">
-        {# `required` on the group, so an empty ballot is caught by the browser
-           before a request is made. The route still handles the empty case: it
-           is reachable without JavaScript disabled, just not from this form. #}
+        {# `required`, so the browser catches an empty ballot. The route handles it too. #}
         <input type="radio" name="choice" value="{{ choice.value }}" required
                {% if existing_choice == choice.value %}checked{% endif %}>
-        {# `CHOICE_LABELS`, not an if/elif chain: the chain ended in an `else`, so
-           a fourth choice would have been offered to voters as « Abstention ».
-           See `app.labels.CHOICE_LABELS`. #}
         {{ CHOICE_LABELS[choice.value] }}
       </label>
       {% endfor %}
@@ -45,11 +36,7 @@
         ailleurs), uniquement pour que les compteurs restent justes si vous
         modifiez votre vote. Effacer vos cookies l'efface aussi.
       </p>
-      {# `selected` from `chosen`: these are typed on the same submit as the
-         vote, so a refused ballot must hand them back. Without it a rate-limited
-         voter got their radio button returned and these three silently reset,
-         with nothing on the page saying so. A value that is not one of the
-         options below simply matches nothing. #}
+      {# `chosen` keeps the selection when the ballot is refused. #}
       <label class="demo-field">Tranche d'âge
         <select name="age_bracket">
           <option value="">Ne pas renseigner</option>
