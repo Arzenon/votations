@@ -126,7 +126,7 @@ def test_every_admin_route_refuses_a_request_with_no_credentials(client):
             answer = client.request(method.upper(), url, follow_redirects=False)
             if answer.status_code != 401:
                 leaked.append(f"{method.upper()} {url} → {answer.status_code}")
-    assert not leaked, f"routes d'administration atteignables sans identifiants : {leaked}"
+    assert not leaked, f"admin routes reachable without credentials: {leaked}"
 
 
 def test_a_cross_site_post_is_refused_before_the_credentials_are_read(client, db_session):

@@ -11,9 +11,9 @@ build/
 dist/
 .idea/
 
-# Les instantanés de contenu, pas le dossier qui les reçoit.
+# Content snapshots, but not the directory itself.
 exports/*
 !exports/.gitkeep
 
-# Utilitaire personnel sans rapport avec le projet, posé ici par commodité.
+# Personal tool unrelated to the project.
 dmarc/*

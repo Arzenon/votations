@@ -105,7 +105,7 @@ def test_a_vote_that_did_not_adopt_the_text_is_ignored():
 
     index = {"a": _scrutin("a"), "b": _scrutin("b", sort="rejeté")}
     chosen = final_vote(["a", "b"], index)
-    assert chosen is not None and chosen.uid == "a", "le rejet ultérieur ne remplace pas"
+    assert chosen is not None and chosen.uid == "a", "a later rejection does not replace it"
 
 
 def test_a_vote_on_part_of_a_text_is_not_a_vote_on_the_text():

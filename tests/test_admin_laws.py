@@ -157,7 +157,7 @@ def test_an_unpublished_law_can_be_previewed_by_the_admin(client, db_session):
 def test_the_preview_shows_the_ballot_but_cannot_vote(client, db_session):
     law = make_law(db_session, slug="loi-apercu-vote", published=False)
     page = client.get(f"/admin/lois/{law.id}/apercu", headers=admin_headers()).text
-    assert "Votre vote" in page, "le bulletin doit être visible tel qu'il sera"
+    assert "Votre vote" in page, "the ballot should be shown as it will be"
     assert "disabled" in page
 
     # And the real vote route still refuses, preview or not.

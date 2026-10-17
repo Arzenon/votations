@@ -30,7 +30,7 @@ def robots(html: str) -> str | None:
 def structured_data(html: str) -> dict:
     """The page's JSON-LD, parsed (a parse error would mean broken escaping)."""
     block = re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S)
-    assert block, "aucun bloc de données structurées sur la page"
+    assert block, "no structured data block on the page"
     return json.loads(block.group(1))
 
 
@@ -146,7 +146,7 @@ def test_the_results_page_marks_up_only_what_it_shows(client, db_session):
     page = client.get(f"/loi/{law.slug}/resultats").text
 
     node = nodes_of(page, "Legislation")[0]
-    assert node["name"] == "Loi visible", "le titre, lui, est bien affiché"
+    assert node["name"] == "Loi visible", "the title is shown"
     assert "description" not in node
     assert "Un résumé que cette page n'affiche pas" not in page
 
@@ -158,7 +158,7 @@ def test_a_title_cannot_break_out_of_the_structured_data(client, db_session):
     page = client.get(f"/loi/{law.slug}").text
 
     assert "<script>alert(1)</script>" not in page
-    assert structured_data(page), "et le bloc reste du JSON lisible"
+    assert structured_data(page), "and the block is still valid JSON"
     assert nodes_of(page, "Legislation")[0]["name"] == hostile
 
 

@@ -14,5 +14,5 @@ __pycache__/
 # Content snapshots from the `content-export` service.
 exports/
 .env
-# Utilitaire personnel sans rapport avec le projet (voir .gitignore).
+# Personal tool unrelated to the project (see .gitignore).
 dmarc/

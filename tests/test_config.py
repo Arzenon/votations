@@ -172,29 +172,29 @@ def _documented() -> set[str]:
 def test_every_essential_setting_really_exists():
     """Every setting listed here exists."""
     unknown = ESSENTIAL - set(Settings.model_fields)
-    assert not unknown, f"listés comme essentiels mais absents de Settings : {sorted(unknown)}"
+    assert not unknown, f"listed as essential but missing from Settings: {sorted(unknown)}"
 
 
 def test_the_deployment_variables_are_not_application_settings():
     """DEPLOYMENT_ONLY variables aren't app settings."""
     disguised = DEPLOYMENT_ONLY & set(Settings.model_fields)
     assert not disguised, (
-        "ce sont des réglages de l'application : ils relèvent d'ESSENTIAL, "
-        f"pas de DEPLOYMENT_ONLY : {sorted(disguised)}"
+        "these are app settings: they belong in ESSENTIAL, "
+        f"not DEPLOYMENT_ONLY: {sorted(disguised)}"
     )
 
 
 def test_the_example_documents_everything_it_should():
     missing = EXPECTED - _documented()
-    assert not missing, f"à documenter dans .env.example : {sorted(missing)}"
+    assert not missing, f"missing from .env.example: {sorted(missing)}"
 
 
 def test_the_example_documents_nothing_else():
     """`.env.example` contains nothing else."""
     extra = _documented() - EXPECTED
     assert not extra, (
-        "ces réglages ont une valeur par défaut qui marche : documentez-les dans "
-        f"app/config.py plutôt que dans .env.example : {sorted(extra)}"
+        "these settings have a working default: document them in "
+        f"app/config.py rather than .env.example: {sorted(extra)}"
     )
 
 
@@ -203,14 +203,14 @@ def test_the_settings_the_stack_imposes_stay_out_of_the_example():
     compose = PROD_COMPOSE.read_text(encoding="utf-8")
     for name in sorted(IMPOSED_BY_THE_STACK):
         assert re.search(rf"^\s+{name}:", compose, re.MULTILINE), (
-            f"{name} n'est plus imposé par docker-compose.prod.yml : il redevient "
-            "un choix d'opérateur, à documenter dans .env.example et à lister "
-            "dans ESSENTIAL"
+            f"{name} is no longer set by docker-compose.prod.yml: it becomes an "
+            "operator choice again, to document in .env.example and list in "
+            "ESSENTIAL"
         )
         assert name.lower() not in _documented(), (
-            f"{name} est imposé par docker-compose.prod.yml, dont le bloc "
-            "`environment` l'emporte sur `.env` : le documenter ici laisse croire "
-            "qu'on peut le changer là"
+            f"{name} is set by docker-compose.prod.yml, whose `environment` "
+            "block overrides `.env`: documenting it here suggests it can be "
+            "changed there"
         )
 
 

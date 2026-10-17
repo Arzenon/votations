@@ -93,8 +93,8 @@ DIMENSION_ORDER = {
 VALID_CATEGORIES = {dim: set(order) for dim, order in DIMENSION_ORDER.items()}
 
 # Approximate national shares (%), only used to compare the sample with the
-# population, never to weight results. Ordres de grandeur INSEE (population
-# adulte pour l'âge, population totale pour le sexe et la région).
+# population, never to weight results. Rough INSEE figures (adult population
+# for age, total population for sex and region).
 INSEE_REFERENCE = {
     # Fallback, close to the INSEE adult shares (18+).
     DIMENSION_AGE: {
@@ -107,7 +107,7 @@ INSEE_REFERENCE = {
     DIMENSION_SEXE: {
         "femme": 51.5,
         "homme": 48.5,
-        # "autre" n'est pas mesuré par l'INSEE, donc pas de référence.
+        # INSEE doesn't measure "autre", so no reference.
     },
     DIMENSION_REGION: {
         "Île-de-France": 18.3,

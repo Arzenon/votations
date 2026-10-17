@@ -430,5 +430,5 @@ def test_propagation_writes_no_entry_in_the_public_history(db_session):
 
     assert imports_crud.propagate_parliament_record(db_session) == 1
     db_session.refresh(law)
-    assert law.an_vote_for == 291, "le décompte est bien arrivé"
+    assert law.an_vote_for == 291, "the vote count arrived"
     assert db_session.query(LawRevision).filter_by(law_id=law.id).count() == 0

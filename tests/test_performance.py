@@ -265,7 +265,7 @@ def test_the_home_page_counts_every_law_s_votes_in_one_query(client, db_session,
     with count_queries() as seen:
         client.get("/")
     counted = [q for q in seen if "count" in q.lower() and " votes" in q.lower()]
-    assert len(counted) <= 1, f"{len(counted)} requêtes de comptage : {counted}"
+    assert len(counted) <= 1, f"{len(counted)} count queries: {counted}"
 
 
 # --- The memo: never staler than the page already says it may be --------------
@@ -281,7 +281,7 @@ def test_the_home_page_does_not_recount_inside_its_own_cache_window(
     with count_queries() as seen:
         client.get("/")
     counted = [q for q in seen if "count" in q.lower() and " votes" in q.lower()]
-    assert counted == [], f"la page a recompté les votes : {counted}"
+    assert counted == [], f"the page counted the votes again: {counted}"
 
 
 def test_a_ballot_makes_the_home_page_count_that_law_again(client, db_session, open_law):
@@ -297,7 +297,7 @@ def test_an_open_votation_recounts_its_results_every_time(client, open_law, coun
     with count_queries() as seen:
         client.get(f"/loi/{open_law.slug}/resultats")
     assert [q for q in seen if "from votes" in q.lower()], (
-        "les résultats d'une votation ouverte doivent être comptés en direct"
+        "results of an open vote should be counted live"
     )
 
 
@@ -307,7 +307,7 @@ def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, c
     with count_queries() as seen:
         client.get(f"/loi/{closed_law.slug}/resultats")
     touched = [q for q in seen if "from votes" in q.lower()]
-    assert touched == [], f"une votation close a été recomptée : {touched}"
+    assert touched == [], f"a closed vote was counted again: {touched}"
 
 
 def test_the_memo_window_is_the_one_the_page_promises():

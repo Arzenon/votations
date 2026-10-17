@@ -670,8 +670,8 @@ def test_the_budget_reaches_the_downloads_themselves(db_session, background_db, 
 
     for step in ("texte officiel", "comptes rendus"):
         budget = seen.get(step)
-        assert budget is not None, f"les téléchargements « {step} » ne sont pas bornés"
-        assert 0 < budget <= 600, f"« {step} » a reçu {budget} s sur un budget de 600 s"
+        assert budget is not None, f"downloads for {step!r} are not bounded"
+        assert 0 < budget <= 600, f"{step!r} got {budget} s out of a 600 s budget"
 
 
 def test_a_download_that_never_ends_is_cut_at_the_budget(monkeypatch):

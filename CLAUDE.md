@@ -1,139 +1,117 @@
-# Votations Françaises — Citizens' Voice on French Legislation
+# Votations Françaises
 
-## Vision
+A civic platform where French citizens give their opinion on laws passed by
+Parliament, inspired by Swiss popular votes. It doesn't replace the legislative
+process: it offers a transparent, accessible and honest space for expression.
+Technical documentation for developers is in `README.md` (in French).
 
-Votations Françaises is a civic platform that allows French citizens to express their opinion on laws passed by Parliament, inspired by the Swiss popular vote model. The goal is not to replace the legislative process, but to offer a transparent, accessible, and honest space for democratic expression.
+## Principles
 
-The project is built on one cardinal principle: **radical transparency**. Where polls hide their biases and media outlets frame their analyses, Votations Françaises exposes its limitations, publishes its data, and lets every citizen form their own opinion.
+- **Transparency.** The system's limitations are displayed permanently. Results
+  are never presented as representative of the French population, only as the
+  opinion of the people who took part. Data is published as open data, raw and
+  anonymised, and the evolution of votes over time is visible so organised
+  campaigns can be spotted.
+- **Neutrality.** Every law is presented with the same structure:
+  1. **Ce que dit la loi**: factual summary of the official text, no
+     interpretation.
+  2. **Ce que ça change en pratique**: concrete effects, in plain language.
+  3. **Arguments des partisans**: sourced and attributed, no comment.
+  4. **Arguments des opposants**: sourced and attributed, no comment.
 
----
+  The platform aims for objectivity as far as possible.
+- **Simplicity.** Usable by everyone: on mobile, on a slow connection, without
+  being comfortable with technology. An ethical choice as much as a technical
+  one.
+- **Resistance to manipulation.** Statistics stay simple: for, against, abstain,
+  number of voters and the evolution curve. No cross-referencing of data without
+  enough volume to prevent re-identification. The same threshold applies to the
+  export: below it, the export has no timestamps, otherwise knowing when someone
+  voted would reveal how they voted.
+- **No personal data.** A vote must not be linkable to an identity, even
+  indirectly. No browsing, location or behavioural data is collected.
 
-## Founding Principles
+## What it is not
 
-### 1. Transparency First
+- **A representative poll**: participants select themselves and results can't
+  be generalised.
+- **A political tool**: the platform supports no side and makes no
+  recommendation.
+- **A social network**: no comments, no likes, nothing designed to create
+  dependency or polarisation.
 
-- System limitations are displayed permanently and prominently.
-- Results are never presented as representative of the French population as a whole, but as the expression of people registered on the platform.
-- All collected data is published as open access, in raw anonymised format, to enable independent analysis.
-- The evolution of votes over time is visible, in order to detect any organised mobilisation campaigns.
+## Features
 
-### 2. Objectivity in the Presentation of Laws
-
-Each law is presented according to a strict, neutral structure:
-
-- **What the law says**: factual summary of the official text, without interpretation.
-- **What it changes in practice**: practical impacts for citizens, written in accessible language.
-- **Arguments put forward by supporters**: sourced, attributed, without editorial comment.
-- **Arguments put forward by opponents**: sourced, attributed, without editorial comment.
-
-The platform takes no position. Symmetry between arguments for and against is systematically maintained.
-
-### 3. Simplicity and Accessibility
-
-The site must be usable by everyone: on mobile and desktop, on slow connections, by people who are not digitally confident. Interface simplicity is not a technical constraint — it is an ethical choice.
-
-### 4. Anti-Manipulation
-
-Displayed statistics are deliberately simple and resistant to manipulation:
-- Percentage for / against
-- Total number of voters
-- Vote evolution curve over time
-
-No cross-referencing of data will be displayed without guaranteeing sufficient volume to prevent re-identification or partisan exploitation.
-
-The same threshold governs the open-data export: it may never reveal more than the results page does. Below the minimum volume, the export carries no timestamps at all — publishing the exact moment of each vote would hand back the very time distribution the threshold withholds, and would let anyone who knows *when* a person voted read *how* they voted.
-
----
-
-## What Votations Françaises Is Not
-
-- **It is not a representative poll.** Participants self-select. Results cannot be generalised to the French population.
-- **It is not a political tool.** The platform takes no side, supports no movement, and makes no recommendations.
-- **It is not a social network.** There are no comments, likes, or engagement mechanisms designed to create dependency or polarisation.
-
----
-
-## Core Features
-
-### Home Page
-- Highlights the latest laws submitted to a vote
-- Search bar to find any law in the database, regardless of age
-
-### Law / Vote Page
-- Neutral presentation of the law (4-block structure described above)
-- Voting interface (for / against / abstain)
-- Permanent disclaimer on representativeness limitations
-- Results are public throughout: a running tally is available on the results page
-  while the vote is open, clearly marked as provisional, and raw data can be
-  downloaded at any point. Withholding figures until closing would mean asking
-  citizens to trust a number they cannot check, which is the opposite of what
-  this platform is for. The vote page itself keeps the ballot uncluttered and
-  shows the tally once voting has closed.
-
-### Administration Page
-- Creation and management of laws submitted to a vote
-- Configuration of opening and closing dates
-- Real-time vote tracking
-- Export of anonymised data
-
----
-
-## Authentication
-
-### What Authentication Is For
-The platform needs exactly one guarantee: **one person, one vote**. It does not need to know who the voter is, and it does not need their nationality. Every candidate mechanism is judged against that single requirement, and against the constraint that no personal data be retained.
-
-### Provisional Phase
-The provisional authentication mechanism is yet to be decided. Whatever solution is chosen, the site disclaimer will explicitly state how it works and what its limitations are.
-
-### FranceConnect Is Blocked, and Not for Technical Reasons
-FranceConnect is **not available to this project**. The obstacle is legal, not a matter of project maturity.
-
-The arrêté of 8 November 2018 (NOR PRMJ1819224A), article 4, as amended by the arrêté of 17 March 2026, admits four categories of service provider: administrative authorities empowered by a legal text; providers of change-of-address services; administrative authorities running electronic voting for their own professional elections; and private legal entities placed under an **explicit statutory obligation** to verify the identity of their own users. A privately run civic-expression platform falls under none of them. No feature added to the product would change that — only a change in the project's legal nature would, by becoming or being carried by a public authority.
-
-Two further findings, established and not to be re-litigated:
-
-- **FranceConnect does not transmit nationality.** The pivot identity is limited to surname, given names, usual name, sex, date of birth, INSEE codes of the city and country of birth, a verified email, and a pseudonymous `sub` unique to each service provider. Country of birth is not a substitute for nationality, and using it as one would be both factually wrong and discriminatory.
-- What FranceConnect proves is **attachment to the French administration**, not French citizenship. A foreign resident who pays tax in France has an account.
-
-That second limitation is accepted rather than regretted: laws passed by Parliament apply to those who live in France, not to those who hold its nationality.
-
-### Target Phase
-Should the project ever be carried by a public authority, FranceConnect becomes available under category 1 or 3 above. The `sub` identifier alone would then satisfy the one-person-one-vote requirement — stored hashed, with no civil-status data retained — which keeps the design compatible with the no-personal-data principle.
-
-Failing that, the only technically open route to certified uniqueness is a private identity provider such as L'Identité Numérique La Poste (eIDAS substantial level, attested by ANSSI, sold directly to private services outside the DINUM eligibility review). Its coverage is far below FranceConnect's, which federates impots.gouv.fr and ameli.fr, and it is not free.
-
-### What the Disclaimer Must Say
-Whichever mechanism is in place, its limitation is stated plainly and permanently, as the transparency principle requires: voters are people attached to the French administration, one person carries one voice, and **nationality is not verified**.
-
----
-
-## Data and Privacy
-
-The goal is to collect **no personal data whatsoever**, which radically simplifies GDPR obligations and builds user trust. The technical design must ensure that a vote cannot be linked to a real identity, even indirectly.
-
-- Data exported as open access contains no information that could identify a voter.
-- No browsing, location, or behavioural data is collected.
-
----
-
-## Source of Laws
-
-Laws are sourced from the **Journal Officiel de la République Française**, accessible via the public Légifrance API (DILA). Presentation summaries are written manually or AI-assisted, then reviewed and validated by a human before publication, to ensure neutrality and accuracy.
-
----
+- The home page highlights the latest laws put to the vote, with a search over
+  all laws.
+- A law page shows the four blocks and the ballot (for, against, abstain), with
+  the representativeness disclaimer.
+- Results are public for the whole duration of the vote: the results page shows
+  a provisional count and raw data can be downloaded at any time. Hiding the
+  figures until closing would mean asking people to trust a number they can't
+  check. The law page itself only shows the count once voting has closed.
+- Laws come from the Journal Officiel. Presentations are written by hand or with
+  AI assistance, then reviewed and validated by a person before publication.
+- The admin creates and manages votations, sets opening and closing dates, and
+  follows votes in real time.
 
 ## Roadmap
 
 | Phase | Goal |
 |---|---|
-| MVP | Home page, vote page, results page, admin, provisional auth |
-| V1 | Advanced search, raw data export, vote evolution curve |
+| MVP | Home page, vote page, results, admin, provisional authentication |
+| V1 | Advanced search, raw data export, evolution curve |
 | V2 | Certified uniqueness through a private identity provider |
-| V3 | Opening the admin page to all authenticated users |
+| V3 | Admin opened to all authenticated users |
 
-**FranceConnect is deliberately absent from this roadmap.** It is not a milestone a more mature project eventually reaches: it is conditioned on the project being carried by a public authority, which is a governance decision taken outside the codebase. See Authentication.
+FranceConnect is deliberately absent: see below.
 
----
+## Authentication
 
-*This document defines the vision and values of the project. Technology choices will be documented separately as development progresses.*
+Authentication has one purpose: **one person, one vote**. It doesn't need to know
+who votes or their nationality, and must not retain personal data.
+
+Today `AnonymousProvider` stores a random token in a signed cookie (hashed in the
+database). It's a weak guarantee, and the site's disclaimer says so.
+
+### FranceConnect is not available
+
+The obstacle is legal, not technical. The arrêté of 8 November 2018 (NOR
+PRMJ1819224A), article 4, as amended by the arrêté of 17 March 2026, admits four
+categories of service provider: administrative authorities empowered by a legal
+text; change-of-address services; administrative authorities running electronic
+voting for their own professional elections; and private legal entities under an
+explicit statutory obligation to verify their users' identity. A private civic
+platform falls under none of them. Only a change in the project's legal nature
+(being carried by a public authority) would change that.
+
+These findings are established and not to be re-litigated:
+
+- **FranceConnect doesn't transmit nationality.** The pivot identity is limited
+  to surname, given names, usual name, sex, date of birth, INSEE codes of the
+  place and country of birth, a verified email and a `sub` identifier unique to
+  each service. Country of birth is not nationality, and using it as such would
+  be wrong and discriminatory.
+- It proves attachment to the French administration, not citizenship. This is
+  accepted: laws apply to those who live in France.
+
+If the project were ever carried by a public authority, the `sub` identifier
+alone, stored hashed, would ensure uniqueness without keeping any civil status
+data. Otherwise, the only route to certified uniqueness is a private identity
+provider such as L'Identité Numérique La Poste (eIDAS substantial level), which
+costs money and covers far fewer people.
+
+Whatever the mechanism, the disclaimer states plainly that voters are people
+attached to the French administration, that one person carries one vote, and
+that **nationality is not verified**.
+
+## Code conventions
+
+- Comments and docstrings are in **English**, short, and only explain the *why*
+  when it isn't obvious. No narrative history of past bugs.
+- Everything users or operators read is in **French**: the UI, displayed
+  messages, logs, `README.md`, `DEPLOY.md`, `.env.example`.
+- French domain terms stay in French, even in English comments (votation,
+  scrutin, CMP, compte rendu, Journal Officiel).
+- Never use em dashes (—) or en dashes (–), in code, comments or docs. Use a
+  comma, colon or parentheses instead.

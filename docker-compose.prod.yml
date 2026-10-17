@@ -103,7 +103,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
-      INSEE_REFRESH_INTERVAL: "2592000"   # lu par le script shell, pas par l'app
+      INSEE_REFRESH_INTERVAL: "2592000"   # read by the shell script, not the app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/insee_cron.sh"]
     # Only /tmp is written (heartbeat, and HOME for content-export). Snapshots go
@@ -140,7 +140,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://votations:${POSTGRES_PASSWORD:?définissez POSTGRES_PASSWORD}@db:5432/votations
-      AN_REFRESH_INTERVAL: "86400"        # lu par le script shell, pas par l'app
+      AN_REFRESH_INTERVAL: "86400"        # read by the shell script, not the app
       HEARTBEAT_FILE: /tmp/refresh-alive
     entrypoint: ["./docker/assemblee_cron.sh"]
     # Only /tmp is written (heartbeat, and HOME for content-export). Snapshots go

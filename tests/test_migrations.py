@@ -22,7 +22,7 @@ def test_the_migrated_schema_matches_the_models(engine):
         )
         differences = compare_metadata(context, Base.metadata)
     assert differences == [], (
-        "les modèles et les migrations divergent - générez une révision :\n  "
+        "models and migrations differ, generate a revision:\n  "
         "alembic revision --autogenerate -m '…'\n"
         f"{differences}"
     )
@@ -56,7 +56,7 @@ def test_the_profiled_votes_index_is_partial(engine):
             text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_votes_law_profiled'")
         ).scalar()
 
-    assert definition, "l'index partiel des votes profilés est absent"
+    assert definition, "the partial index on profiled votes is missing"
     assert "WHERE demographics_recorded" in definition, definition
 
 
@@ -90,7 +90,7 @@ def test_the_chain_downgrades_and_upgrades_again(engine):
         command.downgrade(config, "base")
         command.upgrade(config, "head")
     except Exception as exc:  # pragma: no cover
-        pytest.fail(f"la chaîne de migrations ne fait pas l'aller-retour : {exc}")
+        pytest.fail(f"migrations do not downgrade and upgrade cleanly: {exc}")
 
     with engine.connect() as connection:
         context = MigrationContext.configure(

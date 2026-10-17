@@ -175,7 +175,7 @@ def test_htmx_is_configured_not_to_evaluate_anything(client, open_law):
     assert '"allowScriptTags":false' in page
 
 
-# --- Pages légales ------------------------------------------------------------
+# --- Legal pages --------------------------------------------------------------
 
 
 def test_the_privacy_page_lists_both_cookies_by_name(client):
@@ -305,11 +305,11 @@ def _stylesheet_selectors() -> list[str]:
                 prelude = ""
         elif char == "}":
             depth -= 1
-            assert depth >= 0, "styles.css ferme une accolade jamais ouverte"
+            assert depth >= 0, "styles.css closes a brace that was never opened"
             prelude = ""
         elif depth == 0:
             prelude += char
-    assert depth == 0, "styles.css laisse une accolade ouverte"
+    assert depth == 0, "styles.css leaves a brace open"
     return selectors
 
 
@@ -320,8 +320,8 @@ def test_no_rule_in_the_stylesheet_has_lost_its_selector():
     """
     for selector in _stylesheet_selectors():
         assert ";" not in selector and "}" not in selector, (
-            f"« {selector[:80]}… » n'est pas un sélecteur : une déclaration a "
-            "perdu le sien, et la règle suivante est perdue avec elle"
+            f"{selector[:80]!r} is not a selector: a declaration lost its own, "
+            "and the next rule is lost with it"
         )
 
 
@@ -364,7 +364,7 @@ def test_nothing_is_dropped_by_the_fold(client, db_session):
     law = make_law(db_session, slug="loi-repliee", practical_changes=_practical(20))
     page = client.get(f"/loi/{law.slug}").text
     for i in range(1, 21):
-        assert f"public numéro {i}," in page, f"public {i} disparu de la page"
+        assert f"public numéro {i}," in page, f"audience {i} missing from the page"
 
 
 def test_the_fold_needs_no_javascript(client, db_session):
@@ -390,10 +390,10 @@ def test_labelled_publics_become_rows_and_none_is_hidden(client, db_session):
     page = client.get(f"/loi/{law.slug}").text
 
     for i in range(1, 13):
-        assert f"<summary>Pour le public {i}</summary>" in page, f"public {i} sans ligne"
-    assert "autres publics concernés" not in page, "plus rien derrière un compteur"
+        assert f"<summary>Pour le public {i}</summary>" in page, f"audience {i} has no row"
+    assert "autres publics concernés" not in page, "nothing hidden behind a counter"
     assert page.count('<details class="public">') == 12
-    assert "12 publics concernés" in page, "le compte est exact, donc il est annoncé"
+    assert "12 publics concernés" in page, "the count is exact, so it is shown"
 
 
 def test_a_paragraph_without_a_label_stays_visible_among_the_rows(client, db_session):
@@ -409,8 +409,8 @@ def test_a_paragraph_without_a_label_stays_visible_among_the_rows(client, db_ses
     )
     page = client.get(f"/loi/{law.slug}").text
     assert page.count('<details class="public">') == 2
-    assert "Si vous êtes locataire, propriétaire ou occupant" in page, "rien n'est perdu"
-    assert "<summary>Si vous êtes locataire" not in page, "pas d'étiquette inventée"
+    assert "Si vous êtes locataire, propriétaire ou occupant" in page, "nothing is lost"
+    assert "<summary>Si vous êtes locataire" not in page, "no invented label"
     # No audience count shown, since it would be wrong.
     assert "publics concernés" not in page
 
@@ -431,7 +431,7 @@ def test_the_ballot_can_be_reached_from_the_top_of_the_page(client, db_session):
     page = client.get(f"/loi/{law.slug}").text
     assert 'href="#voter"' in page
     assert 'id="voter"' in page
-    assert page.index('href="#voter"') < page.index('id="voter"'), "l'ancre précède la cible"
+    assert page.index('href="#voter"') < page.index('id="voter"'), "link before its target"
 
 
 def test_what_the_law_says_folds_only_when_the_encart_carries_the_opening(client, db_session):
@@ -471,7 +471,7 @@ def test_the_home_page_is_ordered_by_promulgation_not_by_data_entry(client, db_s
 
     page = client.get("/").text
     order = [page.index(f"/loi/{s}") for s in ("recente", "moyenne", "ancienne")]
-    assert order == sorted(order), "la plus récemment promulguée doit venir en premier"
+    assert order == sorted(order), "the most recently promulgated should come first"
 
 
 def test_a_law_with_no_promulgation_date_does_not_open_the_site(client, db_session):
@@ -559,7 +559,7 @@ def test_a_law_appears_in_exactly_one_band(client, db_session):
     )
     bands = laws_crud.published_by_state(db_session)
     listed = [law.slug for _, laws in bands for law in laws]
-    assert listed.count("sur-le-fil") == 1, f"listée dans plusieurs bandes : {bands}"
+    assert listed.count("sur-le-fil") == 1, f"listed in several sections: {bands}"
 
 
 def test_several_bands_are_titled_and_ordered_by_what_you_can_do(client, db_session):

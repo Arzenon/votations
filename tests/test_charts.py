@@ -33,8 +33,8 @@ def test_the_chart_stays_inside_its_plot_area():
     assert chart is not None
     for serie in chart.series:
         ys = [float(v) for v in re.findall(r"[-\d.]+ ([-\d.]+)", serie.line)]
-        assert min(ys) >= chart.plot_top - 0.01, "la courbe sort par le haut"
-        assert max(ys) <= chart.plot_bottom + 0.01, "la courbe passe sous zéro"
+        assert min(ys) >= chart.plot_top - 0.01, "the curve goes above the plot"
+        assert max(ys) <= chart.plot_bottom + 0.01, "the curve goes below zero"
 
 
 def test_the_chart_axis_stops_on_a_round_number():
@@ -51,11 +51,11 @@ def test_the_chart_thins_its_date_labels():
 
     for days in (2, 7, 20, 30, 45, 120):
         chart = build_evolution_chart([_bucket(f"2026-05-{(i % 28) + 1:02}") for i in range(days)])
-        assert len(chart.x_ticks) <= 8, f"{days} jours : trop d'étiquettes"
+        assert len(chart.x_ticks) <= 8, f"{days} days: too many labels"
         gaps = [
             chart.x_ticks[i + 1][0] - chart.x_ticks[i][0] for i in range(len(chart.x_ticks) - 1)
         ]
-        assert not gaps or min(gaps) > 40, f"{days} jours : étiquettes trop serrées"
+        assert not gaps or min(gaps) > 40, f"{days} days: labels too close"
     assert chart.x_ticks[0][1] == "01/05"
 
 
@@ -167,11 +167,11 @@ def test_the_axis_never_draws_more_labels_than_it_promises():
     for n in (1, 2, 3, 7, 8, 30, 60, 61, 90, 180, 365, 400, 733):
         days = _days(n)
         chart = build_evolution_chart(days)
-        assert len(chart.x_ticks) <= MAX_X_LABELS, f"{n} jours -> {len(chart.x_ticks)} étiquettes"
+        assert len(chart.x_ticks) <= MAX_X_LABELS, f"{n} days -> {len(chart.x_ticks)} labels"
         # The last label is the actual last day, even when grouped by week.
-        assert chart.x_ticks[-1][1] == _short_date(days[-1].label), f"{n} jours"
+        assert chart.x_ticks[-1][1] == _short_date(days[-1].label), f"{n} days"
         # And the first, or the axis starts nowhere.
-        assert chart.x_ticks[0][1] == _short_date(days[0].label), f"{n} jours"
+        assert chart.x_ticks[0][1] == _short_date(days[0].label), f"{n} days"
 
 
 # --- The table under the curve ------------------------------------------------
@@ -194,9 +194,7 @@ def test_the_day_by_day_table_is_dated_in_french(client, open_law, monkeypatch):
     today = datetime.now(UTC).astimezone(display_zone()).date()
 
     assert f'<th scope="row">{french_date(today)}</th>' in page, (
-        "le tableau doit dater ses lignes en français"
+        "the table rows should have French dates"
     )
     # Only check the row header: the JSON-LD has ISO dates on purpose.
-    assert f'<th scope="row">{today.isoformat()}' not in page, (
-        "la forme ISO ne doit pas être ce que le tableau affiche"
-    )
+    assert f'<th scope="row">{today.isoformat()}' not in page, "the table should not show ISO dates"

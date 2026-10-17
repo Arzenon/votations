@@ -161,7 +161,7 @@ def test_voting_twice_at_once_updates_instead_of_failing(db_session, open_law):
     assert second_previous == "for"
 
 
-# --- Les trois choix, écrits une fois -------------------------------------------
+# --- Choice labels ---------------------------------------------------------------
 
 
 def test_every_choice_has_a_label():
@@ -186,7 +186,7 @@ def test_the_ballot_and_the_results_name_the_choices_the_same_way(client, closed
         assert label in page, label
 
 
-# --- Un bulletin refusé rend ce qui avait été saisi ------------------------------
+# --- A refused ballot keeps what was entered -------------------------------------
 
 
 def test_a_refused_ballot_hands_back_the_profile_that_was_typed(client, open_law):

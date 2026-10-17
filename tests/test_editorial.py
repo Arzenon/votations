@@ -270,7 +270,7 @@ def test_the_opening_paragraph_is_lifted_only_when_something_remains(client, db_
     body = client.get("/loi/para-unique").text
     section = body.split("<h2>Ce que dit la loi</h2>")[1].split("</section>")[0]
     assert "Tout tient en un paragraphe." in section
-    assert 'class="encart"' not in body, "rien à mettre en encart, donc pas d'encart"
+    assert 'class="encart"' not in body, "nothing to put in the top box, so no box"
 
 
 def test_the_debate_sentence_is_shown_and_declared(client, db_session):
@@ -289,7 +289,7 @@ def test_the_debate_sentence_is_shown_and_declared(client, db_session):
     encart = body.split('class="encart"')[1].split("</aside>")[0]
     assert "contrôle judiciaire des techniques" in encart
     assert "Ce qui a été débattu" in encart
-    assert "seule que cette" in body, "la note de provenance doit la déclarer"
+    assert "seule que cette" in body, "the provenance note should mention it"
 
 
 def test_a_law_with_no_debate_sentence_shows_no_such_block(client, db_session):

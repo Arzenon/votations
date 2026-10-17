@@ -108,8 +108,8 @@ def test_every_column_of_a_law_is_carried_or_deliberately_left_out(db_session):
     columns = {column.name for column in Law.__table__.c}
     undecided = columns - set(LAW_FIELDS) - _NOT_CARRIED
     assert not undecided, (
-        f"{sorted(undecided)} : ajoutez ces colonnes à LAW_FIELDS, ou à _NOT_CARRIED "
-        "avec la raison de ne pas les emporter"
+        f"{sorted(undecided)}: add these columns to LAW_FIELDS, or to _NOT_CARRIED "
+        "with the reason for leaving them out"
     )
     # And nothing names a column that no longer exists.
     assert set(LAW_FIELDS) <= columns
