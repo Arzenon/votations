@@ -158,3 +158,13 @@ Pas de journaux d'accès (uvicorn `--no-access-log`, Caddy ne garde que les
 erreurs, sans IP). Les journaux de l'application ne contiennent ni adresse, ni
 cookie, ni jeton, et les erreurs SQL n'incluent pas leurs paramètres
 (`hide_parameters=True`).
+
+## Licence
+
+Code publié sous licence [GNU AGPL v3.0](LICENSE) ou toute version ultérieure.
+Si vous faites tourner une version modifiée accessible en ligne, vous devez en
+fournir le code source à ses utilisateurs.
+
+Les données de vote exportées par le site sont publiées sous
+[Licence Ouverte 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/)
+(Etalab) : réutilisation libre, y compris commerciale, en citant la source.

@@ -1,8 +1,8 @@
 """schema.org structured data (JSON-LD) for each page.
 
-Only states what the page already shows. No licence is declared, since none
-has been chosen yet. JSON-LD blocks aren't executed, so the CSP doesn't need
-to change. Rendered with Jinja's ``tojson``, which escapes ``<`` and ``>``.
+Only states what the page already shows. JSON-LD blocks aren't executed, so the
+CSP doesn't need to change. Rendered with Jinja's ``tojson``, which escapes
+``<`` and ``>``.
 """
 
 from __future__ import annotations
@@ -16,6 +16,10 @@ from app.security import safe_url
 SITE_NAME = "Votations Françaises"
 
 LANGUAGE = "fr-FR"
+
+# Licence of the published vote data (the code itself is AGPL-3.0).
+DATA_LICENCE_NAME = "Licence Ouverte 2.0"
+DATA_LICENCE_URL = "https://www.etalab.gouv.fr/licence-ouverte-open-licence/"
 
 _DESCRIPTION_CHARS = 300
 
@@ -119,6 +123,7 @@ def votation_dataset(origin: str, law: Law) -> dict:
             ),
             "creator": {"@type": "Organization", "name": SITE_NAME, "url": f"{origin}/"},
             "isAccessibleForFree": True,
+            "license": DATA_LICENCE_URL,
             "inLanguage": LANGUAGE,
             "about": {"@id": f"{origin}/loi/{law.slug}#loi"},
             "temporalCoverage": _coverage(law),

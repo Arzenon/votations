@@ -19,6 +19,7 @@ from app.labels import (
     law_status,
 )
 from app.security import safe_url
+from app.seo import DATA_LICENCE_NAME, DATA_LICENCE_URL
 from app.textdiff import field_change
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -72,6 +73,8 @@ templates.env.auto_reload = not get_settings().is_production
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
 templates.env.globals["DISCLAIMER_SHORT"] = DISCLAIMER_SHORT
 templates.env.globals["TAGLINE"] = TAGLINE
+templates.env.globals["DATA_LICENCE_NAME"] = DATA_LICENCE_NAME
+templates.env.globals["DATA_LICENCE_URL"] = DATA_LICENCE_URL
 templates.env.globals["CHOICE_LABELS"] = CHOICE_LABELS
 # A global rather than a filter since it takes two values.
 templates.env.globals["field_change"] = field_change

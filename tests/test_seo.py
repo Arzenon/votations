@@ -131,8 +131,7 @@ def test_the_results_page_declares_the_open_data_as_a_dataset(client, db_session
         "text/csv": "http://testserver/loi/loi-donnees/export.csv",
         "application/json": "http://testserver/loi/loi-donnees/export.json",
     }
-    # No licence declared (none has been chosen).
-    assert "license" not in dataset
+    assert dataset["license"] == "https://www.etalab.gouv.fr/licence-ouverte-open-licence/"
 
 
 def test_the_results_page_marks_up_only_what_it_shows(client, db_session):

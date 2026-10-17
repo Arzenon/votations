@@ -120,6 +120,19 @@ def test_the_json_export_says_what_it_rounded(client, open_law, db_session):
         assert vote["created_at"] == "2026-05-04"
 
 
+def test_the_json_export_names_its_licence(client, open_law, db_session):
+    _seed(db_session, open_law)
+    data = client.get(f"/loi/{open_law.slug}/export.json").json()
+    assert data["licence"] == {
+        "name": "Licence Ouverte 2.0",
+        "url": "https://www.etalab.gouv.fr/licence-ouverte-open-licence/",
+    }
+
+
+def test_the_footer_names_the_data_licence(client):
+    assert "Licence Ouverte 2.0" in client.get("/").text
+
+
 def test_exact_resolution_is_available_but_not_the_default(client, open_law, db_session):
     """Exact timestamps are possible but not the default."""
     settings = get_settings()

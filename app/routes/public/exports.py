@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
-from app import ratelimit
+from app import ratelimit, seo
 from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import results as results_crud
@@ -155,6 +155,7 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
             "with_profile": provision.with_profile,
             "percentage": provision.percentage,
         },
+        "licence": {"name": seo.DATA_LICENCE_NAME, "url": seo.DATA_LICENCE_URL},
         "votes_note": results_crud.export_note(db, law.id, total=total),
         "demographics_as_of": as_of.isoformat() if as_of else None,
         "demographics_note": (
