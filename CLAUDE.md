@@ -105,6 +105,11 @@ Whatever the mechanism, the disclaimer states plainly that voters are people
 attached to the French administration, that one person carries one vote, and
 that **nationality is not verified**.
 
+## Git
+
+- Never commit: the maintainer reviews and commits changes themselves.
+- Never push to `master`.
+
 ## Code conventions
 
 - Comments and docstrings are in **English**, short, and only explain the *why*
