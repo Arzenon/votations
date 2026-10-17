@@ -1,16 +1,13 @@
 #!/bin/sh
-# Start the production stack with the image `votations-app:local` and check
-# that it answers as it should, through Caddy. Run by the CI before publishing
-# the image; also runs locally:
+# Start the production stack with the image `votations-app:local` and check it
+# answers through Caddy. Run by the CI before publishing the image, or locally:
 #
 #   docker build --target base -t votations-app:local .
 #   scripts/ci_smoke.sh
 #
-# Works in a temporary directory with a throwaway .env, under its own compose
-# project, so it never reads your .env nor touches another stack's volumes.
-# Caddy is published on local ports of its own (SMOKE_HTTP_PORT and
-# SMOKE_HTTPS_PORT) rather than 80 and 443, which are often taken.
-# The import jobs are not started: they would hit public servers on every run.
+# Uses a temporary directory, a throwaway .env and its own compose project, so
+# it never touches your .env or another stack's volumes. The import jobs aren't
+# started: they would hit public servers on every run.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -113,14 +110,6 @@ expect() {
 }
 
 echo "→ vérifications à travers Caddy"
-# The first TLS request can arrive before Caddy has its certificate.
-i=0
-until [ "$(http_code "$SITE/")" = 200 ]; do
-  i=$((i + 1))
-  [ "$i" -lt 10 ] || break
-  sleep 2
-done
-
 expect 200 "$SITE/"
 expect 200 "$SITE/recherche"
 expect 200 "$SITE/mentions-legales"
@@ -128,6 +117,7 @@ expect 200 "$SITE/vie-privee"
 expect 404 "$SITE/sante"
 expect 308 "http://localhost:$HTTP_PORT/"
 expect 301 "https://www.localhost:$HTTPS_PORT/"
+expect 401 "$SITE/admin"
 
 headers=$(curl -ksSI "$SITE/")
 for header in content-security-policy strict-transport-security x-frame-options; do
@@ -135,9 +125,6 @@ for header in content-security-policy strict-transport-security x-frame-options;
 done
 printf '%s\n' "$headers" | grep -qi '^server:' && fail "Caddy annonce son en-tête Server"
 echo "  ok  en-têtes de sécurité"
-
-# The admin is behind HTTP Basic.
-expect 401 "$SITE/admin"
 
 echo "→ sauvegarde de la base"
 compose exec -T db-backup sh /usr/local/bin/backup.sh dump >/dev/null \

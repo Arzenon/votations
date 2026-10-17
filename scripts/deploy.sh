@@ -1,15 +1,11 @@
 #!/bin/sh
-# Deploy a commit of master on this host: the image the CI built and tested
-# for it, and the compose files of the same commit.
+# Deploy a commit of master: the image the CI tested for it, and the compose
+# files of the same commit. Rolls back if the app doesn't come up healthy.
 #
 #   scripts/deploy.sh <commit>
 #
-# The CI's `Déploiement` job calls it over SSH, as the forced command of a
-# dedicated key (see DEPLOY.md): the commit then comes from
-# $SSH_ORIGINAL_COMMAND and that key can run nothing else.
-#
-# Steps: check the commit is on master, pull its image, dump the database,
-# switch, wait for the app to be healthy, otherwise switch back.
+# Over SSH, it's the forced command of the CI's key and reads the commit from
+# $SSH_ORIGINAL_COMMAND (see DEPLOY.md).
 #
 # Output ends up in the public CI logs: never print the app's logs here.
 set -eu
@@ -52,7 +48,7 @@ restart_changed() {
 }
 
 caddy_running() {
-  # Lets a Caddy refusing its configuration reach its restart loop.
+  # Gives a Caddy that rejects its config the time to crash.
   sleep 5
   [ "$(docker inspect --format '{{.State.Status}}' "$(compose ps -q caddy)" 2>/dev/null)" = running ]
 }
@@ -97,10 +93,8 @@ main() {
 
   cd "$(dirname "$0")/.."
 
-  if command -v flock >/dev/null; then
-    exec 9>.deploy.lock
-    flock -n 9 || die "un déploiement est déjà en cours"
-  fi
+  exec 9>.deploy.lock
+  flock -n 9 || die "un déploiement est déjà en cours"
 
   log "vérification de $commit"
   git fetch --quiet origin master
