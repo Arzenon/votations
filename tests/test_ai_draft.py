@@ -430,6 +430,8 @@ def test_opening_the_form_shows_a_draft_already_paid_for(
     """An existing draft is shown right away."""
     item = _stage(db_session)
     _patch_job(monkeypatch)
+    # The button only shows with a key; don't depend on the developer's .env.
+    monkeypatch.setattr(get_settings(), "anthropic_api_key", "sk-test")
     _draft(client, item.id)
 
     r = _form(client, item.id)
