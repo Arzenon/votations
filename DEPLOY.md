@@ -74,16 +74,93 @@ docker compose -f docker-compose.prod.yml ps
 
 ## Mettre à jour
 
+Normalement par la CI (voir « Déploiement automatique » ci-dessous). À la main,
+le même script, avec le commit voulu de `master` :
+
 ```bash
-git pull
+git fetch origin
+scripts/deploy.sh "$(git rev-parse origin/master)"
+```
+
+En dernier recours (ghcr.io indisponible), construire sur place :
+
+```bash
+git checkout master && git pull
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml logs --tail=30 app
 ```
 
 Les conteneurs de rafraîchissement **partagent** l'image de l'application
-(`votations-app:local`) : seul `app` la construit, les autres s'y réfèrent. D'où
-le `--build` sans nom de service — il reconstruit `app`, et les trois jobs
-repartent sur la même image, sans possibilité de diverger d'elle.
+(`votations-app:local`) : seul `app` la construit (ou `scripts/deploy.sh` y
+attache l'image téléchargée), les autres s'y réfèrent, sans possibilité de
+diverger d'elle.
+
+## Déploiement automatique
+
+Chaque pull request passe deux vérifications (`.github/workflows/ci.yml`) :
+ruff, mypy et pytest d'un côté ; de l'autre, l'image de production construite
+puis démarrée avec toute la pile (`scripts/ci_smoke.sh`). Après un merge sur
+`master`, cette même image est publiée sur ghcr.io, puis le déploiement
+**attend votre approbation**. Approuvé, il se connecte au serveur et lance
+`scripts/deploy.sh`, qui :
+
+1. refuse tout commit qui n'est pas sur `master`, ou un dépôt modifié localement ;
+2. télécharge l'image du commit ;
+3. fait un dump de la base, et s'arrête sans rien changer s'il échoue ;
+4. passe au nouveau commit et attend que l'application soit en bonne santé ;
+5. sinon, rétablit la version précédente et échoue (vous recevez un courriel).
+
+Revenir à une version antérieure : dans l'onglet Actions, relancer le job
+`Déploiement` d'une exécution plus ancienne.
+
+### Mise en place, une fois
+
+**Sur le serveur.** Le nom du dossier fixe le nom du projet compose, donc celui
+des volumes (`votations_pgdata`) : relancée depuis un dossier renommé, la pile
+démarre sur une base vide. Le dépôt doit être cloné en HTTPS (`git remote -v`), et
+l'utilisateur doit pouvoir lancer `docker` sans `sudo` (groupe `docker`, ce qui
+équivaut à root : d'où la clé restreinte ci-dessous). Avant la première
+approbation, faites un `git pull` pour que `scripts/deploy.sh` soit présent.
+
+**Une clé dédiée**, générée sur votre machine :
+
+```bash
+ssh-keygen -t ed25519 -N "" -C github-deploy-votations -f votations-deploy
+```
+
+Ajoutez `votations-deploy.pub` à `~/.ssh/authorized_keys` sur le serveur, sur
+une seule ligne, précédée de ses restrictions (chemin absolu du dépôt) :
+
+```
+restrict,command="/chemin/vers/votations/scripts/deploy.sh" ssh-ed25519 AAAA… github-deploy-votations
+```
+
+Cette clé ne peut rien faire d'autre que déployer un commit de `master`.
+
+**Sur GitHub**, dans Settings :
+
+- **Environments → New environment** `production` :
+  - *Required reviewers* : vous ;
+  - *Deployment branches and tags* : *Selected branches*, `master` ;
+  - secret `DEPLOY_SSH_KEY` : le contenu de `votations-deploy` (la clé privée,
+    à supprimer de votre machine ensuite) ;
+  - variables `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT` (si autre que 22) et
+    `DEPLOY_KNOWN_HOSTS` : la sortie de `ssh-keyscan -p <port> <hôte>`, vérifiée
+    contre l'empreinte affichée sur le serveur (`ssh-keygen -lf
+    /etc/ssh/ssh_host_ed25519_key.pub`).
+- **Rules → Rulesets → New branch ruleset** sur la branche par défaut, actif,
+  sans contournement : *Restrict deletions*, *Block force pushes*, *Require a
+  pull request before merging* (0 approbation : GitHub interdit d'approuver sa
+  propre PR) et *Require status checks to pass* avec `Vérifications` et
+  `Image et pile de prod`. Ces noms ne sont proposés qu'après une première
+  exécution : ouvrez d'abord une PR.
+- **Actions → General** : *Require approval for all external contributors*,
+  pour qu'une PR venue d'un fork n'exécute rien sans votre accord.
+
+**Après le premier merge**, rendez le paquet public (profil → Packages →
+`votations` → Package settings → Change visibility) : le serveur le télécharge
+sans identifiants. Tant qu'il est privé, le déploiement échoue avant de toucher
+à quoi que ce soit.
 
 ### Les migrations qui créent un index
 

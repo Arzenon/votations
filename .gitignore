@@ -17,3 +17,6 @@ exports/*
 
 # Personal tool unrelated to the project.
 dmarc/*
+
+# Held by scripts/deploy.sh while it runs.
+.deploy.lock

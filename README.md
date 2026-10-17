@@ -47,6 +47,11 @@ Les tests tournent sur un vrai PostgreSQL, et le schéma est construit par les
 migrations (pas par `create_all`). `tests/test_migrations.py` vérifie que le
 schéma migré correspond aux modèles et que les migrations s'annulent.
 
+La CI (`.github/workflows/ci.yml`) lance ces mêmes commandes sur chaque pull
+request, puis démarre la pile de production avec l'image construite
+(`scripts/ci_smoke.sh`, qui tourne aussi en local). Voir
+[DEPLOY.md](DEPLOY.md), « Déploiement automatique ».
+
 ## Architecture
 
 ```
