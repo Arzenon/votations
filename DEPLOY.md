@@ -74,16 +74,69 @@ docker compose -f docker-compose.prod.yml ps
 
 ## Mettre à jour
 
+Après un merge sur `master`, approuvez le job `Deploy` dans l'onglet Actions. Il
+lance `scripts/deploy.sh` sur le serveur, qu'on peut aussi lancer à la main :
+
 ```bash
-git pull
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml logs --tail=30 app
+git fetch origin
+scripts/deploy.sh "$(git rev-parse origin/master)"
 ```
 
-Les conteneurs de rafraîchissement **partagent** l'image de l'application
-(`votations-app:local`) : seul `app` la construit, les autres s'y réfèrent. D'où
-le `--build` sans nom de service — il reconstruit `app`, et les trois jobs
-repartent sur la même image, sans possibilité de diverger d'elle.
+Le script refuse un commit absent de `master` ou un dépôt modifié localement,
+télécharge l'image testée par la CI, fait un dump de la base, puis change de
+version. Si l'application ne devient pas saine, il revient à la version
+précédente. Une migration déjà appliquée n'est pas annulée : c'est le rôle du
+dump.
+
+Pour revenir à une version antérieure, relancez le job `Deploy` d'une exécution
+plus ancienne.
+
+Sans ghcr.io, construire sur place :
+
+```bash
+git checkout master && git pull
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Les services de rafraîchissement utilisent l'image de `app`
+(`votations-app:local`) et ne peuvent pas diverger d'elle.
+
+### Mise en place du déploiement automatique
+
+Sur le serveur :
+
+- ne changez pas le nom du dossier : il fixe celui des volumes
+  (`votations_pgdata`), et un dossier renommé démarre sur une base vide ;
+- `origin` doit être en HTTPS (`git remote -v`) ;
+- l'utilisateur doit lancer `docker` sans `sudo`.
+
+Une clé SSH dédiée, limitée au script :
+
+```bash
+ssh-keygen -t ed25519 -N "" -C github-deploy-votations -f votations-deploy
+```
+
+À ajouter dans `~/.ssh/authorized_keys` sur le serveur, avec le chemin absolu :
+
+```
+restrict,command="/chemin/vers/votations/scripts/deploy.sh" ssh-ed25519 AAAA… github-deploy-votations
+```
+
+Sur GitHub, dans Settings :
+
+- **Environments**, créer `production` : *Required reviewers* (vous),
+  *Deployment branches* limité à `master`, le secret `DEPLOY_SSH_KEY` (la clé
+  privée, à supprimer ensuite de votre machine) et les variables `DEPLOY_HOST`,
+  `DEPLOY_USER`, `DEPLOY_PORT` (22 par défaut) et `DEPLOY_KNOWN_HOSTS` (sortie de
+  `ssh-keyscan -p <port> <hôte>`).
+- **Rules → Rulesets**, sur la branche par défaut : *Restrict deletions*,
+  *Block force pushes*, *Require a pull request before merging* (0 approbation :
+  GitHub refuse qu'on approuve sa propre PR) et *Require status checks to pass*
+  avec `Code quality` et `Prod image`.
+- **Actions → General** : *Require approval for all external contributors*.
+
+Après le premier merge, rendez public le paquet `votations` (Packages → Package
+settings) : le serveur le télécharge sans identifiants.
 
 ### Les migrations qui créent un index
 

@@ -23,7 +23,8 @@ services:
       retries: 5
 
   app:
-    # Built once and reused by the job services below.
+    # Reused by the job services below. Built here with --build, or the image
+    # pulled from ghcr.io and retagged by scripts/deploy.sh.
     image: votations-app:local
     # Required: otherwise Docker builds the last stage (`dev`, with the tests).
     build:
