@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     legal_contact_email: str = ""
     legal_host: str = ""
 
+    # Linked from the footer. A modified public instance must link to its own
+    # source code (AGPL-3.0).
+    source_code_url: str = "https://github.com/Arzenon/votations"
+
     # INSEE reference data (yearly refresh). Open dataset; the key is optional.
     insee_melodi_base: str = "https://api.insee.fr/melodi"
     insee_dataset: str = "DS_ESTIMATION_POPULATION"

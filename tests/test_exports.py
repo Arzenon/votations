@@ -129,10 +129,6 @@ def test_the_json_export_names_its_licence(client, open_law, db_session):
     }
 
 
-def test_the_footer_names_the_data_licence(client):
-    assert "Licence Ouverte 2.0" in client.get("/").text
-
-
 def test_exact_resolution_is_available_but_not_the_default(client, open_law, db_session):
     """Exact timestamps are possible but not the default."""
     settings = get_settings()

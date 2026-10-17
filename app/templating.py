@@ -73,6 +73,7 @@ templates.env.auto_reload = not get_settings().is_production
 templates.env.globals["DISCLAIMER"] = DISCLAIMER
 templates.env.globals["DISCLAIMER_SHORT"] = DISCLAIMER_SHORT
 templates.env.globals["TAGLINE"] = TAGLINE
+templates.env.globals["SOURCE_CODE_URL"] = get_settings().source_code_url
 templates.env.globals["DATA_LICENCE_NAME"] = DATA_LICENCE_NAME
 templates.env.globals["DATA_LICENCE_URL"] = DATA_LICENCE_URL
 templates.env.globals["CHOICE_LABELS"] = CHOICE_LABELS

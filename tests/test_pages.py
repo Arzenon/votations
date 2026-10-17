@@ -661,3 +661,11 @@ def test_the_opening_paragraph_is_separated_from_the_rest():
     assert summary_split("Un.\n\nDeux.\n\nTrois.") == ("Un.", ["Deux.", "Trois."])
     assert summary_split("Seul paragraphe.") == ("", ["Seul paragraphe."])
     assert summary_split("") == ("", [])
+
+
+def test_the_footer_names_the_data_licence(client):
+    assert "Licence Ouverte 2.0" in client.get("/").text
+
+
+def test_the_footer_links_to_the_source_code(client):
+    assert 'href="https://github.com/Arzenon/votations"' in client.get("/").text
