@@ -208,12 +208,32 @@ def test_merged_quiet_days_are_spread_not_drawn_as_one_day():
     buckets = [
         EvolutionBucket(
             label=f"2026-05-{1 + 10 * i:02}",
-            counts={"for": 10, "against": 0, "abstain": 0},
+            counts={"for": 9, "against": 1, "abstain": 0},
             days=10,
+            daily=[1] * 10,
         )
         for i in range(3)
     ]
     chart = build_evolution_chart(buckets)
-    assert "Pour : 30 votes, au plus 1 en une journée" in chart.description
-    assert "répartis à parts égales" in chart.description
+    assert "Pour : 27 votes, au plus 1 en une journée" in chart.description
+    assert "chaque jour garde son nombre de votes" in chart.description
     assert chart.x_ticks[-1][1] == "30/05", "the axis ends on the last merged day"
+
+
+def test_a_spike_inside_a_merged_period_still_shows():
+    """Nine quiet days then a 2,000-vote day: the spike stays on its day."""
+    from app.charts import _daily
+    from app.crud.results import EvolutionBucket
+
+    bucket = EvolutionBucket(
+        label="2026-05-01",
+        counts={"for": 1800, "against": 200, "abstain": 9},
+        days=10,
+        daily=[1] * 9 + [2000],
+    )
+    days = _daily([bucket])
+    totals = [sum(point.counts.values()) for point in days]
+    assert totals[-1] >= 1995, "the busy day keeps its votes"
+    assert max(totals[:-1]) <= 2
+    for key, n in bucket.counts.items():
+        assert sum(point.counts[key] for point in days) == n, "the period's split is exact"

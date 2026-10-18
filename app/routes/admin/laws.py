@@ -13,7 +13,7 @@ from app.crud import results as results_crud
 from app.db import as_utc, get_db, utcnow
 from app.models import ImportedLaw, Law
 from app.routes.admin.context import cached_draft, law_form_context
-from app.routes.admin.forms import InvalidFormValue, LawForm, law_form, preview_form
+from app.routes.admin.forms import InvalidFormValue, LawForm, dt_local, law_form, preview_form
 from app.routes.public.exports import at_capacity, csv_response
 from app.routes.public.laws import law_page_context
 from app.security import is_head
@@ -223,13 +223,19 @@ def update_law(
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
-    if laws_crud.moves_final_closing(db, law, form.closes_at):
+    columns = form.columns()
+    # A time the form shows unchanged keeps its stored value: the form drops the
+    # seconds, and reads the repeated autumn hour as its first occurrence.
+    for name in ("opens_at", "closes_at"):
+        if dt_local(columns[name]) == dt_local(getattr(law, name)):
+            columns[name] = getattr(law, name)
+    if laws_crud.moves_final_closing(db, law, columns["closes_at"]):
         raise InvalidFormValue(
             "« Clôture du vote » ne peut plus changer : cette votation est close et a "
             "reçu des votes. La rouvrir permettrait de comparer ses résultats de "
             "clôture aux suivants, et d'en isoler un vote"
         )
-    laws_crud.update(db, law, **form.columns())
+    laws_crud.update(db, law, **columns)
     return RedirectResponse("/admin", status_code=303)
 
 

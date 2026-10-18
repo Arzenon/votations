@@ -72,8 +72,8 @@ class Settings(BaseSettings):
     min_bucket_volume: int = Field(default=50, ge=1)
 
     # A demographic breakdown is hidden unless every cell has at least this many votes.
-    # Quieter days on the curve (hours in the export) are merged with their
-    # neighbours until they reach it.
+    # Days on the curve (hours in the export) are merged with their neighbours
+    # until they reach it, with votes for at least two choices.
     min_cell_count: int = Field(default=10, ge=1)
 
     # Precision of exported timestamps. With "exact", anyone who knows when

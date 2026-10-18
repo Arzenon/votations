@@ -207,6 +207,9 @@ class EvolutionBucket:
     counts: dict[str, int] = field(default_factory=dict)
     # Calendar days covered: more than one when quiet days are merged.
     days: int = 1
+    # How many voted on each of those days, not how: only the split is merged.
+    # Empty means a single day holding all of ``counts``.
+    daily: list[int] = field(default_factory=list)
 
     @property
     def day(self) -> date:
@@ -221,19 +224,20 @@ class EvolutionBucket:
 def _merge_quiet[T](
     units: list[tuple[T, dict[str, int]]], k: int
 ) -> list[tuple[T, T, dict[str, int]]]:
-    """Group consecutive units until each group has at least ``k`` votes.
+    """Group consecutive units until each group has ``k`` votes over two choices.
 
     A day showing one "Contre" tells anyone who knows that person voted that
-    day how they voted. Hiding the split alone isn't enough: the tally minus
-    the other days gives it back. Leftover units join the last group, so the
-    groups always add up to the tally. Returns (first, last, counts).
+    day how they voted, and so does a day of ten "Pour". Hiding the split
+    alone isn't enough: the tally minus the other days gives it back.
+    Leftover units join the last group, so the groups always add up to the
+    tally. Returns (first, last, counts).
     """
     groups: list[tuple[T, T, dict[str, int]]] = []
     pending: tuple[T, dict[str, int]] | None = None
     for unit, counts in units:
         first, summed = pending if pending else (unit, dict.fromkeys(counts, 0))
         summed = {c: summed.get(c, 0) + n for c, n in counts.items()}
-        if sum(summed.values()) >= k:
+        if sum(summed.values()) >= k and sum(1 for n in summed.values() if n) >= 2:
             groups.append((first, unit, summed))
             pending = None
         else:
@@ -247,17 +251,9 @@ def _merge_quiet[T](
     return groups
 
 
-def _periods(
-    db: Session, law_id: int, unit: str
-) -> list[tuple[datetime, datetime, dict[str, int]]]:
-    """Vote counts per ``unit`` ("day" or "hour") in the display zone, quiet ones merged.
-
-    Hours are merged inside each merged day, so they add up to the curve's
-    days: otherwise a day minus its hour groups could give back a late vote
-    whose hour group runs past midnight.
-    """
-    settings = get_settings()
-    bucket = _bucketed(unit, settings.display_timezone)
+def _units(db: Session, law_id: int, unit: str) -> list[tuple[datetime, dict[str, int]]]:
+    """Vote counts per ``unit`` ("day" or "hour") in the display zone, oldest first."""
+    bucket = _bucketed(unit, get_settings().display_timezone)
     rows = db.execute(
         select(bucket.label("bucket"), Vote.choice, func.count())
         .where(Vote.law_id == law_id)
@@ -267,8 +263,20 @@ def _periods(
     found: dict[datetime, dict[str, int]] = {}
     for moment, choice, n in rows:
         found.setdefault(moment, {c.value: 0 for c in VoteChoice})[choice] = n
-    units = list(found.items())
-    k = settings.min_cell_count
+    return list(found.items())
+
+
+def _periods(
+    db: Session, law_id: int, unit: str
+) -> list[tuple[datetime, datetime, dict[str, int]]]:
+    """Vote counts per ``unit`` ("day" or "hour"), quiet ones merged (see `_merge_quiet`).
+
+    Hours are merged inside each merged day, so they add up to the curve's
+    days: otherwise a day minus its hour groups could give back a late vote
+    whose hour group runs past midnight.
+    """
+    units = _units(db, law_id, unit)
+    k = get_settings().min_cell_count
     if unit == "day":
         return _merge_quiet(units, k)
 
@@ -295,8 +303,9 @@ def evolution(
     """Daily vote counts, one bucket per calendar day.
 
     Empty until the total reaches ``min_bucket_volume``, so low-volume votes
-    can't be used to identify voters. Days with fewer than ``min_cell_count``
-    votes are merged with their neighbours (see `_merge_quiet`).
+    can't be used to identify voters. The split between choices is merged
+    over neighbouring days (see `_merge_quiet`); each day keeps its own number
+    of votes, so a campaign's spike still shows inside a merged period.
 
     Days without votes are filled with zeros, otherwise a spike from an
     organised campaign wouldn't stand out on the chart.
@@ -314,19 +323,28 @@ def evolution(
         return []
 
     zone = display_zone()
+    units = _units(db, law_id, "day")
+    voted = {as_utc(moment).astimezone(zone).date(): sum(c.values()) for moment, c in units}
     curve: list[EvolutionBucket] = []
-    for first, last, counts in _periods(db, law_id, "day"):
+    for first, last, counts in _merge_quiet(units, settings.min_cell_count):
         start, end = (as_utc(moment).astimezone(zone).date() for moment in (first, last))
         if curve:
             # Step by calendar day, not 24 hours, because of DST.
             curve += [
-                EvolutionBucket(label=day.isoformat(), counts={c.value: 0 for c in VoteChoice})
+                EvolutionBucket(
+                    label=day.isoformat(), counts={c.value: 0 for c in VoteChoice}, daily=[0]
+                )
                 for day in _days_between(
                     curve[-1].last_day + timedelta(days=1), start - timedelta(days=1)
                 )
             ]
         curve.append(
-            EvolutionBucket(label=start.isoformat(), counts=counts, days=(end - start).days + 1)
+            EvolutionBucket(
+                label=start.isoformat(),
+                counts=counts,
+                days=(end - start).days + 1,
+                daily=[voted.get(day, 0) for day in _days_between(start, end)],
+            )
         )
     _EVOLUTIONS.put(law_id, curve)
     return curve
@@ -354,13 +372,14 @@ def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
     k = settings.min_cell_count
     if settings.export_time_resolution == "day":
         rounded = (
-            f"de son jour, mais un jour de moins de {k} votes est regroupé avec ses "
-            "voisins, comme sur la courbe"
+            f"de son jour, mais les jours sont regroupés avec leurs voisins jusqu'à "
+            f"compter {k} votes partagés entre au moins deux choix, comme sur la courbe"
         )
     else:
         rounded = (
-            f"de son heure, mais une heure de moins de {k} votes est regroupée avec "
-            "ses voisines, sans sortir des jours regroupés de la courbe"
+            f"de son heure, mais les heures sont regroupées avec leurs voisines jusqu'à "
+            f"compter {k} votes partagés entre au moins deux choix, sans sortir des "
+            "jours regroupés de la courbe"
         )
     return (
         f"Chaque vote est daté {rounded} : 'created_at' est alors le début de la période regroupée."

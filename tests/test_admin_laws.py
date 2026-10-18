@@ -707,3 +707,29 @@ def test_a_closed_vote_without_votes_can_be_reopened(client, closed_law, db_sess
     assert r.status_code == 303
     db_session.refresh(closed_law)
     assert closed_law.is_open()
+
+
+def test_saving_a_closed_vote_keeps_its_stored_times(client, db_session):
+    """The form drops seconds and reads the repeated autumn hour as its first one.
+
+    Saving another field must neither refuse the closed vote nor move or log
+    its times.
+    """
+    # 01:30 UTC on 26 October 2025 is 02:30 in Paris for the second time (CET).
+    law = make_law(
+        db_session,
+        slug="loi-heure-repetee",
+        opens_at=datetime(2025, 10, 1, 8, 0, 17, tzinfo=UTC),
+        closes_at=datetime(2025, 10, 26, 1, 30, tzinfo=UTC),
+    )
+    db_session.add(Vote(law_id=law.id, voter_token="avant-cloture", choice="for"))
+    db_session.commit()
+
+    r = _save_form(client, law, title="Loi à l'heure répétée")
+    assert r.status_code == 303
+    db_session.refresh(law)
+    assert law.title == "Loi à l'heure répétée"
+    assert law.closes_at == datetime(2025, 10, 26, 1, 30, tzinfo=UTC)
+    assert law.opens_at == datetime(2025, 10, 1, 8, 0, 17, tzinfo=UTC)
+    fields = {r.field for r in db_session.query(LawRevision).filter_by(law_id=law.id)}
+    assert fields == {"title"}, "only the real change is in the public history"

@@ -67,20 +67,33 @@ def _period_for(days: int) -> Period:
     return PERIODS[-1]
 
 
-def _daily(buckets) -> list[_Point]:
-    """One point per day. A bucket of merged quiet days is spread over its days.
+def _spread(n: int, weights: list[int]) -> list[int]:
+    """Split ``n`` in proportion to ``weights``. The parts add up to ``n``."""
+    total = sum(weights)
+    if not total:
+        return [0] * len(weights)
+    exact = [n * w / total for w in weights]
+    parts = [int(x) for x in exact]
+    by_remainder = sorted(range(len(parts)), key=lambda i: exact[i] - parts[i], reverse=True)
+    for i in by_remainder[: n - sum(parts)]:
+        parts[i] += 1
+    return parts
 
-    Drawn whole on its first day, ten votes over ten quiet days would read as
-    ten votes in one day. Remainders go to the first days, so totals are exact.
+
+def _daily(buckets) -> list[_Point]:
+    """One point per day. A merged bucket is split over its days by their totals.
+
+    Each day keeps its number of votes (`EvolutionBucket.daily`), so a spike
+    inside a merged period still shows. Only the split between choices is the
+    period's, applied to every day of it.
     """
     out = []
     for b in buckets:
+        weights = b.daily or [1] * b.days
+        shares = {key: _spread(b.counts.get(key, 0), weights) for key in CHOICE_LABELS}
         for i in range(b.days):
-            share: dict[str, int] = {}
-            for key in CHOICE_LABELS:
-                whole, rest = divmod(b.counts.get(key, 0), b.days)
-                share[key] = whole + (i < rest)
-            out.append(_Point((b.day + timedelta(days=i)).isoformat(), share))
+            day = (b.day + timedelta(days=i)).isoformat()
+            out.append(_Point(day, {key: shares[key][i] for key in CHOICE_LABELS}))
     return out
 
 
@@ -191,7 +204,10 @@ def _describe(buckets, series: list[Series], period: Period, *, merged: bool) ->
     parts = [f"{s.label} : {s.total} votes, au plus {s.peak} en {period.span}" for s in series]
     text = f"Votes par {period.name} {span}. " + " ; ".join(parts) + "."
     if merged:
-        text += " Les jours calmes regroupés sont répartis à parts égales."
+        text += (
+            " Dans une période regroupée, chaque jour garde son nombre de votes ;"
+            " seule la répartition entre les choix est celle de la période."
+        )
     return text
 
 

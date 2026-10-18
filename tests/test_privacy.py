@@ -692,7 +692,8 @@ def _settle_the_trigger(db, law, *, start, **profile):
 
 
 def _close(db, law):
-    law.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    """Close the vote, past the grace that keeps the last step after closing."""
+    law.closes_at = datetime.now(UTC) - timedelta(minutes=5)
     db.commit()
 
 
@@ -899,3 +900,63 @@ def test_a_trimmed_profile_cookie_leaves_the_store_saying_the_same_thing():
     assert store.for_law(999) == {"age": "18-24"}, "the law just written must survive the trim"
     _value, kept = profile_cookie._fit(store.laws)
     assert kept == store.laws
+
+
+# --- Only a vote that is over for good shows live figures ----------------------
+
+
+def test_a_rescheduled_vote_never_shows_its_live_counters(open_law, db_session, client):
+    """Moving the opening to later isn't closing: ballots will come after it.
+
+    The live tables would otherwise show below any step, then be compared
+    with the next one once voting resumes.
+    """
+    for i in range(30):
+        cast_ballot(db_session, open_law, f"tot-{i}", VoteChoice.FOR, age_bracket="25-34")
+    open_law.opens_at = datetime.now(UTC) + timedelta(hours=1)
+    db_session.commit()
+    assert open_law.status() == "scheduled"
+
+    assert all(bd.reason == "pending" for bd in demo_crud.all_breakdowns(db_session, open_law))
+    payload = client.get(f"/loi/{open_law.slug}/export.json").json()
+    assert payload["demographics"] == []
+    assert payload["demographics_as_of"] is None
+
+
+def test_the_last_step_holds_for_a_moment_after_the_closing(open_law, db_session):
+    """A ballot that passed its last check before the closing may still be committing."""
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
+    _settle_the_trigger(db_session, open_law, start=volume + 1)
+    _profiled_ballots(db_session, open_law, volume, start=volume + 100, age_bracket="65+")
+
+    open_law.closes_at = datetime.now(UTC) - timedelta(seconds=30)
+    db_session.commit()
+    assert _as_of(db_session, open_law) == open_law.demographics_snapshot_at, "still the step"
+    assert "65+" not in {r.category for r in _age(db_session, open_law).rows}
+
+    _close(db_session, open_law)
+    assert _as_of(db_session, open_law) is None, "then live"
+    assert "65+" in {r.category for r in _age(db_session, open_law).rows}
+
+
+def test_a_ballot_still_recording_at_the_closing_is_refused(
+    client, open_law, db_session, monkeypatch
+):
+    """A ballot that crosses the closing is refused, so nothing lands after it."""
+    original_record = demo_crud.record
+
+    def record_then_close(db, *, vote, **kwargs):
+        on_file = original_record(db, vote=vote, **kwargs)
+        # The clock passes the closing while this ballot is still in its transaction.
+        db.get(Law, vote.law_id).closes_at = datetime.now(UTC) - timedelta(seconds=1)
+        return on_file
+
+    monkeypatch.setattr(demo_crud, "record", record_then_close)
+    r = client.post(
+        f"/loi/{open_law.slug}/vote",
+        data={"choice": "for", "age_bracket": "35-49"},
+        headers={"HX-Request": "true"},
+    )
+    assert "vient de se clore" in r.text
+    assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 0
+    assert demographic_cells(db_session, open_law.id).get(("age", "35-49", "for"), 0) == 0

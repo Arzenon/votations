@@ -261,28 +261,34 @@ def cast_vote(
     # meanwhile, so concurrent ballots can't count the profile twice.
     try:
         vote, previous_choice = votes_crud.cast_vote(db, law, voter_token, vote_choice)
+
+        # Before adding this ballot's profile, so a voter can't trigger a snapshot
+        # that includes themselves.
+        demo_crud.refresh_snapshot(db, law)
+
+        # Optional profile, added to the counters once. Previous categories come
+        # from the cookie.
+        profile = profile_cookie.load(request)
+        on_file = demo_crud.record(
+            db,
+            vote=vote,
+            choice=vote_choice,
+            previous_choice=previous_choice,
+            age_bracket=age_bracket,
+            sexe=sexe,
+            region=region,
+            previous_categories=profile.for_law(law.id),
+        )
+        # Closed while this ballot was being recorded: refused like a late one.
+        # The commit right after stays well inside `_CLOSING_GRACE`, so the
+        # final figures (see `app.crud.demographics`) never move after it.
+        if not law.is_open():
+            raise votes_crud.VotingClosed(law.slug)
     except votes_crud.VotingClosed:
+        db.rollback()
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
-
-    # Before adding this ballot's profile, so a voter can't trigger a snapshot
-    # that includes themselves.
-    demo_crud.refresh_snapshot(db, law)
-
-    # Optional profile, added to the counters once. Previous categories come
-    # from the cookie.
-    profile = profile_cookie.load(request)
-    on_file = demo_crud.record(
-        db,
-        vote=vote,
-        choice=vote_choice,
-        previous_choice=previous_choice,
-        age_bracket=age_bracket,
-        sexe=sexe,
-        region=region,
-        previous_categories=profile.for_law(law.id),
-    )
     db.commit()
     # Only after the commit, so the cookie never refers to a rolled-back vote.
     profile.remember(carrier, law.id, on_file)

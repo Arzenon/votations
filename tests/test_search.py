@@ -153,14 +153,22 @@ def test_the_curve_keeps_the_days_nobody_voted(db_session, open_law, monkeypatch
     monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
     monkeypatch.setattr(get_settings(), "min_cell_count", 3, raising=False)
     base = datetime(2026, 5, 4, 12, 0, tzinfo=UTC)
+    # Two choices each day, so neither day needs merging.
     for i in range(3):
-        db_session.add(Vote(law_id=open_law.id, voter_token=f"a{i}", choice="for", created_at=base))
+        db_session.add(
+            Vote(
+                law_id=open_law.id,
+                voter_token=f"a{i}",
+                choice="against" if i == 0 else "for",
+                created_at=base,
+            )
+        )
     for i in range(3):
         db_session.add(
             Vote(
                 law_id=open_law.id,
                 voter_token=f"b{i}",
-                choice="for",
+                choice="against" if i == 0 else "for",
                 created_at=base + timedelta(days=4),
             )
         )
@@ -211,7 +219,8 @@ def test_a_quiet_day_is_merged_until_it_hides_its_voters(db_session, open_law, m
     """
     monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
     monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
-    _votes_on(db_session, open_law, 4, "for", 20)
+    _votes_on(db_session, open_law, 4, "for", 18)
+    _votes_on(db_session, open_law, 4, "against", 2)
     _votes_on(db_session, open_law, 8, "against", 1)
     _votes_on(db_session, open_law, 10, "for", 9)
 
@@ -224,6 +233,26 @@ def test_a_quiet_day_is_merged_until_it_hides_its_voters(db_session, open_law, m
         ("2026-05-08", 3, 10),
     ]
     assert buckets[-1].counts == {"for": 9, "against": 1, "abstain": 0}
+    assert buckets[-1].daily == [1, 0, 9], "each day keeps its number of votes"
+
+
+def test_a_day_of_one_choice_is_merged_too(db_session, open_law, monkeypatch):
+    """Twelve "Pour" in a day tell anyone who knows someone voted that day how they voted."""
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
+    _votes_on(db_session, open_law, 4, "for", 18)
+    _votes_on(db_session, open_law, 4, "against", 2)
+    # The 5th has enough votes, all "Pour"; the 6th could stand on its own.
+    _votes_on(db_session, open_law, 5, "for", 12)
+    _votes_on(db_session, open_law, 6, "for", 9)
+    _votes_on(db_session, open_law, 6, "abstain", 1)
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [(b.label, b.days, b.daily) for b in buckets] == [
+        ("2026-05-04", 1, [20]),
+        ("2026-05-05", 2, [12, 10]),
+    ]
+    assert buckets[-1].counts == {"for": 21, "against": 0, "abstain": 1}
 
 
 def test_quiet_days_at_the_end_join_the_last_period(db_session, open_law, monkeypatch):

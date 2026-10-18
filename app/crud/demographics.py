@@ -29,6 +29,7 @@ from app.models import (
     DIMENSION_SEXE,
     DIMENSIONS,
     INSEE_REFERENCE,
+    STATUS_CLOSED,
     VALID_CATEGORIES,
     DemographicTally,
     InseeReference,
@@ -399,6 +400,22 @@ def _held(counters: list[Row]) -> set[tuple[str, str]]:
     }
 
 
+# After the closing, the figures stay at the last step this long: a ballot that
+# passed its last "open" check before the closing can still be committing.
+_CLOSING_GRACE = timedelta(minutes=2)
+
+
+def _is_final(law: Law) -> bool:
+    """Whether the vote is over for good, so its breakdowns may go live.
+
+    Not just "not open": a vote rescheduled to open later still takes ballots
+    afterwards, and its live counters would be compared with the next step.
+    """
+    if law.status() != STATUS_CLOSED or law.closes_at is None:
+        return False
+    return utcnow() >= as_utc(law.closes_at) + _CLOSING_GRACE
+
+
 def _live_categories(
     db: Session, law: Law, counters: list[Row], *, profiled: int | None = None
 ) -> set[tuple[str, str]]:
@@ -411,7 +428,7 @@ def _live_categories(
 
     ``profiled`` is ``Tally.with_profile``, to save a query.
     """
-    if law.is_open():
+    if not _is_final(law):
         return set()
     every = {(row.dimension, row.category) for row in counters}
     if law.demographics_snapshot_at is None:
@@ -430,7 +447,7 @@ def published_as_of(law: Law, breakdowns: list[Breakdown]) -> datetime | None:
     A category held at an earlier step carries its own date (`BreakdownRow.as_of`).
     Shared by the results page and the JSON export so they say the same thing.
     """
-    if law.is_open():
+    if not _is_final(law):
         return law.demographics_snapshot_at
     live = [row.as_of is None for bd in breakdowns for row in bd.rows]
     live += [False for bd in breakdowns if bd.withheld]
@@ -458,8 +475,8 @@ def all_breakdowns(
 ) -> list[Breakdown]:
     """Breakdowns for every dimension, each category from its live counters or its last step."""
     k = min_cell if min_cell is not None else get_settings().min_cell_count
-    if law.demographics_snapshot_at is None and law.is_open():
-        # Open with no snapshot yet: everything is "pending", not "empty".
+    if law.demographics_snapshot_at is None and not _is_final(law):
+        # Not over and no snapshot yet: everything is "pending", not "empty".
         return [
             Breakdown(
                 dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason=REASON_PENDING
@@ -495,9 +512,9 @@ def all_breakdowns(
             for category, cell in counted.get(dimension, {}).items()
         )
         has_votes = any(n for cell in counted.get(dimension, {}).values() for n in cell.values())
-        # While open, "empty" would flip to "pending" with the first voter to
+        # Before the end, "empty" would flip to "pending" with the first voter to
         # fill this field in, and tell which field they filled in.
-        if breakdown.reason == REASON_EMPTY and (law.is_open() or has_votes):
+        if breakdown.reason == REASON_EMPTY and (not _is_final(law) or has_votes):
             breakdown.reason = REASON_PENDING
         out.append(breakdown)
 

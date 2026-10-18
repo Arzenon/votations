@@ -64,11 +64,12 @@
       Une mobilisation organisée se voit ici : elle laisse un pic sur {{ chart.period.span }}.
       {% if chart.period.days > 1 %}
       La courbe regroupe les votes par {{ chart.period.name }} ; le tableau
-      ci-dessous garde le détail jour par jour.
+      ci-dessous garde le détail par jour.
       {% endif %}
-      Un jour de moins de {{ min_cell_count }} votes est regroupé avec les jours
-      voisins : sinon, savoir qu'une personne a voté ce jour-là révélerait
-      son choix.
+      Chaque jour garde son nombre de votes, mais la répartition entre les choix
+      est regroupée sur les jours voisins jusqu'à compter {{ min_cell_count }}
+      votes partagés entre au moins deux choix : sinon, savoir qu'une personne a
+      voté ce jour-là pourrait révéler son choix.
     </p>
 
     <details class="chart-data">
@@ -81,7 +82,7 @@
             {% for bucket in evolution %}
             <tr>
               {# `day` rather than the ISO `label`, to show a French date. #}
-              <th scope="row">{% if bucket.days > 1 %}du {{ bucket.day | french_date }} au {{ bucket.last_day | french_date }}{% else %}{{ bucket.day | french_date }}{% endif %}</th>
+              <th scope="row">{% if bucket.days > 1 %}du {{ bucket.day | french_date }} au {{ bucket.last_day | french_date }}<br><span class="meta">votes par jour : {{ bucket.daily | join(", ") }}</span>{% else %}{{ bucket.day | french_date }}{% endif %}</th>
               {# Same loop as the headings, so columns stay aligned. #}
               {% for key in CHOICE_LABELS %}<td>{{ bucket.counts[key] }}</td>{% endfor %}
             </tr>
@@ -115,7 +116,7 @@
       qui n'a gagné que quelques votes depuis son dernier palier attend le
       suivant : sa date est alors indiquée à côté d'elle. Une catégorie encore
       jamais publiée n'apparaît pas.
-      {%- if not voting_open %}
+      {%- if status == "closed" %}
       {# Closed, but the remainder since the last snapshot is too small to publish. #}
       La votation est close : les derniers profils renseignés avant la clôture
       restent en dehors des catégories qui n'ont pas pu avancer, parce qu'un
@@ -158,13 +159,13 @@
     {% elif bd.is_pending %}
     {# Not "aucune donnée": there may be data, just not published yet. #}
     <p class="meta">
-      {% if voting_open %}
+      {% if status == "closed" %}
+      Non publiée : trop peu de votes nouveaux depuis le dernier palier pour la
+      publier sans désigner personne.
+      {% else %}
       Pas encore publiée : elle paraîtra dès que {{ min_bucket_volume }}
       personnes auront renseigné un profil, et que ses catégories compteront
       assez de votes nouveaux pour ne désigner personne.
-      {% else %}
-      Non publiée : ses catégories n'ont gagné que quelques votes chacune, et
-      les publier désignerait les personnes concernées.
       {% endif %}
     </p>
     {% else %}
