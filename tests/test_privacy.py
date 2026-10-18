@@ -852,7 +852,8 @@ def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_sess
     shares = {row["category"]: row["share_pct"] for row in region["rows"]}
     assert shares == {"Bretagne": 100.0, "Corse": None}
     national = {row["category"]: row["reference_pct"] for row in region["rows"]}
-    assert national == {"Bretagne": 100.0, "Corse": None}, "on the same categories as the shares"
+    # On the same categories as the shares: Bretagne alone would read 100%.
+    assert national == {"Bretagne": None, "Corse": None}
 
 
 def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session):

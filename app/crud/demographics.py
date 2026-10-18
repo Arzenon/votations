@@ -527,28 +527,32 @@ def all_breakdowns(
 
 
 def _same_date_shares(breakdown: Breakdown) -> None:
-    """Keep shares, and the national reference beside them, to the newest rows.
+    """Keep shares, and the national reference beside them, to the same categories.
 
-    A row from an older step against newer ones would be neither date's
-    share. Live rows count as the newest.
+    Shares are among the table's newest rows: a row from an older step against
+    newer ones would be neither date's share. Live rows count as the newest.
+    The reference is rescaled to those categories too, so one never published
+    or never picked doesn't skew the comparison. It only uses what the table
+    shows, which moves at steps, never with a single ballot.
     """
     rows = breakdown.rows
     if not rows:
         return
     dates = [shown.as_of for shown in rows]
     newest = None if None in dates else max(d for d in dates if d is not None)
-    if all(d == newest for d in dates):
-        return
     current = [shown for shown in rows if shown.as_of == newest]
-    total = sum(shown.total for shown in current)
-    national = sum(shown.reference for shown in current if shown.reference is not None)
+    if len(current) < len(rows):
+        total = sum(shown.total for shown in current)
+        for shown in rows:
+            current_row = shown.as_of == newest
+            shown.share = round(100 * shown.total / total, 1) if current_row and total else None
+    # One category alone would read 100%, which compares nothing.
+    known = [shown.reference for shown in current if shown.reference is not None]
     for shown in rows:
-        if shown.as_of != newest:
-            shown.share = shown.reference = None
-            continue
-        shown.share = round(100 * shown.total / total, 1) if total else 0.0
-        if shown.reference is not None and national:
-            shown.reference = round(100 * shown.reference / national, 1)
+        if shown.as_of != newest or shown.reference is None or len(known) < 2:
+            shown.reference = None
+        else:
+            shown.reference = round(100 * shown.reference / sum(known), 1)
 
 
 @dataclass

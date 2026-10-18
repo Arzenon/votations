@@ -162,9 +162,10 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
         "demographics_as_of": as_of.isoformat() if as_of else None,
         "demographics_note": (
             "Répartitions agrégées uniquement, masquées sous le seuil "
-            "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
-            "de grandeur national INSEE (approx.), jamais utilisé pour "
-            "repondérer. Lorsque 'demographics_as_of' est renseigné, ces "
+            "d'anonymat. Aucune ligne par votant·e. 'share_pct' = part parmi "
+            "les catégories publiées, 'reference_pct' = ordre de grandeur "
+            "national INSEE (approx.) parmi ces mêmes catégories, jamais utilisé "
+            "pour repondérer. Lorsque 'demographics_as_of' est renseigné, ces "
             "répartitions y sont arrêtées et n'avancent que par paliers : les "
             "publier en direct permettrait de déduire le profil d'une personne "
             "en comparant deux téléchargements. Chaque catégorie porte la date "

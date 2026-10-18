@@ -174,3 +174,26 @@ def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session
     # Per-vote rows still carry no demographic fields.
     for row in data["votes"]:
         assert set(row.keys()) == {"law_id", "choice", "created_at"}
+
+
+def test_the_national_share_covers_the_same_categories_as_the_share_here():
+    """A category left out of the table is left out of "France" too.
+
+    Otherwise 35-49 at 54.5% of the shown voters sat next to 23.5% of the
+    whole population, an over-representation that isn't there.
+    """
+    from app.crud.demographics import Breakdown, BreakdownRow, _same_date_shares
+
+    def row(category, total, share, reference):
+        counts = {"for": total, "against": 0, "abstain": 0}
+        return BreakdownRow(category, counts, total, {}, share=share, reference=reference)
+
+    age = Breakdown("age", "Tranche d'âge", shown=True, threshold=10)
+    age.rows = [row("35-49", 60, 54.5, 23.5), row("65+", 50, 45.5, 27.8)]
+    _same_date_shares(age)
+    assert [(r.share, r.reference) for r in age.rows] == [(54.5, 45.8), (45.5, 54.2)]
+
+    sexe = Breakdown("sexe", "Sexe", shown=True, threshold=10)
+    sexe.rows = [row("femme", 40, 80.0, 51.5), row("autre", 10, 20.0, None)]
+    _same_date_shares(sexe)
+    assert [r.reference for r in sexe.rows] == [None, None], "femme alone would read 100%"
