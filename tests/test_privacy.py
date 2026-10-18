@@ -851,6 +851,30 @@ def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_sess
     # Corse's old count against Bretagne's new one would be neither date's share.
     shares = {row["category"]: row["share_pct"] for row in region["rows"]}
     assert shares == {"Bretagne": 100.0, "Corse": None}
+    national = {row["category"]: row["reference_pct"] for row in region["rows"]}
+    assert national == {"Bretagne": 100.0, "Corse": None}, "on the same categories as the shares"
+
+
+def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session):
+    """Every region from the same older step: compared with each other, not hidden."""
+    _profiled_ballots(db_session, open_law, 20, region="Bretagne", age_bracket="35-49")
+    _profiled_ballots(db_session, open_law, 31, start=20, region="Corse", age_bracket="35-49")
+    first_step = open_law.demographics_snapshot_at
+    assert first_step is not None
+    open_law.demographics_snapshot_at = first_step - timedelta(days=1)
+    db_session.commit()
+
+    # Age carries the second step; each region gained a single vote.
+    _settle_the_trigger(db_session, open_law, start=100)
+    _profiled_ballots(db_session, open_law, 1, start=200, region="Bretagne")
+    _profiled_ballots(db_session, open_law, 50, start=300, age_bracket="65+")
+    assert open_law.demographics_snapshot_at > first_step - timedelta(days=1)
+
+    region = next(
+        bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "region"
+    )
+    assert all(row.held for row in region.rows), "both from the first step"
+    assert {row.category: row.share for row in region.rows} == {"Bretagne": 40.0, "Corse": 60.0}
 
 
 def test_the_pending_label_does_not_move_with_one_voter(open_law, db_session):
@@ -960,3 +984,19 @@ def test_a_ballot_still_recording_at_the_closing_is_refused(
     assert "vient de se clore" in r.text
     assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 0
     assert demographic_cells(db_session, open_law.id).get(("age", "35-49", "for"), 0) == 0
+
+
+def test_the_page_says_the_final_figures_are_coming_during_the_grace(open_law, db_session, client):
+    """Right after the closing the figures aren't final yet, and the page says so."""
+    for i in range(30):
+        cast_ballot(db_session, open_law, f"grace-{i}", VoteChoice.FOR, age_bracket="25-34")
+    open_law.closes_at = datetime.now(UTC) - timedelta(seconds=30)
+    db_session.commit()
+
+    page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+    assert "paraissent quelques minutes après la clôture" in page
+    assert "Non publiée" not in page, "nothing was refused, it just isn't final yet"
+
+    _close(db_session, open_law)
+    page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+    assert "quelques minutes" not in page

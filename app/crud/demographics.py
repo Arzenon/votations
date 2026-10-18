@@ -148,7 +148,7 @@ class BreakdownRow:
     total: int
     percentages: dict[str, float]
     # Share of this category among profiled voters, vs the national reference.
-    # None for a held row: its count and the others' don't date from the same step.
+    # None for a row older than the table's newest (see `_same_date_shares`).
     share: float | None = 0.0
     reference: float | None = None
     # When these figures were copied, or None if read live (see `all_breakdowns`).
@@ -405,7 +405,7 @@ def _held(counters: list[Row]) -> set[tuple[str, str]]:
 _CLOSING_GRACE = timedelta(minutes=2)
 
 
-def _is_final(law: Law) -> bool:
+def is_final(law: Law) -> bool:
     """Whether the vote is over for good, so its breakdowns may go live.
 
     Not just "not open": a vote rescheduled to open later still takes ballots
@@ -428,7 +428,7 @@ def _live_categories(
 
     ``profiled`` is ``Tally.with_profile``, to save a query.
     """
-    if not _is_final(law):
+    if not is_final(law):
         return set()
     every = {(row.dimension, row.category) for row in counters}
     if law.demographics_snapshot_at is None:
@@ -447,7 +447,7 @@ def published_as_of(law: Law, breakdowns: list[Breakdown]) -> datetime | None:
     A category held at an earlier step carries its own date (`BreakdownRow.as_of`).
     Shared by the results page and the JSON export so they say the same thing.
     """
-    if not _is_final(law):
+    if not is_final(law):
         return law.demographics_snapshot_at
     live = [row.as_of is None for bd in breakdowns for row in bd.rows]
     live += [False for bd in breakdowns if bd.withheld]
@@ -475,7 +475,7 @@ def all_breakdowns(
 ) -> list[Breakdown]:
     """Breakdowns for every dimension, each category from its live counters or its last step."""
     k = min_cell if min_cell is not None else get_settings().min_cell_count
-    if law.demographics_snapshot_at is None and not _is_final(law):
+    if law.demographics_snapshot_at is None and not is_final(law):
         # Not over and no snapshot yet: everything is "pending", not "empty".
         return [
             Breakdown(
@@ -514,7 +514,7 @@ def all_breakdowns(
         has_votes = any(n for cell in counted.get(dimension, {}).values() for n in cell.values())
         # Before the end, "empty" would flip to "pending" with the first voter to
         # fill this field in, and tell which field they filled in.
-        if breakdown.reason == REASON_EMPTY and (not _is_final(law) or has_votes):
+        if breakdown.reason == REASON_EMPTY and (not is_final(law) or has_votes):
             breakdown.reason = REASON_PENDING
         out.append(breakdown)
 
@@ -522,14 +522,33 @@ def all_breakdowns(
     for breakdown in out:
         for shown in breakdown.rows:
             shown.held = as_of is not None and shown.as_of is not None and shown.as_of < as_of
-        if any(shown.held for shown in breakdown.rows):
-            # Shares among the categories of the same date only.
-            current = sum(shown.total for shown in breakdown.rows if not shown.held)
-            for shown in breakdown.rows:
-                shown.share = (
-                    None if shown.held or not current else round(100 * shown.total / current, 1)
-                )
+        _same_date_shares(breakdown)
     return out
+
+
+def _same_date_shares(breakdown: Breakdown) -> None:
+    """Keep shares, and the national reference beside them, to the newest rows.
+
+    A row from an older step against newer ones would be neither date's
+    share. Live rows count as the newest.
+    """
+    rows = breakdown.rows
+    if not rows:
+        return
+    dates = [shown.as_of for shown in rows]
+    newest = None if None in dates else max(d for d in dates if d is not None)
+    if all(d == newest for d in dates):
+        return
+    current = [shown for shown in rows if shown.as_of == newest]
+    total = sum(shown.total for shown in current)
+    national = sum(shown.reference for shown in current if shown.reference is not None)
+    for shown in rows:
+        if shown.as_of != newest:
+            shown.share = shown.reference = None
+            continue
+        shown.share = round(100 * shown.total / total, 1) if total else 0.0
+        if shown.reference is not None and national:
+            shown.reference = round(100 * shown.reference / national, 1)
 
 
 @dataclass

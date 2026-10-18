@@ -733,3 +733,18 @@ def test_saving_a_closed_vote_keeps_its_stored_times(client, db_session):
     assert law.opens_at == datetime(2025, 10, 1, 8, 0, 17, tzinfo=UTC)
     fields = {r.field for r in db_session.query(LawRevision).filter_by(law_id=law.id)}
     assert fields == {"title"}, "only the real change is in the public history"
+
+
+def test_closing_an_ongoing_vote_in_the_past_closes_it_now(client, db_session):
+    """Ballots under way still see the old closing: closing now leaves them the grace."""
+    law = make_law(db_session, slug="loi-close-a-l-avance")
+    db_session.add(Vote(law_id=law.id, voter_token="en-cours", choice="for"))
+    db_session.commit()
+
+    before = datetime.now(UTC)
+    # Still after the opening, an hour ago, so the form accepts it.
+    half_an_hour_ago = dt_local(datetime.now(UTC) - timedelta(minutes=30))
+    assert _save_form(client, law, closes_at=half_an_hour_ago).status_code == 303
+    db_session.refresh(law)
+    assert law.closes_at >= before - timedelta(seconds=1), "closed now, not half an hour ago"
+    assert not law.is_open()

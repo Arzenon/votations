@@ -249,6 +249,15 @@ catégorie. Les répartitions resteraient figées des jours, ce qu'on vient
 justement de corriger en passant d'une retenue par dimension à une retenue par
 catégorie.
 
+### Un cas dégénéré entre dimensions
+
+Une catégorie retenue peut se déduire d'une autre dimension si chaque profil
+renseigne tous les champs : le total des tranches d'âge, moins les régions
+publiées, donne alors la région retenue. Il faudrait que la page prouve ce
+remplissage complet (profils renseignés égaux aux votes, et total des âges égal
+aux profils), ce qui devient improbable dès 50 profils par palier. Noté le
+18/10/2026, sans correction.
+
 ---
 
 ## Écarté délibérément

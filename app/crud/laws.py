@@ -334,6 +334,21 @@ def update(db: Session, law: Law, **fields) -> Law:
     return law
 
 
+def closing_from_now(db: Session, law: Law, closes_at: datetime | None) -> datetime | None:
+    """``closes_at``, moved up to now if it would end an ongoing vote in the past.
+
+    Ballots already under way still see the old closing and commit after the
+    new one. Closing now leaves them the grace before the figures go final
+    (see `app.crud.demographics.is_final`).
+    """
+    now = utcnow()
+    if closes_at is None or as_utc(closes_at) >= now:
+        return closes_at
+    if law.closes_at is not None and as_utc(law.closes_at) <= now:
+        return closes_at  # already closed: see `moves_final_closing`
+    return now if results_crud.count_votes(db, law.id) else closes_at
+
+
 def moves_final_closing(db: Session, law: Law, closes_at: datetime | None) -> bool:
     """Whether ``closes_at`` would move the closing of a closed vote that has votes.
 

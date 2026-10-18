@@ -85,15 +85,18 @@ def _daily(buckets) -> list[_Point]:
 
     Each day keeps its number of votes (`EvolutionBucket.daily`), so a spike
     inside a merged period still shows. Only the split between choices is the
-    period's, applied to every day of it.
+    period's: each day takes its votes from what the period has left, in
+    proportion, so every day and every choice adds up exactly.
     """
     out = []
     for b in buckets:
-        weights = b.daily or [1] * b.days
-        shares = {key: _spread(b.counts.get(key, 0), weights) for key in CHOICE_LABELS}
-        for i in range(b.days):
-            day = (b.day + timedelta(days=i)).isoformat()
-            out.append(_Point(day, {key: shares[key][i] for key in CHOICE_LABELS}))
+        left = {key: b.counts.get(key, 0) for key in CHOICE_LABELS}
+        totals = b.daily or _spread(sum(left.values()), [1] * b.days)
+        for i, n in enumerate(totals):
+            part = dict(zip(left, _spread(n, list(left.values())), strict=True))
+            for key in left:
+                left[key] -= part[key]
+            out.append(_Point((b.day + timedelta(days=i)).isoformat(), part))
     return out
 
 

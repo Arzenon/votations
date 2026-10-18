@@ -116,12 +116,15 @@
       qui n'a gagné que quelques votes depuis son dernier palier attend le
       suivant : sa date est alors indiquée à côté d'elle. Une catégorie encore
       jamais publiée n'apparaît pas.
-      {%- if status == "closed" %}
+      {%- if final %}
       {# Closed, but the remainder since the last snapshot is too small to publish. #}
       La votation est close : les derniers profils renseignés avant la clôture
       restent en dehors des catégories qui n'ont pas pu avancer, parce qu'un
       dernier palier trop petit désignerait les personnes qui ont voté juste
       avant la fin.
+      {%- elif status == "closed" %}
+      La votation vient de se clore : les répartitions définitives paraîtront
+      dans quelques minutes.
       {%- endif %}
     </p>
     {% endif %}
@@ -159,9 +162,12 @@
     {% elif bd.is_pending %}
     {# Not "aucune donnée": there may be data, just not published yet. #}
     <p class="meta">
-      {% if status == "closed" %}
+      {% if final %}
       Non publiée : trop peu de votes nouveaux depuis le dernier palier pour la
       publier sans désigner personne.
+      {% elif status == "closed" %}
+      Pas encore publiée : les répartitions définitives paraissent quelques
+      minutes après la clôture.
       {% else %}
       Pas encore publiée : elle paraîtra dès que {{ min_bucket_volume }}
       personnes auront renseigné un profil, et que ses catégories compteront
@@ -177,8 +183,8 @@
       renseigné ce champ. « France » = part nationale (estimations de population
       INSEE ; régions de France métropolitaine), donnée <em>uniquement</em> pour
       montrer l'écart : les résultats ne sont jamais repondérés. Une catégorie
-      arrêtée à un palier antérieur n'a pas de part : les parts se calculent
-      entre catégories de même date.
+      arrêtée à un palier antérieur aux autres n'a pas de part : les parts, et
+      la part nationale en regard, se calculent entre catégories de même date.
     </p>
   </section>
 

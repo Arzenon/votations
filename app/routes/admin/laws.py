@@ -229,6 +229,7 @@ def update_law(
     for name in ("opens_at", "closes_at"):
         if dt_local(columns[name]) == dt_local(getattr(law, name)):
             columns[name] = getattr(law, name)
+    columns["closes_at"] = laws_crud.closing_from_now(db, law, columns["closes_at"])
     if laws_crud.moves_final_closing(db, law, columns["closes_at"]):
         raise InvalidFormValue(
             "« Clôture du vote » ne peut plus changer : cette votation est close et a "
