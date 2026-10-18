@@ -353,14 +353,17 @@ def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
         return "L'horodatage est publié à la seconde près."
     k = settings.min_cell_count
     if settings.export_time_resolution == "day":
-        rounded = f"de son jour, mais un jour de moins de {k} votes est regroupé avec ses voisins"
+        rounded = (
+            f"de son jour, mais un jour de moins de {k} votes est regroupé avec ses "
+            "voisins, comme sur la courbe"
+        )
     else:
         rounded = (
-            f"de son heure, mais une heure de moins de {k} votes est regroupée avec ses voisines"
+            f"de son heure, mais une heure de moins de {k} votes est regroupée avec "
+            "ses voisines, sans sortir des jours regroupés de la courbe"
         )
     return (
-        f"Chaque vote est daté {rounded}, comme sur la courbe : 'created_at' est "
-        "alors le début de la période regroupée."
+        f"Chaque vote est daté {rounded} : 'created_at' est alors le début de la période regroupée."
     )
 
 

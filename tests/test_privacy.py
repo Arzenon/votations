@@ -752,12 +752,14 @@ def test_closing_releases_settled_categories_and_holds_the_others(open_law, db_s
     _close(db_session, open_law)
 
     assert {r.category for r in _age(db_session, open_law).rows} == {"35-49", "65+"}, "live"
-    assert _as_of(db_session, open_law) is None, "every figure shown is live"
+    # Not "all live": a category with a vote is left out, and the page says so.
+    assert _as_of(db_session, open_law) == open_law.closes_at
 
     page = client.get(f"/loi/{open_law.slug}/resultats").text
     assert "Corse" not in page
     assert "Non publiée" in page
     assert "Pas encore publiée" not in page, "a closed vote has no later step to promise"
+    assert "jamais publiée n'apparaît pas" in page
 
 
 def test_a_closed_votation_publishes_live_once_the_residual_is_a_real_step(open_law, db_session):
@@ -845,6 +847,27 @@ def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_sess
     as_of = {row["category"]: row["as_of"] for row in region["rows"]}
     assert as_of["Bretagne"] == payload["demographics_as_of"]
     assert as_of["Corse"] < payload["demographics_as_of"]
+    # Corse's old count against Bretagne's new one would be neither date's share.
+    shares = {row["category"]: row["share_pct"] for row in region["rows"]}
+    assert shares == {"Bretagne": 100.0, "Corse": None}
+
+
+def test_the_pending_label_does_not_move_with_one_voter(open_law, db_session):
+    """While open, a field nobody filled in reads "pending", not "empty".
+
+    Otherwise the first voter to give a sex would flip the label at once and
+    tell which field they filled in.
+    """
+    _first_snapshot(db_session, open_law, age_bracket="35-49")
+
+    def sexe_reason():
+        return next(
+            bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "sexe"
+        ).reason
+
+    assert sexe_reason() == "pending"
+    cast_ballot(db_session, open_law, "premiere-a-dire", VoteChoice.FOR, sexe="femme")
+    assert sexe_reason() == "pending"
 
 
 def test_a_voter_never_reads_themselves_in_the_step_they_triggered(open_law, db_session):

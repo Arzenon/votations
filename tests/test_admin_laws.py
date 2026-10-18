@@ -12,8 +12,8 @@ from app.config import get_settings
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.crud.laws import REVISIONS_PAGE_SIZE
-from app.models import ImportedLaw, Law, LawRevision
-from app.routes.admin.forms import LawForm
+from app.models import ImportedLaw, Law, LawRevision, Vote
+from app.routes.admin.forms import LawForm, dt_local
 from app.routes.admin.laws import create_law
 from tests.helpers import admin_headers, make_law
 
@@ -660,3 +660,50 @@ def test_a_double_click_on_create_makes_one_votation(sessionmaker_for):
         setup.execute(delete(Law).where(Law.title == form.title))
         setup.commit()
         setup.close()
+
+
+# --- A closed vote that has votes keeps its closing date ------------------------
+
+
+def _save_form(client, law, **fields):
+    """Post the admin form with the law's current values, overridden by ``fields``."""
+    data = {
+        "title": law.title,
+        "published": "1",
+        "opens_at": dt_local(law.opens_at),
+        "closes_at": dt_local(law.closes_at),
+        **fields,
+    }
+    return client.post(
+        f"/admin/lois/{law.id}", headers=admin_headers(), data=data, follow_redirects=False
+    )
+
+
+def test_a_closed_vote_with_votes_cannot_be_reopened(client, closed_law, db_session):
+    """Reopening would let the next snapshot step be compared with the closing page."""
+    db_session.add(Vote(law_id=closed_law.id, voter_token="avant-cloture", choice="for"))
+    db_session.commit()
+    closing = closed_law.closes_at
+
+    later = dt_local(datetime.now(UTC) + timedelta(days=3))
+    r = _save_form(client, closed_law, closes_at=later)
+    assert r.status_code == 400
+    assert "ne peut plus changer" in r.text
+    db_session.refresh(closed_law)
+    assert closed_law.closes_at == closing
+
+    r = _save_form(client, closed_law, closes_at="")
+    assert r.status_code == 400, "clearing the date would reopen it too"
+
+    r = _save_form(client, closed_law, title="Loi close, titre corrigé")
+    assert r.status_code == 303, "other edits are still fine"
+    db_session.refresh(closed_law)
+    assert closed_law.title == "Loi close, titre corrigé"
+
+
+def test_a_closed_vote_without_votes_can_be_reopened(client, closed_law, db_session):
+    later = datetime.now(UTC) + timedelta(days=3)
+    r = _save_form(client, closed_law, closes_at=dt_local(later))
+    assert r.status_code == 303
+    db_session.refresh(closed_law)
+    assert closed_law.is_open()

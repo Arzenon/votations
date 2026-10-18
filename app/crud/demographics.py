@@ -147,10 +147,13 @@ class BreakdownRow:
     total: int
     percentages: dict[str, float]
     # Share of this category among profiled voters, vs the national reference.
-    share: float = 0.0
+    # None for a held row: its count and the others' don't date from the same step.
+    share: float | None = 0.0
     reference: float | None = None
     # When these figures were copied, or None if read live (see `all_breakdowns`).
     as_of: datetime | None = None
+    # Older than the step the page shows: held back by `_held`.
+    held: bool = False
 
 
 # Why a breakdown is hidden.
@@ -181,6 +184,8 @@ class Breakdown:
     rows: list[BreakdownRow] = field(default_factory=list)
     dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
+    # A category with votes is left out: never published, and held back since.
+    withheld: bool = False
 
 
 def all_references(db: Session) -> dict[str, tuple[dict[str, float], int | None]]:
@@ -428,6 +433,7 @@ def published_as_of(law: Law, breakdowns: list[Breakdown]) -> datetime | None:
     if law.is_open():
         return law.demographics_snapshot_at
     live = [row.as_of is None for bd in breakdowns for row in bd.rows]
+    live += [False for bd in breakdowns if bd.withheld]
     if all(live):
         return None
     return law.closes_at if any(live) else law.demographics_snapshot_at
@@ -482,11 +488,30 @@ def all_breakdowns(
         for shown in breakdown.rows:
             key = (dimension, shown.category)
             shown.as_of = None if key in live else copied.get(key)
+        breakdown.withheld = any(
+            (dimension, category) not in live
+            and sum(cell.values()) > 0
+            and not sum(published[dimension][category].values())
+            for category, cell in counted.get(dimension, {}).items()
+        )
         has_votes = any(n for cell in counted.get(dimension, {}).values() for n in cell.values())
-        if breakdown.reason == REASON_EMPTY and has_votes:
-            # Held back since the first step (see `_held`), not empty.
+        # While open, "empty" would flip to "pending" with the first voter to
+        # fill this field in, and tell which field they filled in.
+        if breakdown.reason == REASON_EMPTY and (law.is_open() or has_votes):
             breakdown.reason = REASON_PENDING
         out.append(breakdown)
+
+    as_of = published_as_of(law, out)
+    for breakdown in out:
+        for shown in breakdown.rows:
+            shown.held = as_of is not None and shown.as_of is not None and shown.as_of < as_of
+        if any(shown.held for shown in breakdown.rows):
+            # Shares among the categories of the same date only.
+            current = sum(shown.total for shown in breakdown.rows if not shown.held)
+            for shown in breakdown.rows:
+                shown.share = (
+                    None if shown.held or not current else round(100 * shown.total / current, 1)
+                )
     return out
 
 

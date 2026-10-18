@@ -113,7 +113,8 @@
       choix, l'âge, le sexe et la région de la personne qui vient de voter. Le
       décompte total, lui, reste en direct. Pour la même raison, une catégorie
       qui n'a gagné que quelques votes depuis son dernier palier attend le
-      suivant : sa date est alors indiquée à côté d'elle.
+      suivant : sa date est alors indiquée à côté d'elle. Une catégorie encore
+      jamais publiée n'apparaît pas.
       {%- if not voting_open %}
       {# Closed, but the remainder since the last snapshot is too small to publish. #}
       La votation est close : les derniers profils renseignés avant la clôture
@@ -143,9 +144,9 @@
         <tbody>
           {% for row in bd.rows %}
           <tr>
-            <th scope="row">{{ row.category }}{% if row.as_of and breakdowns_as_of and row.as_of < breakdowns_as_of %}<br><span class="meta">arrêtée au {{ row.as_of | french_datetime }}</span>{% endif %}</th>
+            <th scope="row">{{ row.category }}{% if row.held %}<br><span class="meta">arrêtée au {{ row.as_of | french_datetime }}</span>{% endif %}</th>
             {% for key in CHOICE_LABELS %}<td>{{ row.counts[key] }} ({{ row.percentages[key] }}%)</td>{% endfor %}
-            <td>{{ row.share }}%</td>
+            <td>{% if row.share is not none %}{{ row.share }}%{% else %}-{% endif %}</td>
             <td>{% if row.reference is not none %}{{ row.reference }}%{% else %}-{% endif %}</td>
           </tr>
           {% endfor %}
@@ -174,7 +175,9 @@
       « Part ici » = poids de la catégorie parmi les participant·e·s ayant
       renseigné ce champ. « France » = part nationale (estimations de population
       INSEE ; régions de France métropolitaine), donnée <em>uniquement</em> pour
-      montrer l'écart : les résultats ne sont jamais repondérés.
+      montrer l'écart : les résultats ne sont jamais repondérés. Une catégorie
+      arrêtée à un palier antérieur n'a pas de part : les parts se calculent
+      entre catégories de même date.
     </p>
   </section>
 

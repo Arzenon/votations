@@ -22,7 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer, with_expression
 
 from app.crud import Page, count_matching, paginate
-from app.db import utcnow
+from app.crud import results as results_crud
+from app.db import as_utc, utcnow
 from app.labels import french_date, french_datetime
 from app.models import (
     SEARCH_VECTOR_QUERY_SQL,
@@ -331,6 +332,24 @@ def update(db: Session, law: Law, **fields) -> Law:
     db.commit()
     db.refresh(law)
     return law
+
+
+def moves_final_closing(db: Session, law: Law, closes_at: datetime | None) -> bool:
+    """Whether ``closes_at`` would move the closing of a closed vote that has votes.
+
+    Its closing page showed live counters (see `app.crud.demographics`).
+    Reopening it would let the next snapshot step be compared with that page,
+    which can isolate one ballot. Compared to the minute, like the admin form.
+    """
+    if law.closes_at is None or as_utc(law.closes_at) > utcnow():
+        return False
+    if closes_at is not None and _minute(closes_at) == _minute(law.closes_at):
+        return False
+    return results_crud.count_votes(db, law.id) > 0
+
+
+def _minute(value: datetime) -> datetime:
+    return as_utc(value).replace(second=0, microsecond=0)
 
 
 # Each revision holds a field's full old and new values, so pages stay short.

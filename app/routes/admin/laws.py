@@ -13,7 +13,7 @@ from app.crud import results as results_crud
 from app.db import as_utc, get_db, utcnow
 from app.models import ImportedLaw, Law
 from app.routes.admin.context import cached_draft, law_form_context
-from app.routes.admin.forms import LawForm, law_form, preview_form
+from app.routes.admin.forms import InvalidFormValue, LawForm, law_form, preview_form
 from app.routes.public.exports import at_capacity, csv_response
 from app.routes.public.laws import law_page_context
 from app.security import is_head
@@ -197,8 +197,8 @@ def create_law(
     # Locked until the law is linked: a double click waits here, then gets the 409.
     item = db.get(ImportedLaw, import_id, with_for_update=True) if import_id else None
 
-    # One law per dossier. Otherwise `set_status` would move the import's link
-    # to the new law and the first one would lose its draft.
+    # One law per dossier. Otherwise the import's link would move to the new
+    # law and the first one would lose its draft.
     if item is not None and item.law_id:
         raise HTTPException(
             status_code=409,
@@ -223,6 +223,12 @@ def update_law(
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
+    if laws_crud.moves_final_closing(db, law, form.closes_at):
+        raise InvalidFormValue(
+            "« Clôture du vote » ne peut plus changer : cette votation est close et a "
+            "reçu des votes. La rouvrir permettrait de comparer ses résultats de "
+            "clôture aux suivants, et d'en isoler un vote"
+        )
     laws_crud.update(db, law, **form.columns())
     return RedirectResponse("/admin", status_code=303)
 

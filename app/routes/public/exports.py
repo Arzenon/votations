@@ -169,7 +169,10 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
             "publier en direct permettrait de déduire le profil d'une personne "
             "en comparant deux téléchargements. Chaque catégorie porte la date "
             "de ses chiffres dans 'as_of' (null si en direct) : une catégorie "
-            "qui n'a gagné que quelques votes attend le palier suivant."
+            "qui n'a gagné que quelques votes attend le palier suivant, et sa "
+            "part ('share_pct') est alors vide, les parts se calculant entre "
+            "catégories de même date. Une catégorie encore jamais publiée "
+            "n'apparaît pas."
         ),
     }
 
