@@ -296,7 +296,7 @@ def evolution(
 
     Empty until the total reaches ``min_bucket_volume``, so low-volume votes
     can't be used to identify voters. Days with fewer than ``min_cell_count``
-    votes are merged with the next ones (see `_merge_quiet`).
+    votes are merged with their neighbours (see `_merge_quiet`).
 
     Days without votes are filled with zeros, otherwise a spike from an
     organised campaign wouldn't stand out on the chart.
@@ -351,7 +351,17 @@ def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
         )
     if settings.export_time_resolution == "exact":
         return "L'horodatage est publié à la seconde près."
-    return "L'export ne révèle rien de plus que la page de résultats."
+    k = settings.min_cell_count
+    if settings.export_time_resolution == "day":
+        rounded = f"de son jour, mais un jour de moins de {k} votes est regroupé avec ses voisins"
+    else:
+        rounded = (
+            f"de son heure, mais une heure de moins de {k} votes est regroupée avec ses voisines"
+        )
+    return (
+        f"Chaque vote est daté {rounded}, comme sur la courbe : 'created_at' est "
+        "alors le début de la période regroupée."
+    )
 
 
 def _timestamps_allowed(db: Session, law_id: int, *, total: int | None = None) -> bool:

@@ -478,6 +478,72 @@ def test_two_ballots_at_once_take_one_snapshot(sessionmaker_for):
             check.close()
 
 
+def _snapshot_while_a_ballot_holds_a_cell(
+    Session, law_id, monkeypatch, *, ballot_profile, trigger_profile=None
+):
+    """A ballot takes its first cell and waits; meanwhile a ballot takes a snapshot.
+
+    ``trigger_profile`` is the snapshotting voter's own profile, added after
+    the snapshot as the vote route does. Fails on any error, deadlocks included.
+    """
+    holds_a_cell = threading.Event()
+    original_add = demo_crud._add
+
+    def slow_add(*args, **kwargs):
+        original_add(*args, **kwargs)
+        if not holds_a_cell.is_set():
+            holds_a_cell.set()
+            # Holds this cell while the snapshot locks the others.
+            time.sleep(0.5)
+
+    monkeypatch.setattr(demo_crud, "_add", slow_add)
+    failures: list[Exception] = []
+
+    def ballot():
+        db = Session()
+        try:
+            vote, previous = votes_crud.cast_vote(
+                db, db.get(Law, law_id), "pendant", VoteChoice.FOR
+            )
+            demo_crud.record(
+                db, vote=vote, choice=VoteChoice.FOR, previous_choice=previous, **ballot_profile
+            )
+            db.commit()
+        except Exception as exc:  # re-raised below
+            failures.append(exc)
+        finally:
+            db.close()
+
+    def snapshot():
+        db = Session()
+        try:
+            assert holds_a_cell.wait(timeout=10)
+            law = db.get(Law, law_id)
+            vote, previous = votes_crud.cast_vote(db, law, "declencheur", VoteChoice.FOR)
+            assert demo_crud.refresh_snapshot(db, law) is True
+            if trigger_profile:
+                demo_crud.record(
+                    db,
+                    vote=vote,
+                    choice=VoteChoice.FOR,
+                    previous_choice=previous,
+                    **trigger_profile,
+                )
+            db.commit()
+        except Exception as exc:  # re-raised below
+            failures.append(exc)
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=ballot), threading.Thread(target=snapshot)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert not failures, failures
+    assert not any(thread.is_alive() for thread in threads)
+
+
 def test_a_snapshot_and_a_ballot_do_not_deadlock(sessionmaker_for, monkeypatch):
     """A snapshot and a ballot take the counters in the same order.
 
@@ -499,52 +565,7 @@ def test_a_snapshot_and_a_ballot_do_not_deadlock(sessionmaker_for, monkeypatch):
         finally:
             setup.close()
 
-        holds_a_cell = threading.Event()
-        original_add = demo_crud._add
-
-        def slow_add(*args, **kwargs):
-            original_add(*args, **kwargs)
-            if not holds_a_cell.is_set():
-                holds_a_cell.set()
-                # Holds this cell while the snapshot locks the others.
-                time.sleep(0.5)
-
-        monkeypatch.setattr(demo_crud, "_add", slow_add)
-        failures: list[Exception] = []
-
-        def ballot():
-            db = Session()
-            try:
-                vote, previous = votes_crud.cast_vote(
-                    db, db.get(Law, law_id), "pendant", VoteChoice.FOR
-                )
-                demo_crud.record(
-                    db, vote=vote, choice=VoteChoice.FOR, previous_choice=previous, **profile
-                )
-                db.commit()
-            except Exception as exc:  # re-raised below
-                failures.append(exc)
-            finally:
-                db.close()
-
-        def snapshot():
-            db = Session()
-            try:
-                assert holds_a_cell.wait(timeout=10)
-                assert demo_crud.refresh_snapshot(db, db.get(Law, law_id)) is True
-                db.commit()
-            except Exception as exc:  # re-raised below
-                failures.append(exc)
-            finally:
-                db.close()
-
-        threads = [threading.Thread(target=ballot), threading.Thread(target=snapshot)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
-        assert not failures, failures
-        assert not any(thread.is_alive() for thread in threads)
+        _snapshot_while_a_ballot_holds_a_cell(Session, law_id, monkeypatch, ballot_profile=profile)
 
         check = Session()
         try:
@@ -553,6 +574,44 @@ def test_a_snapshot_and_a_ballot_do_not_deadlock(sessionmaker_for, monkeypatch):
             # The snapshot waited for the ballot, so it holds it and counts it.
             assert published["sexe"]["femme"]["for"] == volume
             assert law.demographics_snapshot_profiles == volume + 1
+        finally:
+            check.close()
+
+
+def test_a_snapshot_and_a_ballot_creating_a_cell_do_not_deadlock(sessionmaker_for, monkeypatch):
+    """Creating a cell during a snapshot doesn't deadlock either.
+
+    The snapshot used to lock the existing cells, then create "18-24" for its
+    own voter: it waited on a ballot creating "18-24" too, which waited on
+    "Bretagne", held by the snapshot.
+    """
+    Session = sessionmaker_for
+    volume = get_settings().min_bucket_volume
+    with _law_of_its_own(Session) as law_id:
+        setup = Session()
+        try:
+            law = setup.get(Law, law_id)
+            for i in range(volume):
+                cast_ballot(
+                    setup, law, f"avant-{i}", VoteChoice.FOR, age_bracket="35-49", region="Bretagne"
+                )
+            assert law.demographics_snapshot_at is None, "due on the next check"
+        finally:
+            setup.close()
+
+        _snapshot_while_a_ballot_holds_a_cell(
+            Session,
+            law_id,
+            monkeypatch,
+            ballot_profile={"age_bracket": "18-24", "region": "Bretagne"},
+            trigger_profile={"age_bracket": "18-24"},
+        )
+
+        check = Session()
+        try:
+            counted, published = demo_crud._cells_by_dimension(demo_crud._counters(check, law_id))
+            assert counted["age"]["18-24"]["for"] == 2, "both ballots counted"
+            assert published["age"]["18-24"]["for"] == 0, "a new cell below a full step waits"
         finally:
             check.close()
 
@@ -626,7 +685,7 @@ def _settle_the_trigger(db, law, *, start, **profile):
     """Bring the first step's triggering cell to a full ``min_cell_count`` change.
 
     The ballot that triggers a step is counted after it, so its cell moved by
-    one: on its own, that cell would hold its dimension back (see `_settled`).
+    one: on its own, that cell would hold its category back (see `_held`).
     """
     profile = profile or {"age_bracket": "35-49"}
     _profiled_ballots(db, law, get_settings().min_cell_count - 1, start=start, **profile)
@@ -684,8 +743,8 @@ def test_closing_does_not_release_a_step_too_small_to_be_one(open_law, db_sessio
     assert _age(db_session, open_law).shown is True, "the last step's figures are still shown"
 
 
-def test_closing_releases_settled_dimensions_and_holds_the_others(open_law, db_session, client):
-    """Closing is a step too: age goes live, a region cell at one vote holds region."""
+def test_closing_releases_settled_categories_and_holds_the_others(open_law, db_session, client):
+    """Closing is a step too: age goes live, a lone Corsican vote stays unpublished."""
     volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
     _settle_the_trigger(db_session, open_law, start=volume + 1)
     cast_ballot(db_session, open_law, "seul-en-corse", VoteChoice.AGAINST, region="Corse")
@@ -693,8 +752,7 @@ def test_closing_releases_settled_dimensions_and_holds_the_others(open_law, db_s
     _close(db_session, open_law)
 
     assert {r.category for r in _age(db_session, open_law).rows} == {"35-49", "65+"}, "live"
-    as_of = _as_of(db_session, open_law)
-    assert as_of == open_law.closes_at, "dated by the closing, the step that released age"
+    assert _as_of(db_session, open_law) is None, "every figure shown is live"
 
     page = client.get(f"/loi/{open_law.slug}/resultats").text
     assert "Corse" not in page
@@ -755,23 +813,38 @@ def test_the_snapshot_does_move_once_enough_profiles_arrive(open_law, db_session
     assert {r.category for r in age.rows} == {"35-49", "65+"}
 
 
-def test_a_cell_that_moved_by_one_holds_its_dimension_back(open_law, db_session):
-    """A step publishes a dimension only if each of its cells moved by 0 or a full cell.
+def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_session, client):
+    """A step copies a category only if each of its cells moved by 0 or a full cell.
 
-    Otherwise a step of 50 profiles moving "femme, Pour" by one would tell
-    anyone who knows a woman voted in that window how she voted.
+    Otherwise a step of 50 profiles moving "Corse, Pour" by one would tell
+    anyone who knows a Corsican voted in that window how they voted. The rest
+    of the table moves on, and the held category says how old it is.
     """
-    volume = _first_snapshot(db_session, open_law, age_bracket="35-49", sexe="femme")
-    open_law.demographics_snapshot_at = datetime.now(UTC) - timedelta(days=1)
+    _profiled_ballots(db_session, open_law, 15, region="Corse")
+    _profiled_ballots(db_session, open_law, 36, start=15, region="Bretagne")
+    first_step = open_law.demographics_snapshot_at
+    assert first_step is not None, "a first step, Corse at 15"
+    open_law.demographics_snapshot_at = first_step - timedelta(days=1)
     db_session.commit()
-    # The age cell of the trigger reaches a full change; its sexe cell stays at one.
-    _settle_the_trigger(db_session, open_law, start=volume + 1)
-    _profiled_ballots(db_session, open_law, volume + 1, start=volume + 100, age_bracket="65+")
-    assert open_law.demographics_snapshot_profiles > volume, "expected a second step"
+    first_step = open_law.demographics_snapshot_at
+
+    # Bretagne gains enough for a second step; Corse gains one vote.
+    _profiled_ballots(db_session, open_law, 1, start=100, region="Corse")
+    _profiled_ballots(db_session, open_law, 60, start=200, region="Bretagne")
+    assert open_law.demographics_snapshot_at > first_step, "expected a second step"
 
     _, published = demo_crud._cells_by_dimension(demo_crud._counters(db_session, open_law.id))
-    assert published["age"]["65+"]["for"] > 0, "age moved"
-    assert published["sexe"]["femme"]["for"] == volume, "sexe waited"
+    assert published["region"]["Bretagne"]["for"] > 36, "Bretagne moved"
+    assert published["region"]["Corse"]["for"] == 15, "Corse waited"
+
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert 'Corse<br><span class="meta">arrêtée au' in page
+    assert "Bretagne<br>" not in page, "only the held category is dated"
+    payload = client.get(f"/loi/{open_law.slug}/export.json").json()
+    region = next(block for block in payload["demographics"] if block["dimension"] == "region")
+    as_of = {row["category"]: row["as_of"] for row in region["rows"]}
+    assert as_of["Bretagne"] == payload["demographics_as_of"]
+    assert as_of["Corse"] < payload["demographics_as_of"]
 
 
 def test_a_voter_never_reads_themselves_in_the_step_they_triggered(open_law, db_session):

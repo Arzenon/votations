@@ -116,7 +116,8 @@ def test_export_is_reproducible(client, open_law, db_session):
 def test_the_json_export_says_what_it_rounded(client, open_law, db_session):
     _seed(db_session, open_law)
     data = client.get(f"/loi/{open_law.slug}/export.json").json()
-    assert data["votes_note"] == "L'export ne révèle rien de plus que la page de résultats."
+    assert data["votes_note"].startswith("Chaque vote est daté de son jour")
+    assert "début de la période regroupée" in data["votes_note"]
     for vote in data["votes"]:
         assert vote["created_at"] == "2026-05-04"
 

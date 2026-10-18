@@ -138,6 +138,7 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
                     "counts": r.counts,
                     "share_pct": r.share,
                     "reference_pct": r.reference,
+                    "as_of": r.as_of.isoformat() if r.as_of else None,
                 }
                 for r in bd.rows
             ],
@@ -166,7 +167,9 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
             "repondérer. Lorsque 'demographics_as_of' est renseigné, ces "
             "répartitions y sont arrêtées et n'avancent que par paliers : les "
             "publier en direct permettrait de déduire le profil d'une personne "
-            "en comparant deux téléchargements."
+            "en comparant deux téléchargements. Chaque catégorie porte la date "
+            "de ses chiffres dans 'as_of' (null si en direct) : une catégorie "
+            "qui n'a gagné que quelques votes attend le palier suivant."
         ),
     }
 

@@ -229,6 +229,28 @@ Deux précautions avant de coder :
 
 ---
 
+## Paliers homogènes des répartitions par profil
+
+**Pourquoi.** Un palier ne publie une catégorie que si chacune de ses cases a
+bougé de 0 ou d'au moins `MIN_CELL_COUNT` votes (`app.crud.demographics._held`).
+Mais une catégorie qui a gagné 10 votes, tous « Pour », passe ce filtre. Qui sait
+que X a voté « Pour » pendant cette fenêtre (le décompte total est en direct, ou
+X l'a dit) apprend alors sa catégorie, s'il en a donné une.
+
+**État : non traité, limite connue.** Décidé le 18/10/2026. Le choix lui-même est
+déjà donné par le décompte en direct : ce qui fuit, c'est le profil.
+
+### Ce qui coince
+
+Exiger au moins deux choix ayant bougé par catégorie (une forme de l-diversité)
+fermerait le cas, mais retiendrait la plupart des catégories à chaque palier :
+les votes d'une heure vont très souvent tous du même côté dans une petite
+catégorie. Les répartitions resteraient figées des jours, ce qu'on vient
+justement de corriger en passant d'une retenue par dimension à une retenue par
+catégorie.
+
+---
+
 ## Écarté délibérément
 
 Recensé le 01/09/2026 en inventoriant le portail, pour ne pas le réexaminer.

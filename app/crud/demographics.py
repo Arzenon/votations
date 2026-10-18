@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import Row, func, select, update
+from sqlalchemy import Row, false, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -42,7 +42,7 @@ def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, d
     """Atomically add ``delta`` to a counter (upsert). Never goes below zero.
 
     Callers take cells in (dimension, category, choice) order, the order the
-    snapshot locks them in (see `_counters`), so the two can't deadlock.
+    snapshot locks them in (see `_lock_cells`), so the two can't deadlock.
     """
     stmt = pg_insert(DemographicTally).values(
         law_id=law_id,
@@ -149,6 +149,8 @@ class BreakdownRow:
     # Share of this category among profiled voters, vs the national reference.
     share: float = 0.0
     reference: float | None = None
+    # When these figures were copied, or None if read live (see `all_breakdowns`).
+    as_of: datetime | None = None
 
 
 # Why a breakdown is hidden.
@@ -179,8 +181,6 @@ class Breakdown:
     rows: list[BreakdownRow] = field(default_factory=list)
     dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
-    # Read from the live counters rather than the last step (see `live_dimensions`).
-    live: bool = False
 
 
 def all_references(db: Session) -> dict[str, tuple[dict[str, float], int | None]]:
@@ -306,62 +306,98 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
         return False
 
     # Locked, so no ballot can change a counter between the check and the copy.
-    counters = _counters(db, law.id, lock=True)
+    _lock_cells(db, law.id)
+    counters = _counters(db, law.id)
     # Counted after the locks, which waited for the ballots holding a counter:
     # the copy includes them, so the next step must count from them too.
     profiled = results.count_profiled(db, law.id)
-    settled = _settled(counters)
+    held = _held(counters)
     db.execute(
         update(DemographicTally)
-        .where(DemographicTally.id.in_([row.id for row in counters if row.dimension in settled]))
-        .values(published_count=DemographicTally.count)
+        .where(
+            DemographicTally.id.in_(
+                [row.id for row in counters if (row.dimension, row.category) not in held]
+            )
+        )
+        .values(published_count=DemographicTally.count, published_at=now)
     )
     law.demographics_snapshot_at = now
     law.demographics_snapshot_profiles = profiled
     return True
 
 
-def _counters(db: Session, law_id: int, *, lock: bool = False) -> list[Row]:
-    stmt = select(
-        DemographicTally.id,
-        DemographicTally.dimension,
-        DemographicTally.category,
-        DemographicTally.choice,
-        # Not "count": that would hide the tuple's own count() method.
-        DemographicTally.count.label("live"),
-        DemographicTally.published_count,
-    ).where(DemographicTally.law_id == law_id)
-    if lock:
-        # Same order as ballots take cells (see `_add`). "C" sorts like Python.
-        stmt = stmt.order_by(
-            *(
-                column.collate("C")
-                for column in (
-                    DemographicTally.dimension,
-                    DemographicTally.category,
-                    DemographicTally.choice,
-                )
-            )
-        ).with_for_update()
-    return list(db.execute(stmt).all())
+# Every counter a law can have, in `_add`'s order.
+_ALL_CELLS = [
+    (dimension, category, choice)
+    for dimension in sorted(VALID_CATEGORIES)
+    for category in sorted(VALID_CATEGORIES[dimension])
+    for choice in sorted(c.value for c in VoteChoice)
+]
 
 
-def _settled(counters: list[Row]) -> set[str]:
-    """Dimensions where no cell moved by fewer than ``min_cell_count`` since published.
+def _lock_cells(db: Session, law_id: int) -> None:
+    """Lock all of a law's counters, creating the missing ones, in `_add`'s order.
+
+    One statement takes the cells one by one, so the snapshot never holds a
+    cell while waiting for an earlier one. Creating a cell later, for this
+    ballot's own profile, would wait on a ballot creating it too while
+    holding the cell that ballot needs next.
+    """
+    stmt = pg_insert(DemographicTally).values(
+        [
+            {"law_id": law_id, "dimension": d, "category": c, "choice": ch, "count": 0}
+            for d, c, ch in _ALL_CELLS
+        ]
+    )
+    # DO UPDATE locks an existing row even when its WHERE is false.
+    db.execute(
+        stmt.on_conflict_do_update(
+            constraint="uq_demo_cell", set_={"count": DemographicTally.count}, where=false()
+        )
+    )
+
+
+def _counters(db: Session, law_id: int) -> list[Row]:
+    return list(
+        db.execute(
+            select(
+                DemographicTally.id,
+                DemographicTally.dimension,
+                DemographicTally.category,
+                DemographicTally.choice,
+                # Not "count": that would hide the tuple's own count() method.
+                DemographicTally.count.label("live"),
+                DemographicTally.published_count,
+                DemographicTally.published_at,
+            ).where(DemographicTally.law_id == law_id)
+        ).all()
+    )
+
+
+def _held(counters: list[Row]) -> set[tuple[str, str]]:
+    """(dimension, category) with a cell that moved by fewer than ``min_cell_count``.
 
     A step of 50 profiles can still move one cell by 1 ("Corse, Contre"):
     anyone who knows a Corsican voted in that window would learn their vote.
-    Such a dimension waits for a later step.
+    Such a category waits for a later step; the rest of its table moves on.
+
+    Known limit: a category that gained 10 votes, all "Pour", is published.
+    Someone who knows X voted "Pour" in that window then learns X's category.
+    The live tally already gives the choice; closing this would need at least
+    two moved choices per category, and would hold most categories back.
     """
     k = get_settings().min_cell_count
-    held = {row.dimension for row in counters if 0 < abs(row.live - row.published_count) < k}
-    return set(DIMENSIONS) - held
+    return {
+        (row.dimension, row.category)
+        for row in counters
+        if 0 < abs(row.live - row.published_count) < k
+    }
 
 
-def live_dimensions(
+def _live_categories(
     db: Session, law: Law, counters: list[Row], *, profiled: int | None = None
-) -> set[str]:
-    """Dimensions whose breakdown may use the live counters instead of the snapshot.
+) -> set[tuple[str, str]]:
+    """(dimension, category) that may use the live counters instead of the snapshot.
 
     Closing the vote is one more step and follows the same rules: otherwise a
     single ballot cast after the last snapshot could be recovered by comparing
@@ -372,22 +408,26 @@ def live_dimensions(
     """
     if law.is_open():
         return set()
+    every = {(row.dimension, row.category) for row in counters}
     if law.demographics_snapshot_at is None:
-        return set(DIMENSIONS)
+        return every
     if profiled is None:
         profiled = results.count_profiled(db, law.id)
     if profiled - law.demographics_snapshot_profiles < get_settings().min_bucket_volume:
         return set()
-    return _settled(counters)
+    return every - _held(counters)
 
 
 def published_as_of(law: Law, breakdowns: list[Breakdown]) -> datetime | None:
     """Date of the step being shown, or None if every figure is live.
 
-    Closing is dated by ``closes_at`` when it releases some dimensions only.
+    Closing is dated by ``closes_at`` when it releases some categories only.
+    A category held at an earlier step carries its own date (`BreakdownRow.as_of`).
     Shared by the results page and the JSON export so they say the same thing.
     """
-    live = [bd.live for bd in breakdowns]
+    if law.is_open():
+        return law.demographics_snapshot_at
+    live = [row.as_of is None for bd in breakdowns for row in bd.rows]
     if all(live):
         return None
     return law.closes_at if any(live) else law.demographics_snapshot_at
@@ -410,7 +450,7 @@ def _cells_by_dimension(counters: list[Row]) -> tuple[_Cells, _Cells]:
 def all_breakdowns(
     db: Session, law: Law, *, min_cell: int | None = None, profiled: int | None = None
 ) -> list[Breakdown]:
-    """Breakdowns for every dimension, each from its live counters or its last step."""
+    """Breakdowns for every dimension, each category from its live counters or its last step."""
     k = min_cell if min_cell is not None else get_settings().min_cell_count
     if law.demographics_snapshot_at is None and law.is_open():
         # Open with no snapshot yet: everything is "pending", not "empty".
@@ -422,24 +462,30 @@ def all_breakdowns(
         ]
 
     counters = _counters(db, law.id)
-    live = live_dimensions(db, law, counters, profiled=profiled)
+    live = _live_categories(db, law, counters, profiled=profiled)
     counted, published = _cells_by_dimension(counters)
+    # A category's cells are copied together; cells created since have no date yet.
+    copied: dict[tuple[str, str], datetime] = {}
+    for row in counters:
+        key = (row.dimension, row.category)
+        if row.published_at is not None:
+            copied[key] = max(copied.get(key, row.published_at), row.published_at)
     references = all_references(db)
     out = []
     for dimension in DIMENSIONS:
         reference, year = references.get(dimension, ({}, None))
-        breakdown = _build(
-            dimension,
-            (counted if dimension in live else published).get(dimension, {}),
-            k=k,
-            reference=reference,
-            reference_year=year,
-        )
+        cells = {
+            category: (counted if (dimension, category) in live else published)[dimension][category]
+            for category in counted.get(dimension, {})
+        }
+        breakdown = _build(dimension, cells, k=k, reference=reference, reference_year=year)
+        for shown in breakdown.rows:
+            key = (dimension, shown.category)
+            shown.as_of = None if key in live else copied.get(key)
         has_votes = any(n for cell in counted.get(dimension, {}).values() for n in cell.values())
         if breakdown.reason == REASON_EMPTY and has_votes:
-            # Held back since the first step (see `_settled`), not empty.
+            # Held back since the first step (see `_held`), not empty.
             breakdown.reason = REASON_PENDING
-        breakdown.live = dimension in live
         out.append(breakdown)
     return out
 
