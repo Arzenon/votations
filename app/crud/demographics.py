@@ -548,11 +548,16 @@ def _same_date_shares(breakdown: Breakdown) -> None:
             shown.share = round(100 * shown.total / total, 1) if current_row and total else None
     # One category alone would read 100%, which compares nothing.
     known = [shown.reference for shown in current if shown.reference is not None]
+    # A category with no national figure ("autre") still counts in "Part ici":
+    # scale to the share of voters the others cover, so both compare the same people.
+    covered = sum(shown.total for shown in current if shown.reference is not None) / sum(
+        shown.total for shown in current
+    )
     for shown in rows:
         if shown.as_of != newest or shown.reference is None or len(known) < 2:
             shown.reference = None
         else:
-            shown.reference = round(100 * shown.reference / sum(known), 1)
+            shown.reference = round(100 * covered * shown.reference / sum(known), 1)
 
 
 @dataclass

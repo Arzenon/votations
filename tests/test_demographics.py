@@ -197,3 +197,13 @@ def test_the_national_share_covers_the_same_categories_as_the_share_here():
     sexe.rows = [row("femme", 40, 80.0, 51.5), row("autre", 10, 20.0, None)]
     _same_date_shares(sexe)
     assert [r.reference for r in sexe.rows] == [None, None], "femme alone would read 100%"
+
+    # "autre" has no national figure but counts in "Part ici": 45/45 against
+    # 51.5/48.5 made both sexes look under-represented.
+    sexe.rows = [
+        row("femme", 135, 45.0, 51.5),
+        row("homme", 135, 45.0, 48.5),
+        row("autre", 30, 10.0, None),
+    ]
+    _same_date_shares(sexe)
+    assert [r.reference for r in sexe.rows] == [46.4, 43.6, None]
