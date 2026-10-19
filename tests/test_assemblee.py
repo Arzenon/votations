@@ -488,6 +488,28 @@ def test_a_scrutin_missing_from_one_export_keeps_its_counts(db_session, monkeypa
     assert (staged.an_vote_for, staged.an_vote_checked) == (300, True)
 
 
+def test_a_final_scrutin_missing_from_one_export_does_not_bring_back_an_earlier_reading(
+    db_session, monkeypatch
+):
+    """Without the final adoption, the first reading's count must not replace it."""
+    from scripts import refresh_assemblee
+    from tests.conftest import _NoCloseSession
+    from tests.test_opendata import _scrutin
+
+    readings = {"V1": _scrutin("V1", pour=100), "V2": _scrutin("V2", pour=357)}
+    monkeypatch.setattr(refresh_assemblee, "SessionLocal", lambda: _NoCloseSession(db_session))
+    monkeypatch.setattr(
+        refresh_assemblee, "fetch_promulgated_laws", lambda: [_record(refs=("V1", "V2"))]
+    )
+    for night in (readings, {"V1": readings["V1"]}):
+        monkeypatch.setattr(refresh_assemblee, "fetch_votes", lambda wanted, night=night: night)
+        assert refresh_assemblee.main() == 0
+
+    db_session.expire_all()
+    staged = db_session.query(ImportedLaw).filter_by(dossier_uid="DLR5L17NSCRUT").one()
+    assert (staged.an_vote_for, staged.an_vote_checked) == (357, True)
+
+
 def test_an_unreadable_scrutin_is_not_reported_as_no_scrutin(monkeypatch):
     """A referenced vote missing from the export leaves the question open."""
     from scripts import refresh_assemblee

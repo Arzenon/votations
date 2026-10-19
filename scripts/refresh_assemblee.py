@@ -39,11 +39,15 @@ def _attach_votes(records: list[PromulgatedLaw]) -> str:
     resolved = 0
     for record in records:
         vote = final_vote(record.vote_refs, index)
-        if vote is None:
-            # "No public scrutin" only if every referenced vote could be read.
-            record.an_vote_checked = all(ref in index for ref in record.vote_refs)
+        # Trusted only if every vote after the one found was read: a missing
+        # later one may be the real final adoption (or, with none found, the
+        # only public scrutin). Unchecked, the stored counts are kept.
+        found_at = max(
+            (i for i, ref in enumerate(record.vote_refs) if vote and ref == vote.uid), default=-1
+        )
+        record.an_vote_checked = all(ref in index for ref in record.vote_refs[found_at + 1 :])
+        if vote is None or not record.an_vote_checked:
             continue
-        record.an_vote_checked = True
         record.an_vote_for = vote.pour
         record.an_vote_against = vote.contre
         record.an_vote_abstain = vote.abstentions
