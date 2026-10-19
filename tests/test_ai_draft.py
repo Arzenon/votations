@@ -21,7 +21,7 @@ from app.models import (
     Law,
 )
 from tests.conftest import drain_drafts
-from tests.helpers import make_law
+from tests.helpers import fake_message, make_law
 
 
 def _basic(user: str, pw: str) -> dict:
@@ -53,8 +53,9 @@ DRAFT = LawDraft(
 class _FakeClient:
     """Fake anthropic.Anthropic that records its calls."""
 
-    def __init__(self, tokens=5000, draft=DRAFT, fail=None):
+    def __init__(self, tokens=5000, draft=DRAFT, fail=None, stop_reason="end_turn"):
         self.tokens, self.draft, self.fail = tokens, draft, fail
+        self.stop_reason = stop_reason
         self.seen = {}
         outer = self
 
@@ -63,11 +64,11 @@ class _FakeClient:
                 outer.seen["count"] = kwargs
                 return type("R", (), {"input_tokens": outer.tokens})()
 
-            def parse(self, **kwargs):
-                outer.seen["parse"] = kwargs
+            def create(self, **kwargs):
+                outer.seen["create"] = kwargs
                 if outer.fail:
                     raise outer.fail
-                return type("R", (), {"parsed_output": outer.draft})()
+                return fake_message(outer.draft, outer.stop_reason)
 
         self.messages = _Messages()
 
@@ -79,9 +80,10 @@ def test_generates_the_two_factual_blocks():
     assert draft.practical_changes.startswith("Les patients")
 
     # The official text and its identity are what the model is given.
-    sent = client.seen["parse"]
+    sent = client.seen["create"]
     assert sent["model"] == get_settings().ai_model
-    assert sent["output_format"] is LawDraft
+    schema = sent["output_config"]["format"]["schema"]
+    assert set(schema["required"]) == {"summary_text", "practical_changes"}
     prompt = sent["messages"][0]["content"]
     assert "Le code de la santé publique est ainsi modifié." in prompt
     assert LAW.title in prompt
@@ -216,7 +218,7 @@ def test_measures_before_sending_and_refuses_outsized_text():
         assert "trop volumineux" in str(exc)
     # Refused before any billable generation call.
     assert "count" in client.seen
-    assert "parse" not in client.seen
+    assert "create" not in client.seen
 
 
 def test_refuses_a_text_with_no_articles():
@@ -245,6 +247,20 @@ def test_api_failure_becomes_a_readable_error():
         raise AssertionError("expected AiDraftError")
     except AiDraftError as exc:
         assert "overloaded_error" in str(exc)
+
+
+def test_a_cut_off_or_refused_answer_says_so():
+    """The stop reason is read before the JSON, which a cut-off answer lacks."""
+    for stop_reason, said in (("max_tokens", "tronquée"), ("refusal", "refus du modèle")):
+        client = _FakeClient(draft=None, stop_reason=stop_reason)
+        with pytest.raises(AiDraftError, match=said):
+            generate_draft(LAW, client=client)
+
+
+def test_an_answer_that_is_not_the_expected_json_is_unreadable():
+    client = _FakeClient(draft=None)
+    with pytest.raises(AiDraftError, match="illisible"):
+        generate_draft(LAW, client=client)
 
 
 def test_without_a_key_the_feature_reports_itself_unavailable():
@@ -759,7 +775,7 @@ def test_an_oversized_debate_corpus_is_refused_before_it_is_billed():
                 return type("R", (), {"input_tokens": 10_000_000})()
 
             @staticmethod
-            def parse(**_kw):  # pragma: no cover - must never be reached
+            def create(**_kw):  # pragma: no cover - must never be reached
                 raise AssertionError("the model was called despite the size guard")
 
     law = LawText(

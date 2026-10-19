@@ -8,6 +8,7 @@ from app.ai import AiDraftError, ArgumentPick, ArgumentSelection, select_argumen
 from app.config import get_settings
 from app.debates import Speech
 from app.legifrance import Article, LawText
+from tests.helpers import fake_message
 
 LAW = LawText(
     nor="SFHX2609544L",
@@ -64,11 +65,11 @@ class _FakeClient:
             def count_tokens(self, **kw):
                 return type("R", (), {"input_tokens": 1000})()
 
-            def parse(self, **kw):
+            def create(self, **kw):
                 outer.seen = kw
                 if outer.fail:
                     raise outer.fail
-                return type("R", (), {"parsed_output": outer.selection})()
+                return fake_message(outer.selection)
 
         self.messages = _Messages()
 
