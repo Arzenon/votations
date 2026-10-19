@@ -19,23 +19,22 @@ from app.db import SessionLocal
 from app.scrutins import ScrutinsFetchError, fetch_votes, final_vote
 
 
-def _attach_votes(records: list[PromulgatedLaw]) -> tuple[str, bool]:
-    """Add the Assemblée vote counts. Returns a summary line and whether the
-    scrutins export was read.
+def _attach_votes(records: list[PromulgatedLaw]) -> str:
+    """Add the Assemblée vote counts. Returns a summary line.
 
-    Best effort: if the scrutins download fails, the import goes on without
-    counts.
+    Best effort: a law whose scrutins couldn't be read stays unchecked, and
+    `imports_crud.sync` then keeps its stored counts.
     """
     wanted = {ref for record in records for ref in record.vote_refs}
     if not wanted:
         # No votes referenced: mark as checked, there was no public scrutin.
         for record in records:
             record.an_vote_checked = True
-        return "aucun scrutin référencé", True
+        return "aucun scrutin référencé"
     try:
         index = fetch_votes(wanted)
     except ScrutinsFetchError as exc:
-        return f"scrutins non récupérés ({exc}) - décomptes conservés", False
+        return f"scrutins non récupérés ({exc}) - décomptes conservés"
 
     resolved = 0
     for record in records:
@@ -49,7 +48,7 @@ def _attach_votes(records: list[PromulgatedLaw]) -> tuple[str, bool]:
         record.an_vote_against = vote.contre
         record.an_vote_abstain = vote.abstentions
         resolved += 1
-    return f"{resolved} scrutin(s) rattaché(s) sur {len(records)} loi(s)", True
+    return f"{resolved} scrutin(s) rattaché(s) sur {len(records)} loi(s)"
 
 
 def main() -> int:
@@ -59,12 +58,12 @@ def main() -> int:
         print(f"Import AN ignoré, échec de récupération : {exc}", file=sys.stderr)
         return 1
 
-    votes, scrutins_read = _attach_votes(records)
+    votes = _attach_votes(records)
 
     db = SessionLocal()
     propagated = 0
     try:
-        created, refreshed = imports_crud.sync(db, records=records, with_scrutins=scrutins_read)
+        created, refreshed = imports_crud.sync(db, records=records)
         # Also update laws already created from these rows.
         propagated = imports_crud.propagate_parliament_record(db)
     except SQLAlchemyError as exc:

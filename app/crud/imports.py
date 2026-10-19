@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import ColumnElement, CursorResult, String, func, or_, select, update
+from sqlalchemy import ColumnElement, CursorResult, String, case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, defer
 
@@ -55,8 +55,9 @@ _REFRESHED = (
     *PARLIAMENT_RECORD,
 )
 
-# Read from the scrutins export, not the dossier: kept as they are when that
-# download fails.
+# Read from the scrutins export, not the dossier: only replaced by a row whose
+# scrutins were read (an_vote_checked), so a failed or partial download keeps
+# the stored counts.
 _FROM_SCRUTINS = frozenset({"an_vote_for", "an_vote_against", "an_vote_abstain", "an_vote_checked"})
 
 log = get_logger("imports")
@@ -89,15 +90,11 @@ def sync(
     *,
     records: list[PromulgatedLaw],
     source: str = SOURCE_ASSEMBLEE,
-    with_scrutins: bool = True,
 ) -> tuple[int, int]:
     """Upsert the export into the staging table. Returns (created, refreshed).
 
     Everything goes in a single statement, so one oversized value would make
     Postgres reject the whole import. Such rows are skipped and logged instead.
-
-    ``with_scrutins`` is False when the scrutins export couldn't be read: the
-    vote counts already stored are then left alone.
     """
     if not records:
         return 0, 0
@@ -135,9 +132,15 @@ def sync(
         constraint="uq_imported_law_source_uid",
         set_={
             **{
-                name: stmt.excluded[name]
+                name: (
+                    case(
+                        (stmt.excluded.an_vote_checked, stmt.excluded[name]),
+                        else_=getattr(ImportedLaw, name),
+                    )
+                    if name in _FROM_SCRUTINS
+                    else stmt.excluded[name]
+                )
                 for name in _REFRESHED
-                if with_scrutins or name not in _FROM_SCRUTINS
             },
             "last_seen_at": stmt.excluded.last_seen_at,
         },

@@ -454,8 +454,8 @@ def _record(uid: str = "DLR5L17NSCRUT", refs: tuple[str, ...] = ("VTA1",)):
     )
 
 
-def test_a_failed_scrutins_download_keeps_the_counts_already_published(db_session, monkeypatch):
-    """A day without the scrutins export doesn't wipe yesterday's counts."""
+def _two_nights(db_session, monkeypatch, second_night) -> ImportedLaw:
+    """Import once with the scrutin readable, then with ``second_night`` as fetch_votes."""
     from scripts import refresh_assemblee
     from tests.conftest import _NoCloseSession
     from tests.test_opendata import _scrutin
@@ -464,15 +464,27 @@ def test_a_failed_scrutins_download_keeps_the_counts_already_published(db_sessio
     monkeypatch.setattr(refresh_assemblee, "fetch_promulgated_laws", lambda: [_record()])
     monkeypatch.setattr(refresh_assemblee, "fetch_votes", lambda wanted: {"VTA1": _scrutin("VTA1")})
     assert refresh_assemblee.main() == 0
+    monkeypatch.setattr(refresh_assemblee, "fetch_votes", second_night)
+    assert refresh_assemblee.main() == 0
+
+    db_session.expire_all()
+    return db_session.query(ImportedLaw).filter_by(dossier_uid="DLR5L17NSCRUT").one()
+
+
+def test_a_failed_scrutins_download_keeps_the_counts_already_published(db_session, monkeypatch):
+    """A day without the scrutins export doesn't wipe yesterday's counts."""
+    from scripts import refresh_assemblee
 
     def unreachable(wanted):
         raise refresh_assemblee.ScrutinsFetchError("hors ligne")
 
-    monkeypatch.setattr(refresh_assemblee, "fetch_votes", unreachable)
-    assert refresh_assemblee.main() == 0
+    staged = _two_nights(db_session, monkeypatch, unreachable)
+    assert (staged.an_vote_for, staged.an_vote_checked) == (300, True)
 
-    db_session.expire_all()
-    staged = db_session.query(ImportedLaw).filter_by(dossier_uid="DLR5L17NSCRUT").one()
+
+def test_a_scrutin_missing_from_one_export_keeps_its_counts(db_session, monkeypatch):
+    """One unreadable or absent member doesn't wipe that law's counts either."""
+    staged = _two_nights(db_session, monkeypatch, lambda wanted: {})
     assert (staged.an_vote_for, staged.an_vote_checked) == (300, True)
 
 
