@@ -190,19 +190,14 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
             population = _value(obs[0])
         except InseeFetchError as exc:
             # A missing région would inflate every other share once normalised,
-            # and replace the cached values. Only an overseas code may be absent.
-            if code not in OVERSEAS_CODES:
-                raise InseeFetchError(f"région {code} indisponible : {exc}") from exc
-            continue
+            # and replace the cached values. The job retries later instead.
+            raise InseeFetchError(f"région {code} indisponible : {exc}") from exc
         region_year = max(region_year, year)
         if code in OVERSEAS_CODES:
             overseas += population
         else:
             region_pop[REGION_CODE_TO_LABEL[code]] = population
-    if overseas:
-        region_pop[OVERSEAS_LABEL] = overseas
-    if not region_pop:
-        raise InseeFetchError("no region data")
+    region_pop[OVERSEAS_LABEL] = overseas
 
     grand_total = sum(region_pop.values())
     region = {label: round(100 * pop / grand_total, 1) for label, pop in region_pop.items()}

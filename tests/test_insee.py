@@ -59,7 +59,9 @@ def _fake_payload(url: str) -> dict:
     if level == "REG" and code in insee.REGION_CODE_TO_LABEL:
         pop = 200.0 if code == "11" else 100.0  # IDF bigger
         return {"observations": [_obs({"SEX": "_T", "AGE": "_T"}, pop)]}
-    return {"observations": []}  # overseas / unknown → skipped
+    if level == "REG" and code in insee.OVERSEAS_CODES:
+        return {"observations": [_obs({"SEX": "_T", "AGE": "_T"}, 10.0)]}
+    return {"observations": []}
 
 
 def test_fetch_reference_parses_sex_age_and_region():
@@ -76,10 +78,11 @@ def test_fetch_reference_parses_sex_age_and_region():
     assert age["18-24"] == round(100 * 700 / adults, 1)
 
     region = data.values["region"]
-    assert len(region) == len(insee.REGION_CODE_TO_LABEL)  # 13 metro, no overseas
+    assert len(region) == len(insee.REGION_CODE_TO_LABEL) + 1  # 13 metro + overseas
     assert abs(sum(region.values()) - 100.0) < 1.0  # normalised (rounding)
     assert max(region, key=region.get) == "Île-de-France"  # the bigger one
-    assert "Outre-mer" not in region
+    # The five overseas codes, summed: 50 out of 200 + 12 * 100 + 50.
+    assert region["Outre-mer"] == round(100 * 50 / 1450, 1)
 
 
 def test_fetch_reference_raises_on_unreachable():
@@ -94,16 +97,18 @@ def test_fetch_reference_raises_on_unreachable():
 
 
 def test_a_missing_region_fails_the_refresh_instead_of_skewing_the_others():
-    """Normalising without Île-de-France would inflate every other region."""
+    """Normalising without a région (here Île-de-France, then Mayotte) inflates the others."""
     import pytest
 
-    def without_idf(url: str) -> bytes:
-        if "-REG-11" in url:
-            raise insee.InseeFetchError("timeout")
-        return fake_get(url)
+    for code in ("11", "06"):
 
-    with pytest.raises(insee.InseeFetchError, match="région 11"):
-        insee.fetch_reference(get=without_idf)
+        def without(url: str, code=code) -> bytes:
+            if f"-REG-{code}" in url:
+                raise insee.InseeFetchError("timeout")
+            return fake_get(url)
+
+        with pytest.raises(insee.InseeFetchError, match=f"région {code}"):
+            insee.fetch_reference(get=without)
 
 
 def _reference(db, dimension):
