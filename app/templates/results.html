@@ -163,15 +163,15 @@
     {# Not "aucune donnée": there may be data, just not published yet. #}
     <p class="meta">
       {% if final %}
-      Non publiée : trop peu de votes nouveaux depuis le dernier palier pour la
-      publier sans désigner personne.
+      Non publiée : trop peu de votes depuis le dernier palier pour les
+      publier de façon anonyme.
       {% elif status == "closed" %}
       Pas encore publiée : les répartitions définitives paraissent quelques
       minutes après la clôture.
       {% else %}
       Pas encore publiée : elle paraîtra dès que {{ min_bucket_volume }}
       personnes auront renseigné un profil, et que ses catégories compteront
-      assez de votes nouveaux pour ne désigner personne.
+      assez de votes pour garantir l'anonymat.
       {% endif %}
     </p>
     {% else %}
