@@ -120,7 +120,8 @@ class Settings(BaseSettings):
 
     # AI drafting in the admin. Disabled without a key. A human always reviews.
     anthropic_api_key: str = ""
-    ai_model: str = "claude-opus-5"
+    # Its own default effort is "medium": `ai_effort` is always sent.
+    ai_model: str = "claude-opus-5-5"
     # Refuse larger inputs (a loi de finances can be huge).
     ai_max_input_tokens: int = Field(default=150000, ge=1)
     # Main cost setting (thinking is billed as output). "medium" roughly halves
