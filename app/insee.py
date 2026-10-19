@@ -188,8 +188,12 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
         try:
             year, obs = _latest(_observations(_payload(get, url)), lambda o: True)
             population = _value(obs[0])
-        except InseeFetchError:
-            continue  # skip a missing region
+        except InseeFetchError as exc:
+            # A missing région would inflate every other share once normalised,
+            # and replace the cached values. Only an overseas code may be absent.
+            if code not in OVERSEAS_CODES:
+                raise InseeFetchError(f"région {code} indisponible : {exc}") from exc
+            continue
         region_year = max(region_year, year)
         if code in OVERSEAS_CODES:
             overseas += population

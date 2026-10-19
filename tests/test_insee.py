@@ -93,6 +93,19 @@ def test_fetch_reference_raises_on_unreachable():
         pass
 
 
+def test_a_missing_region_fails_the_refresh_instead_of_skewing_the_others():
+    """Normalising without Île-de-France would inflate every other region."""
+    import pytest
+
+    def without_idf(url: str) -> bytes:
+        if "-REG-11" in url:
+            raise insee.InseeFetchError("timeout")
+        return fake_get(url)
+
+    with pytest.raises(insee.InseeFetchError, match="région 11"):
+        insee.fetch_reference(get=without_idf)
+
+
 def _reference(db, dimension):
     return demo_crud.all_references(db)[dimension]
 
