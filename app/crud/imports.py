@@ -261,7 +261,7 @@ def get_by_law_id(db: Session, law_id: int) -> ImportedLaw | None:
 
 
 def set_status(db: Session, item: ImportedLaw, *, status: str) -> ImportedLaw:
-    """Set the review status. ``law_id`` is left alone (see `app.crud.laws.create`)."""
+    """Set the review status."""
     item.status = status
     db.commit()
     db.refresh(item)

@@ -3,14 +3,7 @@
 from app.crud import demographics as demo_crud
 from app.db import utcnow
 from app.models import DemographicTally, Vote, VoteChoice
-from tests.helpers import cast_ballot
-
-
-def _dimension(db, law, dimension, **kwargs):
-    """One dimension's breakdown, via `all_breakdowns`."""
-    return next(
-        bd for bd in demo_crud.all_breakdowns(db, law, **kwargs) if bd.dimension == dimension
-    )
+from tests.helpers import breakdown, cast_ballot
 
 
 def _cell(db, law_id, dimension, category, choice):
@@ -90,7 +83,7 @@ def test_breakdown_hidden_below_threshold(open_law, db_session):
             "25-34": {"for": 15, "against": 2, "abstain": 11},  # the "2" trips suppression
         },
     )
-    bd = _dimension(db_session, open_law, "age")
+    bd = breakdown(db_session, open_law, "age")
     assert bd.shown is False
     assert bd.reason == "below_threshold"
 
@@ -105,7 +98,7 @@ def test_breakdown_shown_above_threshold(open_law, db_session):
             "50-64": {"for": 22, "against": 18, "abstain": 10},
         },
     )
-    bd = _dimension(db_session, open_law, "age")
+    bd = breakdown(db_session, open_law, "age")
     assert bd.shown is True
     # Canonical ordering: 35-49 before 50-64.
     assert [r.category for r in bd.rows] == ["35-49", "50-64"]
@@ -147,7 +140,7 @@ def test_breakdown_includes_share_and_reference(open_law, db_session):
             "homme": {"for": 25, "against": 10, "abstain": 10},  # 45
         },
     )
-    bd = _dimension(db_session, open_law, "sexe")
+    bd = breakdown(db_session, open_law, "sexe")
     assert bd.shown is True
     femme = bd.rows[0]
     assert femme.share == round(100 * 60 / 105, 1)
@@ -175,11 +168,11 @@ def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session
         assert set(row.keys()) == {"law_id", "choice", "created_at"}
 
 
-def test_the_national_share_covers_the_same_categories_as_the_share_here():
-    """A category left out of the table is left out of "France" too.
+def test_the_expected_share_covers_the_same_categories():
+    """A category left out of the table is left out of the expected share too.
 
-    Otherwise 35-49 at 54.5% of the shown voters sat next to 23.5% of the
-    whole population, an over-representation that isn't there.
+    Otherwise a category would look over-represented next to a national share
+    taken over more categories than the table shows.
     """
     from app.crud.demographics import Breakdown, BreakdownRow, _same_date_shares
 

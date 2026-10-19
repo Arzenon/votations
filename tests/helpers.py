@@ -76,6 +76,11 @@ def cast_ballot(
     return vote
 
 
+def breakdown(db: Session, law: Law, dimension: str) -> demo_crud.Breakdown:
+    """One dimension's breakdown, as the results page builds it."""
+    return next(bd for bd in demo_crud.all_breakdowns(db, law) if bd.dimension == dimension)
+
+
 def demographic_cells(db: Session, law_id: int) -> dict[tuple[str, str, str], int]:
     """A law's counters as {(dimension, category, choice): n}."""
     rows = db.query(DemographicTally).filter_by(law_id=law_id).all()

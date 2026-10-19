@@ -27,7 +27,7 @@ MAX_X_LABELS = 7
 MAX_DOTS = 60
 
 # Above this many points, days are grouped (weeks, etc.). A year of daily
-# points is unreadable and heavy. The table below stays daily.
+# points is unreadable and heavy. The table below keeps days.
 MAX_POINTS = 90
 
 
@@ -91,8 +91,7 @@ def _daily(buckets) -> list[_Point]:
     out = []
     for b in buckets:
         left = {key: b.counts.get(key, 0) for key in CHOICE_LABELS}
-        totals = b.daily or [sum(left.values())]
-        for i, n in enumerate(totals):
+        for i, n in enumerate(b.daily):
             part = dict(zip(left, _spread(n, list(left.values())), strict=True))
             for key in left:
                 left[key] -= part[key]
@@ -107,11 +106,11 @@ def _grouped(buckets, period: Period) -> list[_Point]:
     may cover a shorter period.
     """
     if period.days == 1:
-        return [_Point(b.label, dict(b.counts)) for b in buckets]
+        return buckets
     return [
         _Point(
             window[0].label,
-            {key: sum(b.counts.get(key, 0) for b in window) for key in CHOICE_LABELS},
+            {key: sum(b.counts[key] for b in window) for key in CHOICE_LABELS},
         )
         for window in (
             buckets[start : start + period.days] for start in range(0, len(buckets), period.days)
@@ -143,7 +142,7 @@ class EvolutionChart:
     x_ticks: list[tuple[float, str]]
     max_value: int
     description: str
-    # Shown on the page, since the table is always daily.
+    # Shown on the page, since the table keeps days.
     period: Period = PERIODS[0]
 
 
@@ -209,7 +208,7 @@ def _describe(buckets, series: list[Series], period: Period) -> str:
 
 
 def build_evolution_chart(buckets) -> EvolutionChart | None:
-    """Build the chart from daily buckets. None if there's nothing to draw.
+    """Build the chart from `app.crud.results.evolution`. None if there's nothing to draw.
 
     Grouping days into points (see MAX_POINTS) happens here only.
     """
@@ -217,9 +216,9 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         return None
 
     # One point per day, then `drawn` is what goes on the chart.
-    buckets = _daily(buckets)
-    period = _period_for(len(buckets))
-    drawn = _grouped(buckets, period)
+    days = _daily(buckets)
+    period = _period_for(len(days))
+    drawn = _grouped(days, period)
 
     keys = list(CHOICE_LABELS)
     peak = max((max(b.counts.get(k, 0) for k in keys) for b in drawn), default=0)
@@ -278,7 +277,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     # The last label shows the actual last day, not the first day of the last
     # group.
     if x_ticks:
-        x_ticks[-1] = (x_ticks[-1][0], _short_date(buckets[-1].label))
+        x_ticks[-1] = (x_ticks[-1][0], _short_date(days[-1].label))
 
     return EvolutionChart(
         width=WIDTH,
@@ -291,6 +290,6 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         y_ticks=y_ticks,
         x_ticks=x_ticks,
         max_value=top,
-        description=_describe(buckets, series, period),
+        description=_describe(days, series, period),
         period=period,
     )

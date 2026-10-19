@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -204,15 +204,14 @@ def count_profiled(db: Session, law_id: int) -> int:
 class EvolutionBucket:
     # ISO date of the first day (`date.isoformat()`), parsed back by `app.charts`.
     label: str
-    counts: dict[str, int] = field(default_factory=dict)
+    counts: dict[str, int]
     # How many voted on each day covered, not how: only the split is merged.
-    # Empty means a single day holding all of ``counts``.
-    daily: list[int] = field(default_factory=list)
+    daily: list[int]
 
     @property
     def days(self) -> int:
         """Calendar days covered: more than one when quiet days are merged."""
-        return len(self.daily) or 1
+        return len(self.daily)
 
     @property
     def day(self) -> date:

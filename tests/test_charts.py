@@ -13,7 +13,7 @@ def _bucket(label, **counts):
     from app.crud.results import EvolutionBucket
 
     full = {"for": 0, "against": 0, "abstain": 0, **counts}
-    return EvolutionBucket(label=label, counts=full)
+    return EvolutionBucket(label=label, counts=full, daily=[sum(full.values())])
 
 
 def test_the_chart_stays_inside_its_plot_area():
@@ -95,6 +95,7 @@ def _days(n):
         EvolutionBucket(
             label=(date(2026, 1, 1) + timedelta(days=i)).isoformat(),
             counts={"for": i % 7, "against": i % 5, "abstain": i % 3},
+            daily=[i % 7 + i % 5 + i % 3],
         )
         for i in range(n)
     ]
@@ -128,7 +129,7 @@ def test_a_long_votation_is_drawn_week_by_week():
     for serie in chart.series:
         assert serie.total == sum(b.counts[serie.key] for b in days), serie.key
 
-    # The description names the unit, since the table stays daily.
+    # The description names the unit, since the table keeps days.
     assert "Votes par semaine" in chart.description
     assert "en une semaine" in chart.description
 
@@ -150,10 +151,8 @@ def test_a_one_day_mobilisation_still_shows_as_a_spike():
     """A one-day spike still shows when grouped (sum, not average)."""
     from app.charts import build_evolution_chart
 
-    days = _days(365)
-    for day in days:
-        day.counts = {"for": 1, "against": 1, "abstain": 0}
-    days[200].counts = {"for": 500, "against": 1, "abstain": 0}
+    days = [_bucket(day.label, **{"for": 1, "against": 1}) for day in _days(365)]
+    days[200] = _bucket(days[200].label, **{"for": 500, "against": 1})
 
     pour = next(s for s in build_evolution_chart(days).series if s.key == "for")
     # A quiet week sums to 7; the spike week must stand out.

@@ -353,7 +353,7 @@ def results_page(
             "evolution": evolution,
             "chart": build_evolution_chart(evolution),
             "breakdowns": breakdowns,
-            # Closed for good: the breakdowns' last words (see `demo_crud.is_final`).
+            # Over for good (see `demo_crud.is_final`).
             "final": demo_crud.is_final(law),
             "min_cell_count": settings.min_cell_count,
             # Snapshot date, shown on the page. None when the figures are live.

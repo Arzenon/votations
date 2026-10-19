@@ -170,8 +170,8 @@ class Breakdown:
     label: str
     shown: bool
     threshold: int
-    # A REASON_* value. "pending" means figures may still come (the vote isn't
-    # final, or its categories were never published), not "no data".
+    # A REASON_* value. "pending" means there are votes not shown (the vote
+    # isn't final, or its categories were never published), not "no data".
     reason: str = REASON_NONE
 
     @property
@@ -417,8 +417,8 @@ def _live_categories(
     the page before and after closing. If no snapshot was ever published there
     is nothing to compare against, so live counters are fine.
 
-    ``final`` is `is_final`, read once per page. ``profiled`` is
-    ``Tally.with_profile``, to save a query.
+    ``final`` is `is_final`. ``profiled`` is ``Tally.with_profile``, to save a
+    query.
     """
     if not final:
         return set()
@@ -498,10 +498,9 @@ def all_breakdowns(db: Session, law: Law, *, profiled: int | None = None) -> lis
             and not sum(published[dimension][category].values())
             for category, cell in counted.get(dimension, {}).items()
         )
-        has_votes = any(n for cell in counted.get(dimension, {}).values() for n in cell.values())
         # Before the end, "empty" would flip to "pending" with the first voter to
         # fill this field in, and tell which field they filled in.
-        if breakdown.reason == REASON_EMPTY and (not final or has_votes):
+        if breakdown.reason == REASON_EMPTY and (not final or breakdown.withheld):
             breakdown.reason = REASON_PENDING
         out.append(breakdown)
 

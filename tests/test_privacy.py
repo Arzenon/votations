@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import votes as votes_crud
 from app.models import Law, Vote, VoteChoice
-from tests.helpers import cast_ballot, demographic_cells, make_law
+from tests.helpers import breakdown, cast_ballot, demographic_cells, make_law
 
 # --- Nothing is issued to someone who only reads ------------------------------
 
@@ -686,10 +686,6 @@ def _close(db, law):
     db.commit()
 
 
-def _age(db, law):
-    return next(bd for bd in demo_crud.all_breakdowns(db, law) if bd.dimension == "age")
-
-
 def _as_of(db, law):
     return demo_crud.published_as_of(law, demo_crud.all_breakdowns(db, law))
 
@@ -705,7 +701,7 @@ def test_a_votation_that_never_published_shows_its_live_counters_once_closed(ope
 
     _close(db_session, open_law)
 
-    age = _age(db_session, open_law)
+    age = breakdown(db_session, open_law, "age")
     assert age.shown is True
     assert age.rows[0].counts["for"] == 12
     assert _as_of(db_session, open_law) is None, "live, so undated"
@@ -730,7 +726,9 @@ def test_closing_does_not_release_a_step_too_small_to_be_one(open_law, db_sessio
         "closing published the residual, so one voter's whole profile is the difference"
     )
     assert _as_of(db_session, open_law) is not None, "and it is dated"
-    assert _age(db_session, open_law).shown is True, "the last step's figures are still shown"
+    assert breakdown(db_session, open_law, "age").shown is True, (
+        "the last step's figures are still shown"
+    )
 
 
 def test_closing_releases_settled_categories_and_holds_the_others(open_law, db_session, client):
@@ -741,7 +739,9 @@ def test_closing_releases_settled_categories_and_holds_the_others(open_law, db_s
     _profiled_ballots(db_session, open_law, volume, start=volume + 100, age_bracket="65+")
     _close(db_session, open_law)
 
-    assert {r.category for r in _age(db_session, open_law).rows} == {"35-49", "65+"}, "live"
+    assert {r.category for r in breakdown(db_session, open_law, "age").rows} == {"35-49", "65+"}, (
+        "live"
+    )
     # Not "all live": a category with a vote is left out, and the page says so.
     assert _as_of(db_session, open_law) == open_law.closes_at
 
@@ -759,7 +759,7 @@ def test_a_closed_votation_publishes_live_once_the_residual_is_a_real_step(open_
     _profiled_ballots(db_session, open_law, volume, start=volume + 100, age_bracket="65+")
     _close(db_session, open_law)
 
-    age = _age(db_session, open_law)
+    age = breakdown(db_session, open_law, "age")
     assert _as_of(db_session, open_law) is None, "live, so undated"
     assert {r.category for r in age.rows} == {"35-49", "65+"}
 
@@ -800,7 +800,7 @@ def test_the_snapshot_does_move_once_enough_profiles_arrive(open_law, db_session
     _settle_the_trigger(db_session, open_law, start=volume + 1)
     _profiled_ballots(db_session, open_law, volume + 1, start=volume + 100, age_bracket="65+")
 
-    age = next(bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "age")
+    age = breakdown(db_session, open_law, "age")
     assert age.shown is True
     assert {r.category for r in age.rows} == {"35-49", "65+"}
 
@@ -863,9 +863,7 @@ def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session, c
     _profiled_ballots(db_session, open_law, 50, start=300, age_bracket="65+")
     assert open_law.demographics_snapshot_at > first_step - timedelta(days=1)
 
-    region = next(
-        bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "region"
-    )
+    region = breakdown(db_session, open_law, "region")
     assert all(row.held for row in region.rows), "both from the first step"
     assert {row.category: row.share for row in region.rows} == {"Bretagne": 40.0, "Corse": 60.0}
     page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
@@ -880,14 +878,9 @@ def test_the_pending_label_does_not_move_with_one_voter(open_law, db_session):
     """
     _first_snapshot(db_session, open_law, age_bracket="35-49")
 
-    def sexe_reason():
-        return next(
-            bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "sexe"
-        ).reason
-
-    assert sexe_reason() == "pending"
+    assert breakdown(db_session, open_law, "sexe").reason == "pending"
     cast_ballot(db_session, open_law, "premiere-a-dire", VoteChoice.FOR, sexe="femme")
-    assert sexe_reason() == "pending"
+    assert breakdown(db_session, open_law, "sexe").reason == "pending"
 
 
 def test_a_voter_never_reads_themselves_in_the_step_they_triggered(open_law, db_session):
@@ -951,7 +944,7 @@ def test_the_last_step_holds_for_a_moment_after_the_closing(open_law, db_session
     open_law.closes_at = datetime.now(UTC) - timedelta(seconds=30)
     db_session.commit()
     assert _as_of(db_session, open_law) == open_law.demographics_snapshot_at, "still the step"
-    assert "65+" not in {r.category for r in _age(db_session, open_law).rows}
+    assert "65+" not in {r.category for r in breakdown(db_session, open_law, "age").rows}
 
 
 def test_a_ballot_still_recording_at_the_closing_is_refused(
