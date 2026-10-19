@@ -6,6 +6,8 @@ HTMX swaps in after a vote.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
@@ -372,11 +374,19 @@ def results_page(
     )
 
 
+# A stored id: digits only, and within Postgres's integer (anything else is a 404).
+_REVISION_ID = re.compile(r"[0-9]{1,9}")
+
+
 @router.get("/loi/{slug}/modifications/{revision_id}", response_class=HTMLResponse)
-def revision_page(request: Request, slug: str, revision_id: int, db: Session = Depends(get_db)):
+def revision_page(request: Request, slug: str, revision_id: str, db: Session = Depends(get_db)):
     """One change in full, for those too large to diff on the results page."""
     law = visible(db, slug)
-    revision = laws_crud.get_revision(db, law.id, revision_id) if law else None
+    revision = (
+        laws_crud.get_revision(db, law.id, int(revision_id))
+        if law is not None and _REVISION_ID.fullmatch(revision_id)
+        else None
+    )
     if law is None or revision is None:
         return not_found(request)
     return templates.TemplateResponse(

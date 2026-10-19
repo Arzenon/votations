@@ -8,10 +8,10 @@
   <ins>{{ change.new or "(vide)" }}</ins>
 </p>
 {% elif change.deferred %}
-{# Too large to diff here (see `INLINE_DIFF_TOKENS`): the revision has its own page. #}
+{# Too large to diff here (see `INLINE_DIFF_CHARS`): the revision has its own page. #}
 <p class="meta revision-note">
   Modification étendue :
-  <a href="/loi/{{ law.slug }}/modifications/{{ rev.id }}">voir le détail mot à mot</a>.
+  <a href="/loi/{{ law.slug }}/modifications/{{ rev.id }}">voir le détail</a>.
 </p>
 {% elif change.rewritten %}
 {# Mostly rewritten (see `REWRITE_SHARE`): both versions in full. #}

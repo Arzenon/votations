@@ -24,14 +24,21 @@ CONTEXT_WORDS = 12
 # which becomes unreadable for a rewrite.
 REWRITE_SHARE = 0.5
 
-# Above this many tokens (about 500 words) on either side of the changed region,
-# the word diff isn't drawn on the results page but on the revision's own page.
-# difflib's cost grows with the product of both sides: 30 ms at this size, 1.6 s
-# for edits at both ends of a 20,000-character field.
-INLINE_DIFF_TOKENS = 1000
+# Above this many characters on either side of the changed region, the diff
+# isn't drawn on the results page but on the revision's own page. Bounds a page
+# of 20 revisions to about a second.
+INLINE_DIFF_CHARS = 20_000
 
 # Words and whitespace as separate tokens, so paragraph breaks are preserved.
 _TOKENS = re.compile(r"\s+|\S+")
+
+# Each word with the whitespace before it, for changed regions over
+# FINE_DIFF_TOKENS. difflib's cost grows with how often tokens repeat, and the
+# spaces of `_TOKENS` are half of all tokens: on 50,000 characters this takes
+# 0.3 s instead of 36 s. Only cost: a change at the field's very start also
+# marks its first word.
+_WORD_TOKENS = re.compile(r"\s*\S+|\s+")
+FINE_DIFF_TOKENS = 1000
 
 
 @dataclass(frozen=True)
@@ -55,7 +62,7 @@ class FieldChange:
     old: str
     new: str
     segments: list[Segment]
-    # Too large to diff on the results page (see INLINE_DIFF_TOKENS).
+    # Too large to diff on the results page (see INLINE_DIFF_CHARS).
     deferred: bool = False
 
 
@@ -97,7 +104,8 @@ def _common_ends(before: list[str], after: list[str]) -> tuple[int, int]:
     limit = min(len(before), len(after))
     while head < limit and before[head] == after[head]:
         head += 1
-    # Leave a trailing space to the change, so it reads " très grandes" as before.
+    # Leave a trailing space to the change: an insertion reads " très grandes",
+    # not "très grandes ".
     if head and not before[head - 1].strip():
         head -= 1
     tail = 0
@@ -106,10 +114,10 @@ def _common_ends(before: list[str], after: list[str]) -> tuple[int, int]:
     return head, tail
 
 
-def diff(old: str, new: str, *, max_tokens: int | None = None) -> list[Segment] | None:
+def diff(old: str, new: str, *, max_chars: int | None = None) -> list[Segment] | None:
     """Word-level diff between two versions of a field.
 
-    None if the changed region has more than ``max_tokens`` tokens on a side.
+    None if the changed region has more than ``max_chars`` characters on a side.
     """
     # Lazy import: only the revision log needs difflib.
     import difflib
@@ -120,8 +128,11 @@ def diff(old: str, new: str, *, max_tokens: int | None = None) -> list[Segment] 
     head, tail = _common_ends(before, after)
     middle_before = before[head : len(before) - tail]
     middle_after = after[head : len(after) - tail]
-    if max_tokens is not None and max(len(middle_before), len(middle_after)) > max_tokens:
+    if max_chars is not None and max(_chars(middle_before), _chars(middle_after)) > max_chars:
         return None
+    if max(len(middle_before), len(middle_after)) > FINE_DIFF_TOKENS:
+        middle_before = _WORD_TOKENS.findall("".join(middle_before))
+        middle_after = _WORD_TOKENS.findall("".join(middle_after))
 
     out: list[Segment] = _equal_segments(before[:head]) if head else []
     # autojunk would ignore frequent tokens like spaces and "de", "la".
@@ -140,6 +151,10 @@ def diff(old: str, new: str, *, max_tokens: int | None = None) -> list[Segment] 
     return out
 
 
+def _chars(tokens: list[str]) -> int:
+    return sum(len(token) for token in tokens)
+
+
 def field_change(old: str | None, new: str | None, *, inline: bool = True) -> FieldChange:
     """Build the display for one revision: short values as is, the rest diffed.
 
@@ -156,7 +171,7 @@ def field_change(old: str | None, new: str | None, *, inline: bool = True) -> Fi
     if short:
         return FieldChange(short=True, rewritten=False, old=old, new=new, segments=[])
 
-    segments = diff(old, new, max_tokens=INLINE_DIFF_TOKENS if inline else None)
+    segments = diff(old, new, max_chars=INLINE_DIFF_CHARS if inline else None)
     if segments is None:
         return FieldChange(
             short=False, rewritten=False, old=old, new=new, segments=[], deferred=True
