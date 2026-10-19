@@ -48,11 +48,12 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?définissez ADMIN_PASSWORD}
       # SEED_ON_START is deliberately absent: it defaults to 0.
     # --no-access-log: the access log would pair IPs with vote times.
-    # --forwarded-allow-ips: only trust proxy headers from the compose network.
+    # --forwarded-allow-ips "*": the app publishes no port, so only containers of
+    # this stack reach it. With a fixed range, a Docker subnet outside it would
+    # make https read as http, and every vote would fail the origin check.
     command:
       ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
-       "--proxy-headers", "--forwarded-allow-ips", "${TRUSTED_PROXY_CIDR:-172.16.0.0/12}",
-       "--no-access-log"]
+       "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
     # Read-only filesystem: the app only writes to /tmp (tmpfs, used by
     # Starlette for large form uploads). If a container fails with "Read-only
     # file system", add a tmpfs for that path or remove read_only.
