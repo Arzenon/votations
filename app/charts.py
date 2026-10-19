@@ -8,7 +8,7 @@ table below, so the SVG is an image with a text description.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from app.labels import CHOICE_LABELS
 
@@ -27,7 +27,7 @@ MAX_X_LABELS = 7
 MAX_DOTS = 60
 
 # Above this many points, days are grouped (weeks, etc.). A year of daily
-# points is unreadable and heavy. The table below stays daily.
+# points is unreadable and heavy. The table below keeps days.
 MAX_POINTS = 90
 
 
@@ -67,6 +67,38 @@ def _period_for(days: int) -> Period:
     return PERIODS[-1]
 
 
+def _spread(n: int, weights: list[int]) -> list[int]:
+    """Split ``n`` in proportion to ``weights``. The parts add up to ``n``."""
+    total = sum(weights)
+    if not total:
+        return [0] * len(weights)
+    exact = [n * w / total for w in weights]
+    parts = [int(x) for x in exact]
+    by_remainder = sorted(range(len(parts)), key=lambda i: exact[i] - parts[i], reverse=True)
+    for i in by_remainder[: n - sum(parts)]:
+        parts[i] += 1
+    return parts
+
+
+def _daily(buckets) -> list[_Point]:
+    """One point per day. A merged bucket is split over its days by their totals.
+
+    Each day keeps its number of votes (`EvolutionBucket.daily`), so a spike
+    inside a merged period still shows. Only the split between choices is the
+    period's: each day takes its votes from what the period has left, in
+    proportion, so every day and every choice adds up exactly.
+    """
+    out = []
+    for b in buckets:
+        left = {key: b.counts[key] for key in CHOICE_LABELS}
+        for i, n in enumerate(b.daily):
+            part = dict(zip(left, _spread(n, list(left.values())), strict=True))
+            for key in left:
+                left[key] -= part[key]
+            out.append(_Point((b.day + timedelta(days=i)).isoformat(), part))
+    return out
+
+
 def _grouped(buckets, period: Period) -> list[_Point]:
     """Sum daily buckets into points of ``period``, oldest first.
 
@@ -74,11 +106,11 @@ def _grouped(buckets, period: Period) -> list[_Point]:
     may cover a shorter period.
     """
     if period.days == 1:
-        return [_Point(b.label, dict(b.counts)) for b in buckets]
+        return buckets
     return [
         _Point(
             window[0].label,
-            {key: sum(b.counts.get(key, 0) for b in window) for key in CHOICE_LABELS},
+            {key: sum(b.counts[key] for b in window) for key in CHOICE_LABELS},
         )
         for window in (
             buckets[start : start + period.days] for start in range(0, len(buckets), period.days)
@@ -110,7 +142,7 @@ class EvolutionChart:
     x_ticks: list[tuple[float, str]]
     max_value: int
     description: str
-    # Shown on the page, since the table is always daily.
+    # Shown on the page, since the table keeps days.
     period: Period = PERIODS[0]
 
 
@@ -176,19 +208,20 @@ def _describe(buckets, series: list[Series], period: Period) -> str:
 
 
 def build_evolution_chart(buckets) -> EvolutionChart | None:
-    """Build the chart from daily buckets. None if there's nothing to draw.
+    """Build the chart from `app.crud.results.evolution`. None if there's nothing to draw.
 
     Grouping days into points (see MAX_POINTS) happens here only.
     """
     if not buckets:
         return None
 
-    # `buckets` is daily, `drawn` is what goes on the chart.
-    period = _period_for(len(buckets))
-    drawn = _grouped(buckets, period)
+    # One point per day, then `drawn` is what goes on the chart.
+    days = _daily(buckets)
+    period = _period_for(len(days))
+    drawn = _grouped(days, period)
 
     keys = list(CHOICE_LABELS)
-    peak = max((max(b.counts.get(k, 0) for k in keys) for b in drawn), default=0)
+    peak = max((max(b.counts[k] for k in keys) for b in drawn), default=0)
     top, step = _nice_ceiling(peak)
 
     plot_left, plot_right = PAD_LEFT, WIDTH - PAD_RIGHT
@@ -206,7 +239,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
 
     series = []
     for key in keys:
-        points = [(x_at(i), y_at(b.counts.get(key, 0))) for i, b in enumerate(drawn)]
+        points = [(x_at(i), y_at(b.counts[key])) for i, b in enumerate(drawn)]
         line = _smooth(points)
         area = ""
         if len(points) > 1:
@@ -214,7 +247,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
                 f"{line} L {points[-1][0]:.1f} {plot_bottom:.1f} "
                 f"L {points[0][0]:.1f} {plot_bottom:.1f} Z"
             )
-        counts = [b.counts.get(key, 0) for b in drawn]
+        counts = [b.counts[key] for b in drawn]
         series.append(
             Series(
                 key=key,
@@ -244,7 +277,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     # The last label shows the actual last day, not the first day of the last
     # group.
     if x_ticks:
-        x_ticks[-1] = (x_ticks[-1][0], _short_date(buckets[-1].label))
+        x_ticks[-1] = (x_ticks[-1][0], _short_date(days[-1].label))
 
     return EvolutionChart(
         width=WIDTH,
@@ -257,6 +290,6 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         y_ticks=y_ticks,
         x_ticks=x_ticks,
         max_value=top,
-        description=_describe(buckets, series, period),
+        description=_describe(days, series, period),
         period=period,
     )

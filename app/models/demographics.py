@@ -8,8 +8,9 @@ to both their profile and their vote. Each dimension is counted separately
 
 import enum
 import unicodedata
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -149,3 +150,6 @@ class DemographicTally(Base):
     # recover a single voter's choice with their age, sex and region. See
     # `app.crud.demographics.refresh_snapshot`.
     published_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # When `published_count` was last copied. A held-back category keeps an
+    # older date than the law's last snapshot.
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

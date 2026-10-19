@@ -59,26 +59,30 @@
       </figcaption>
     </figure>
     {# Past three months the curve is grouped by week or more (see
-       `app.charts.MAX_POINTS`), while the table stays daily, so say so. #}
+       `app.charts.MAX_POINTS`), while the table keeps days and merged periods. #}
     <p class="meta">
       Une mobilisation organisée se voit ici : elle laisse un pic sur {{ chart.period.span }}.
       {% if chart.period.days > 1 %}
       La courbe regroupe les votes par {{ chart.period.name }} ; le tableau
-      ci-dessous garde le détail jour par jour.
+      ci-dessous garde le détail par jour.
       {% endif %}
+      Chaque jour garde son nombre de votes, mais la répartition entre les choix
+      est regroupée sur les jours voisins jusqu'à compter {{ min_cell_count }}
+      votes partagés entre au moins deux choix : sinon, savoir qu'une personne a
+      voté ce jour-là pourrait révéler son choix.
     </p>
 
     <details class="chart-data">
-      <summary>Voir les chiffres jour par jour</summary>
+      <summary>Voir les chiffres par jour</summary>
       <div class="table-scroll">
         <table class="evolution">
-          <caption class="visually-hidden">Nombre de votes par jour et par choix</caption>
+          <caption class="visually-hidden">Nombre de votes par jour ou par période regroupée, et par choix</caption>
           <thead><tr><th scope="col">Période</th>{% for label in CHOICE_LABELS.values() %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
           <tbody>
             {% for bucket in evolution %}
             <tr>
               {# `day` rather than the ISO `label`, to show a French date. #}
-              <th scope="row">{{ bucket.day | french_date }}</th>
+              <th scope="row">{% if bucket.days > 1 %}du {{ bucket.day | french_date }} au {{ bucket.last_day | french_date }}<br><span class="meta">votes par jour : {{ bucket.daily | join(", ") }}</span>{% else %}{{ bucket.day | french_date }}{% endif %}</th>
               {# Same loop as the headings, so columns stay aligned. #}
               {% for key in CHOICE_LABELS %}<td>{{ bucket.counts[key] }}</td>{% endfor %}
             </tr>
@@ -108,12 +112,19 @@
       en direct reviendrait à livrer le profil de chaque votant·e un par un : il
       suffirait de comparer la page à deux instants pour lire, d'un seul vote, le
       choix, l'âge, le sexe et la région de la personne qui vient de voter. Le
-      décompte total, lui, reste en direct.
-      {%- if not voting_open %}
-      {# Closed, but the remainder since the last snapshot is too small to publish. #}
+      décompte total, lui, reste en direct. Pour la même raison, une catégorie
+      qui n'a gagné que quelques votes depuis son dernier palier reste à ce
+      palier : sa date est alors indiquée à côté d'elle. Une catégorie encore
+      jamais publiée n'apparaît pas.
+      {%- if final %}
+      {# Closed, but what came since the last step can't all be published. #}
       La votation est close : les derniers profils renseignés avant la clôture
-      restent en dehors de ce tableau, parce qu'un dernier palier trop petit
-      désignerait les personnes qui ont voté juste avant la fin.
+      restent en dehors des catégories qui n'ont pas pu avancer, parce qu'un
+      dernier palier trop petit désignerait les personnes qui ont voté juste
+      avant la fin.
+      {%- elif status == "closed" %}
+      La votation vient de se clore : les répartitions définitives paraîtront
+      dans quelques minutes.
       {%- endif %}
     </p>
     {% endif %}
@@ -131,15 +142,15 @@
         <caption class="visually-hidden">Répartition des votes par {{ bd.label | lower }}</caption>
         <thead><tr>
           <th scope="col">{{ bd.label }}</th>{% for label in CHOICE_LABELS.values() %}<th scope="col">{{ label }}</th>{% endfor %}
-          <th scope="col">Part ici</th>
-          <th scope="col">France{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
+          <th scope="col">Parmi nos votant·e·s</th>
+          <th scope="col">Part attendue{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
         </tr></thead>
         <tbody>
           {% for row in bd.rows %}
           <tr>
-            <th scope="row">{{ row.category }}</th>
+            <th scope="row">{{ row.category }}{% if row.held %}<br><span class="meta">arrêtée au {{ row.as_of | french_datetime }}</span>{% endif %}</th>
             {% for key in CHOICE_LABELS %}<td>{{ row.counts[key] }} ({{ row.percentages[key] }}%)</td>{% endfor %}
-            <td>{{ row.share }}%</td>
+            <td>{% if row.share is not none %}{{ row.share }}%{% else %}-{% endif %}</td>
             <td>{% if row.reference is not none %}{{ row.reference }}%{% else %}-{% endif %}</td>
           </tr>
           {% endfor %}
@@ -151,19 +162,41 @@
     {% elif bd.is_pending %}
     {# Not "aucune donnée": there may be data, just not published yet. #}
     <p class="meta">
-      Pas encore publiée : la première répartition paraîtra dès que
-      {{ min_bucket_volume }} personnes auront renseigné un profil.
+      {% if final %}
+      Non publiée : trop peu de votes depuis le dernier palier pour les
+      publier de façon anonyme.
+      {% elif status == "closed" %}
+      Pas encore publiée : les répartitions définitives paraissent quelques
+      minutes après la clôture.
+      {% else %}
+      Pas encore publiée : elle paraîtra dès que {{ min_bucket_volume }}
+      personnes auront renseigné un profil, et que ses catégories compteront
+      assez de votes pour garantir l'anonymat.
+      {% endif %}
     </p>
     {% else %}
     <p class="meta">Aucune donnée renseignée pour cette répartition.</p>
     {% endif %}
     {% endfor %}
+    {# Each sentence only when its case is on the page. #}
+    {% set shown = namespace(any=false, autre=false, unshared=false) %}
+    {% for bd in breakdowns if bd.shown %}
+      {% set shown.any = true %}
+      {% for row in bd.rows %}
+        {% if row.category == "autre" %}{% set shown.autre = true %}{% endif %}
+        {% if row.share is none %}{% set shown.unshared = true %}{% endif %}
+      {% endfor %}
+    {% endfor %}
+    {% if shown.any %}
     <p class="meta">
-      « Part ici » = poids de la catégorie parmi les participant·e·s ayant
-      renseigné ce champ. « France » = part nationale (estimations de population
-      INSEE ; régions de France métropolitaine), donnée <em>uniquement</em> pour
-      montrer l'écart : les résultats ne sont jamais repondérés.
+      Part attendue : ce que donnerait un panel représentatif de la population,
+      sur les mêmes catégories.
+      {%- if shown.autre %} La catégorie « autre » n'a pas de chiffre INSEE : les
+      autres parts attendues se calculent sur le reste des votant·e·s.{% endif %}
+      {%- if shown.unshared %} Une catégorie arrêtée à un palier plus ancien que les
+      autres n'a pas de parts et ne compte pas dans celles des autres.{% endif %}
     </p>
+    {% endif %}
   </section>
 
   <section class="block" id="historique">

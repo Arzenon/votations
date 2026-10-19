@@ -27,7 +27,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.crud.laws import slugify
+from app.crud.laws import moves_final_closing, slugify
 from app.db import SessionLocal, utcnow
 from app.models import ImportedLaw, Law, LawRevision
 
@@ -202,6 +202,10 @@ class PublishedLawError(RuntimeError):
     """``--replace`` was asked to overwrite a law that is currently published."""
 
 
+class FinalClosingError(RuntimeError):
+    """``--replace`` would move the closing of a closed vote that has votes."""
+
+
 def _read(path: Path) -> dict:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -241,6 +245,12 @@ def _import_law(db: Session, entry: dict, *, replace: bool) -> str:
 
     columns = {name: _restore(name, entry.get(name)) for name in LAW_FIELDS}
     columns["slug"] = slug
+    if existing is not None and moves_final_closing(db, existing, columns["closes_at"]):
+        raise FinalClosingError(
+            f"« {slug} » est close et a reçu des votes : sa date de clôture ne peut "
+            "plus changer. La rouvrir permettrait de comparer ses résultats de "
+            "clôture aux suivants, et d'en isoler un vote."
+        )
     if existing is None:
         law = Law(**columns)
         db.add(law)
@@ -344,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         counts = import_content(args.path, replace=args.replace)
-    except (ContentFormatError, PublishedLawError) as exc:
+    except (ContentFormatError, PublishedLawError, FinalClosingError) as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1
     print(

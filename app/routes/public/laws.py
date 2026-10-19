@@ -261,28 +261,34 @@ def cast_vote(
     # meanwhile, so concurrent ballots can't count the profile twice.
     try:
         vote, previous_choice = votes_crud.cast_vote(db, law, voter_token, vote_choice)
+
+        # Before adding this ballot's profile, so a voter can't trigger a snapshot
+        # that includes themselves.
+        demo_crud.refresh_snapshot(db, law)
+
+        # Optional profile, added to the counters once. Previous categories come
+        # from the cookie.
+        profile = profile_cookie.load(request)
+        on_file = demo_crud.record(
+            db,
+            vote=vote,
+            choice=vote_choice,
+            previous_choice=previous_choice,
+            age_bracket=age_bracket,
+            sexe=sexe,
+            region=region,
+            previous_categories=profile.for_law(law.id),
+        )
+        # Closed while this ballot was being recorded: refused like a late one.
+        # The commit right after stays well inside `_CLOSING_GRACE`, so the
+        # final figures (see `app.crud.demographics`) never move after it.
+        if not law.is_open():
+            raise votes_crud.VotingClosed(law.slug)
     except votes_crud.VotingClosed:
+        db.rollback()
         if htmx:
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
-
-    # Before adding this ballot's profile, so a voter can't trigger a snapshot
-    # that includes themselves.
-    demo_crud.refresh_snapshot(db, law)
-
-    # Optional profile, added to the counters once. Previous categories come
-    # from the cookie.
-    profile = profile_cookie.load(request)
-    on_file = demo_crud.record(
-        db,
-        vote=vote,
-        choice=vote_choice,
-        previous_choice=previous_choice,
-        age_bracket=age_bracket,
-        sexe=sexe,
-        region=region,
-        previous_categories=profile.for_law(law.id),
-    )
     db.commit()
     # Only after the commit, so the cookie never refers to a rolled-back vote.
     profile.remember(carrier, law.id, on_file)
@@ -317,9 +323,9 @@ def results_page(
     memo_age = results_memo_age(status)
     tally = results_crud.tally(db, law.id, max_age=memo_age)
     evolution = results_crud.evolution(db, law.id, total=tally.total, max_age=memo_age)
-    # Pass with_profile to save a query (see `publishes_live_counters`).
+    # Pass with_profile to save a query (see `_live_categories`).
     breakdowns = demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
-    breakdowns_as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
+    breakdowns_as_of = demo_crud.published_as_of(law, breakdowns)
     history = laws_crud.revisions(db, law.id, page=revisions)
     settings = get_settings()
     origin = str(request.base_url).rstrip("/")
@@ -347,6 +353,8 @@ def results_page(
             "evolution": evolution,
             "chart": build_evolution_chart(evolution),
             "breakdowns": breakdowns,
+            # Over for good (see `demo_crud.is_final`).
+            "final": demo_crud.is_final(law),
             "min_cell_count": settings.min_cell_count,
             # Snapshot date, shown on the page. None when the figures are live.
             "breakdowns_as_of": breakdowns_as_of,

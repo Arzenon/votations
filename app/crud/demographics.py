@@ -2,8 +2,8 @@
 
 ``record`` adds a voter's optional age/sex/region to per-law counters, once,
 without storing anything per voter. ``all_breakdowns`` reads them back with
-cell suppression, and from a snapshot while the vote is open (see
-``refresh_snapshot``).
+cell suppression, and from a snapshot until the vote is final (see
+``refresh_snapshot`` and ``is_final``).
 
 Nothing here commits: the route commits the vote and its counters together.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Row, false, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,7 @@ from app.models import (
     DIMENSION_SEXE,
     DIMENSIONS,
     INSEE_REFERENCE,
+    STATUS_CLOSED,
     VALID_CATEGORIES,
     DemographicTally,
     InseeReference,
@@ -39,7 +40,11 @@ from app.models import (
 
 
 def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, delta: int) -> None:
-    """Atomically add ``delta`` to a counter (upsert). Never goes below zero."""
+    """Atomically add ``delta`` to a counter (upsert). Never goes below zero.
+
+    Callers take cells in (dimension, category, choice) order, the order the
+    snapshot locks them in (see `_lock_cells`), so the two can't deadlock.
+    """
     stmt = pg_insert(DemographicTally).values(
         law_id=law_id,
         dimension=dimension,
@@ -106,7 +111,7 @@ def record(
     if not provided:
         return {}
 
-    for dimension, category in provided:
+    for dimension, category in sorted(provided):
         _add(db, vote.law_id, dimension, category, choice.value, +1)
     vote.demographics_recorded = True
     return dict(provided)
@@ -130,9 +135,9 @@ def _move(
         # are no longer offered, so it can't be counted twice.
         return {}
 
-    for dimension, category in categories.items():
-        _add(db, vote.law_id, dimension, category, previous_choice, -1)
-        _add(db, vote.law_id, dimension, category, choice.value, +1)
+    for dimension, category in sorted(categories.items()):
+        for moved, delta in sorted([(previous_choice, -1), (choice.value, +1)]):
+            _add(db, vote.law_id, dimension, category, moved, delta)
     return categories
 
 
@@ -142,9 +147,14 @@ class BreakdownRow:
     counts: dict[str, int]
     total: int
     percentages: dict[str, float]
-    # Share of this category among profiled voters, vs the national reference.
-    share: float = 0.0
+    # Share among the table's newest rows, vs the national reference beside it.
+    # None for a row older than the newest (see `_same_date_shares`).
+    share: float | None = None
     reference: float | None = None
+    # When these figures were copied, or None if read live (see `all_breakdowns`).
+    as_of: datetime | None = None
+    # Older than the step the page shows: held back by `_held`.
+    held: bool = False
 
 
 # Why a breakdown is hidden.
@@ -160,8 +170,8 @@ class Breakdown:
     label: str
     shown: bool
     threshold: int
-    # A REASON_* value. "pending" means the vote is open and no snapshot has
-    # been published yet, which is different from having no data.
+    # A REASON_* value. "pending" means there may be votes not shown (the vote
+    # isn't final, or its categories were never published), not "no data".
     reason: str = REASON_NONE
 
     @property
@@ -173,8 +183,9 @@ class Breakdown:
         return self.reason == REASON_PENDING
 
     rows: list[BreakdownRow] = field(default_factory=list)
-    dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
+    # A category with votes is left out: never published, and held back since.
+    withheld: bool = False
 
 
 def all_references(db: Session) -> dict[str, tuple[dict[str, float], int | None]]:
@@ -222,7 +233,6 @@ def _build(
     if min(populated) < k:
         return Breakdown(dimension, label, shown=False, threshold=k, reason=REASON_BELOW_THRESHOLD)
 
-    dimension_total = sum(populated)
     # Skip empty categories. A row of zeros would reveal that someone just
     # picked that category, before the snapshot catches up.
     ordered = [
@@ -235,14 +245,12 @@ def _build(
         counts = cells[category]
         total = sum(counts.values())
         pct = {ch: (round(100 * v / total, 1) if total else 0.0) for ch, v in counts.items()}
-        share = round(100 * total / dimension_total, 1) if dimension_total else 0.0
         out_rows.append(
             BreakdownRow(
                 category=category,
                 counts=counts,
                 total=total,
                 percentages=pct,
-                share=share,
                 reference=reference.get(category),
             )
         )
@@ -253,7 +261,6 @@ def _build(
         shown=True,
         threshold=k,
         rows=out_rows,
-        dimension_total=dimension_total,
         reference_year=reference_year,
     )
 
@@ -263,13 +270,21 @@ def _build(
 _SNAPSHOT_INTERVAL = timedelta(hours=1)
 
 
+def _snapshot_due(db: Session, law: Law, now: datetime) -> bool:
+    last = law.demographics_snapshot_at
+    if last is not None and now - as_utc(last) < _SNAPSHOT_INTERVAL:
+        return False
+    profiled = results.count_profiled(db, law.id)
+    return profiled - law.demographics_snapshot_profiles >= get_settings().min_bucket_volume
+
+
 def refresh_snapshot(db: Session, law: Law) -> bool:
     """Update the published breakdown if it's due. Returns True if it moved.
 
     Without a snapshot, comparing the public page before and after a single
     ballot would reveal that voter's choice along with their age, sex and
-    region. So while the vote is open the page shows ``published_count``,
-    which only moves when:
+    region. So until the vote is final the page shows ``published_count``,
+    which only moves, while the vote is open, when:
 
     * at least ``_SNAPSHOT_INTERVAL`` has passed since the last move, and
     * at least ``min_bucket_volume`` profiled votes have arrived since.
@@ -281,84 +296,175 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
         return False
 
     now = utcnow()
-    last = law.demographics_snapshot_at
-    if last is not None and now - as_utc(last) < _SNAPSHOT_INTERVAL:
+    if not _snapshot_due(db, law, now):
+        return False
+    # Lock and re-check: a concurrent ballot's snapshot would otherwise wait on
+    # this one's counters and publish a step of exactly this voter. Only taken
+    # when due, so ordinary ballots never queue on the law row. NO KEY: each
+    # vote insert holds a key share on the law (foreign key), FOR UPDATE would deadlock.
+    db.refresh(law, with_for_update={"key_share": True})
+    if not _snapshot_due(db, law, now):
         return False
 
+    # Locked, so no ballot can change a counter between the check and the copy.
+    _lock_cells(db, law.id)
+    counters = _counters(db, law.id)
+    # Counted after the locks, which waited for the ballots holding a counter:
+    # the copy includes them, so the next step must count from them too.
     profiled = results.count_profiled(db, law.id)
-    if profiled - law.demographics_snapshot_profiles < get_settings().min_bucket_volume:
-        return False
-
+    held = _held(counters)
     db.execute(
         update(DemographicTally)
-        .where(DemographicTally.law_id == law.id)
-        .values(published_count=DemographicTally.count)
+        .where(
+            DemographicTally.id.in_(
+                [row.id for row in counters if (row.dimension, row.category) not in held]
+            )
+        )
+        .values(published_count=DemographicTally.count, published_at=now)
     )
     law.demographics_snapshot_at = now
     law.demographics_snapshot_profiles = profiled
     return True
 
 
-def publishes_live_counters(db: Session, law: Law, *, profiled: int | None = None) -> bool:
-    """Whether breakdowns may use the live counters instead of the snapshot.
+# Every counter a law can have, in `_add`'s order.
+_ALL_CELLS = [
+    (dimension, category, choice)
+    for dimension in sorted(VALID_CATEGORIES)
+    for category in sorted(VALID_CATEGORIES[dimension])
+    for choice in sorted(c.value for c in VoteChoice)
+]
 
-    Closing the vote is one more step and follows the same volume rule:
-    otherwise a single ballot cast after the last snapshot could be recovered
-    by comparing the page before and after closing. If no snapshot was ever
-    published there is nothing to compare against, so live counters are fine.
+
+def _lock_cells(db: Session, law_id: int) -> None:
+    """Lock all of a law's counters, creating the missing ones, in `_add`'s order.
+
+    One statement takes the cells one by one, so the snapshot never holds a
+    cell while waiting for an earlier one. Creating a cell later, for this
+    ballot's own profile, would wait on a ballot creating it too while
+    holding the cell that ballot needs next.
+    """
+    stmt = pg_insert(DemographicTally).values(
+        [
+            {"law_id": law_id, "dimension": d, "category": c, "choice": ch, "count": 0}
+            for d, c, ch in _ALL_CELLS
+        ]
+    )
+    # DO UPDATE locks an existing row even when its WHERE is false.
+    db.execute(
+        stmt.on_conflict_do_update(
+            constraint="uq_demo_cell", set_={"count": DemographicTally.count}, where=false()
+        )
+    )
+
+
+def _counters(db: Session, law_id: int) -> list[Row]:
+    return list(
+        db.execute(
+            select(
+                DemographicTally.id,
+                DemographicTally.dimension,
+                DemographicTally.category,
+                DemographicTally.choice,
+                # Not "count": that would hide the tuple's own count() method.
+                DemographicTally.count.label("live"),
+                DemographicTally.published_count,
+                DemographicTally.published_at,
+            ).where(DemographicTally.law_id == law_id)
+        ).all()
+    )
+
+
+def _held(counters: list[Row]) -> set[tuple[str, str]]:
+    """(dimension, category) with a cell that moved by fewer than ``min_cell_count``.
+
+    A step of 50 profiles can still move one cell by 1 ("Corse, Contre"):
+    anyone who knows a Corsican voted in that window would learn their vote.
+    Such a category waits for a later step; the rest of its table moves on.
+    Known limit: see PISTES.md, "Paliers homogènes".
+    """
+    k = get_settings().min_cell_count
+    return {
+        (row.dimension, row.category)
+        for row in counters
+        if 0 < abs(row.live - row.published_count) < k
+    }
+
+
+# After the closing, the figures stay at the last step this long: a ballot that
+# passed its last "open" check before the closing can still be committing.
+_CLOSING_GRACE = timedelta(minutes=2)
+
+
+def is_final(law: Law) -> bool:
+    """Whether the vote is over for good, so its breakdowns may go live.
+
+    Not just "not open": a vote rescheduled to open later still takes ballots
+    afterwards, and its live counters would be compared with the next step.
+    """
+    if law.status() != STATUS_CLOSED or law.closes_at is None:
+        return False
+    return utcnow() >= as_utc(law.closes_at) + _CLOSING_GRACE
+
+
+def _live_categories(
+    db: Session, law: Law, counters: list[Row], *, profiled: int | None = None
+) -> set[tuple[str, str]]:
+    """(dimension, category) that may use the live counters, once the vote is final.
+
+    Closing the vote is one more step and follows the same rules: otherwise a
+    single ballot cast after the last snapshot could be recovered by comparing
+    the page before and after closing. If no snapshot was ever published there
+    is nothing to compare against, so live counters are fine.
 
     ``profiled`` is ``Tally.with_profile``, to save a query.
     """
-    if law.is_open():
-        return False
+    every = {(row.dimension, row.category) for row in counters}
     if law.demographics_snapshot_at is None:
-        return True
+        return every
     if profiled is None:
         profiled = results.count_profiled(db, law.id)
-    return profiled - law.demographics_snapshot_profiles >= get_settings().min_bucket_volume
+    if profiled - law.demographics_snapshot_profiles < get_settings().min_bucket_volume:
+        return set()
+    return every - _held(counters)
 
 
-def published_as_of(db: Session, law: Law, *, profiled: int | None = None) -> datetime | None:
-    """Date of the snapshot being shown, or None if the figures are live.
+def published_as_of(law: Law, breakdowns: list[Breakdown]) -> datetime | None:
+    """Date of the step being shown, or None if every figure is live.
 
+    Closing is dated by ``closes_at`` when it releases some categories only.
+    A category held at an earlier step carries its own date (`BreakdownRow.as_of`).
     Shared by the results page and the JSON export so they say the same thing.
     """
-    if publishes_live_counters(db, law, profiled=profiled):
+    if not is_final(law):
+        return law.demographics_snapshot_at
+    live = [row.as_of is None for bd in breakdowns for row in bd.rows]
+    live += [False for bd in breakdowns if bd.withheld]
+    if all(live):
         return None
-    return law.demographics_snapshot_at
+    return law.closes_at if any(live) else law.demographics_snapshot_at
 
 
-def _cells_by_dimension(
-    db: Session, law_id: int, *, live: bool
-) -> dict[str, dict[str, dict[str, int]]]:
-    """All counters for a law as {dimension: {category: {choice: n}}}.
-
-    ``live`` reads ``count``, otherwise the ``published_count`` snapshot.
-    """
-    counter = DemographicTally.count if live else DemographicTally.published_count
-    rows = db.execute(
-        select(
-            DemographicTally.dimension,
-            DemographicTally.category,
-            DemographicTally.choice,
-            counter,
-        ).where(DemographicTally.law_id == law_id)
-    ).all()
-    out: dict[str, dict[str, dict[str, int]]] = {}
-    for dimension, category, choice, count in rows:
-        by_category = out.setdefault(dimension, {})
-        by_category.setdefault(category, {c.value: 0 for c in VoteChoice})[choice] = count
-    return out
+_Cells = dict[str, dict[str, dict[str, int]]]
 
 
-def all_breakdowns(
-    db: Session, law: Law, *, min_cell: int | None = None, profiled: int | None = None
-) -> list[Breakdown]:
-    """Breakdowns for every dimension, in two queries."""
-    k = min_cell if min_cell is not None else get_settings().min_cell_count
-    live = publishes_live_counters(db, law, profiled=profiled)
-    if law.demographics_snapshot_at is None and law.is_open():
-        # Open with no snapshot yet: everything is "pending", not "empty".
+def _cells_by_dimension(counters: list[Row]) -> tuple[_Cells, _Cells]:
+    """Counters as {dimension: {category: {choice: n}}}: live, then published."""
+    counted: _Cells = {}
+    published: _Cells = {}
+    for row in counters:
+        for out, n in ((counted, row.live), (published, row.published_count)):
+            by_category = out.setdefault(row.dimension, {})
+            by_category.setdefault(row.category, {c.value: 0 for c in VoteChoice})[row.choice] = n
+    return counted, published
+
+
+def all_breakdowns(db: Session, law: Law, *, profiled: int | None = None) -> list[Breakdown]:
+    """Breakdowns for every dimension, each category from its live counters or its last step."""
+    k = get_settings().min_cell_count
+    final = is_final(law)
+    if law.demographics_snapshot_at is None and not final:
+        # Not over and no snapshot yet: everything is "pending", not "empty".
         return [
             Breakdown(
                 dim, DIMENSION_LABELS.get(dim, dim), shown=False, threshold=k, reason=REASON_PENDING
@@ -366,21 +472,74 @@ def all_breakdowns(
             for dim in DIMENSIONS
         ]
 
-    by_dimension = _cells_by_dimension(db, law.id, live=live)
+    counters = _counters(db, law.id)
+    live = _live_categories(db, law, counters, profiled=profiled) if final else set()
+    counted, published = _cells_by_dimension(counters)
+    # A step copies all of a category's cells at once, so they share a date.
+    copied = {(r.dimension, r.category): r.published_at for r in counters if r.published_at}
     references = all_references(db)
     out = []
     for dimension in DIMENSIONS:
         reference, year = references.get(dimension, ({}, None))
-        out.append(
-            _build(
-                dimension,
-                by_dimension.get(dimension, {}),
-                k=k,
-                reference=reference,
-                reference_year=year,
-            )
+        cells = {
+            category: (counted if (dimension, category) in live else published)[dimension][category]
+            for category in counted.get(dimension, {})
+        }
+        breakdown = _build(dimension, cells, k=k, reference=reference, reference_year=year)
+        for shown in breakdown.rows:
+            key = (dimension, shown.category)
+            shown.as_of = None if key in live else copied.get(key)
+        breakdown.withheld = any(
+            (dimension, category) not in live
+            and sum(cell.values()) > 0
+            and not sum(published[dimension][category].values())
+            for category, cell in counted.get(dimension, {}).items()
         )
+        # Before the end, "empty" would flip to "pending" with the first voter to
+        # fill this field in, and tell which field they filled in.
+        if breakdown.reason == REASON_EMPTY and (not final or breakdown.withheld):
+            breakdown.reason = REASON_PENDING
+        out.append(breakdown)
+
+    as_of = published_as_of(law, out)
+    for breakdown in out:
+        for shown in breakdown.rows:
+            shown.held = as_of is not None and shown.as_of is not None and shown.as_of < as_of
+        _same_date_shares(breakdown)
     return out
+
+
+def _same_date_shares(breakdown: Breakdown) -> None:
+    """Keep shares, and the national reference beside them, to the same categories.
+
+    Shares are among the table's newest rows: a row from an older step against
+    newer ones would be neither date's share. Live rows count as the newest.
+    The reference is rescaled to those categories too, so one never published
+    or never picked doesn't skew the comparison. It only uses what the table
+    shows, which moves at steps, never with a single ballot.
+    """
+    rows = breakdown.rows
+    if not rows:
+        return
+    dates = [shown.as_of for shown in rows]
+    newest = None if None in dates else max(d for d in dates if d is not None)
+    current = [shown for shown in rows if shown.as_of == newest]
+    # Shown rows always have votes, so the total isn't zero.
+    total = sum(shown.total for shown in current)
+    # One category alone would read 100%, which compares nothing.
+    known = [shown.reference for shown in current if shown.reference is not None]
+    # A category with no national figure ("autre") still counts among our voters:
+    # scale to the share of voters the others cover, so both compare the same people.
+    covered = sum(shown.total for shown in current if shown.reference is not None) / total
+    for shown in rows:
+        if shown.as_of != newest:
+            shown.share = shown.reference = None
+            continue
+        shown.share = round(100 * shown.total / total, 1)
+        if shown.reference is None or len(known) < 2:
+            shown.reference = None
+        else:
+            shown.reference = round(100 * covered * shown.reference / sum(known), 1)
 
 
 @dataclass

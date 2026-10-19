@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     min_bucket_volume: int = Field(default=50, ge=1)
 
     # A demographic breakdown is hidden unless every cell has at least this many votes.
+    # Days on the curve (hours in the export) are merged with their neighbours
+    # until they reach it, with votes for at least two choices.
     min_cell_count: int = Field(default=10, ge=1)
 
     # Precision of exported timestamps. With "exact", anyone who knows when
@@ -232,9 +234,9 @@ def check_production_config(settings: Settings) -> None:
 
     if problems:
         raise InsecureConfiguration(
-            "Configuration de production incomplète :\n  - "
+            "Incomplete production configuration:\n  - "
             + "\n  - ".join(problems)
-            + "\n\nVoir DEPLOY.md. Pour générer une clé :\n"
+            + "\n\nSee DEPLOY.md. To generate a key:\n"
             '  python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
 

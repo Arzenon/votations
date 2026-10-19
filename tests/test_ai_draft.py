@@ -877,7 +877,8 @@ def _imported_law(db_session, uid="DLR5L17N910"):
         summary_text="Texte enregistré.",
         published=False,
     )
-    imports_crud.set_status(db_session, item, status=STATUS_IMPORTED, law_id=law.id)
+    item.law_id = law.id
+    imports_crud.set_status(db_session, item, status=STATUS_IMPORTED)
     return item, law
 
 

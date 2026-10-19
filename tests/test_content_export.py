@@ -17,6 +17,7 @@ from scripts.content import (
     LAW_FIELDS,
     ContentFormatError,
     ExportDirectoryError,
+    FinalClosingError,
     PublishedLawError,
     build_document,
     export,
@@ -373,6 +374,28 @@ def test_replacing_an_unpublished_draft_is_fine(db_session):
 
     import_content_from(db_session, document, replace=True)
     assert db_session.query(Law).filter_by(slug="loi-brouillon-2").one().title == "Titre d'origine"
+
+
+def test_replacing_cannot_reopen_a_closed_vote_with_votes(db_session):
+    """--replace can't move the closing of a closed vote that has votes either."""
+    law = make_law(
+        db_session,
+        slug="loi-close-a-voix",
+        published=False,
+        opens_at=datetime.now(UTC) - timedelta(days=3),
+        closes_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    db_session.add(Vote(law_id=law.id, voter_token="avant-cloture", choice="for"))
+    db_session.commit()
+    document = build_document(db_session)
+    entry = next(e for e in document["laws"] if e["slug"] == "loi-close-a-voix")
+    entry["closes_at"] = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+    entry["published"] = True
+
+    with pytest.raises(FinalClosingError, match="loi-close-a-voix"):
+        import_content_from(db_session, document, replace=True)
+    db_session.rollback()
+    assert not db_session.query(Law).filter_by(slug="loi-close-a-voix").one().is_open()
 
 
 def test_a_published_law_is_still_skipped_without_replace(db_session):

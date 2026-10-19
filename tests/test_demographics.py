@@ -3,14 +3,7 @@
 from app.crud import demographics as demo_crud
 from app.db import utcnow
 from app.models import DemographicTally, Vote, VoteChoice
-from tests.helpers import cast_ballot
-
-
-def _dimension(db, law, dimension, **kwargs):
-    """One dimension's breakdown, via `all_breakdowns`."""
-    return next(
-        bd for bd in demo_crud.all_breakdowns(db, law, **kwargs) if bd.dimension == dimension
-    )
+from tests.helpers import breakdown, cast_ballot
 
 
 def _cell(db, law_id, dimension, category, choice):
@@ -90,7 +83,7 @@ def test_breakdown_hidden_below_threshold(open_law, db_session):
             "25-34": {"for": 15, "against": 2, "abstain": 11},  # the "2" trips suppression
         },
     )
-    bd = _dimension(db_session, open_law, "age")
+    bd = breakdown(db_session, open_law, "age")
     assert bd.shown is False
     assert bd.reason == "below_threshold"
 
@@ -105,7 +98,7 @@ def test_breakdown_shown_above_threshold(open_law, db_session):
             "50-64": {"for": 22, "against": 18, "abstain": 10},
         },
     )
-    bd = _dimension(db_session, open_law, "age")
+    bd = breakdown(db_session, open_law, "age")
     assert bd.shown is True
     # Canonical ordering: 35-49 before 50-64.
     assert [r.category for r in bd.rows] == ["35-49", "50-64"]
@@ -147,9 +140,8 @@ def test_breakdown_includes_share_and_reference(open_law, db_session):
             "homme": {"for": 25, "against": 10, "abstain": 10},  # 45
         },
     )
-    bd = _dimension(db_session, open_law, "sexe")
+    bd = breakdown(db_session, open_law, "sexe")
     assert bd.shown is True
-    assert bd.dimension_total == 105
     femme = bd.rows[0]
     assert femme.share == round(100 * 60 / 105, 1)
     assert femme.reference == 51.5  # from INSEE_REFERENCE
@@ -174,3 +166,59 @@ def test_export_json_only_includes_shown_breakdowns(client, open_law, db_session
     # Per-vote rows still carry no demographic fields.
     for row in data["votes"]:
         assert set(row.keys()) == {"law_id", "choice", "created_at"}
+
+
+def test_the_expected_share_covers_the_same_categories():
+    """A category left out of the table is left out of the expected share too.
+
+    Otherwise a category would look over-represented next to a national share
+    taken over more categories than the table shows.
+    """
+    from app.crud.demographics import Breakdown, BreakdownRow, _same_date_shares
+
+    def row(category, total, reference):
+        counts = {"for": total, "against": 0, "abstain": 0}
+        return BreakdownRow(category, counts, total, {}, reference=reference)
+
+    age = Breakdown("age", "Tranche d'âge", shown=True, threshold=10)
+    age.rows = [row("35-49", 60, 23.5), row("65+", 50, 27.8)]
+    _same_date_shares(age)
+    assert [(r.share, r.reference) for r in age.rows] == [(54.5, 45.8), (45.5, 54.2)]
+
+    sexe = Breakdown("sexe", "Sexe", shown=True, threshold=10)
+    sexe.rows = [row("femme", 40, 51.5), row("autre", 10, None)]
+    _same_date_shares(sexe)
+    assert [r.reference for r in sexe.rows] == [None, None], "femme alone would read 100%"
+
+    # "autre" has no national figure but counts among our voters.
+    sexe.rows = [
+        row("femme", 135, 51.5),
+        row("homme", 135, 48.5),
+        row("autre", 30, None),
+    ]
+    _same_date_shares(sexe)
+    assert [r.reference for r in sexe.rows] == [46.4, 43.6, None]
+
+
+def test_the_footnote_only_explains_what_the_page_shows(client, open_law, db_session):
+    def page():
+        return " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+
+    assert "Part attendue :" not in page(), "no table yet, nothing to explain"
+
+    _seed_cells(
+        db_session,
+        open_law,
+        "sexe",
+        {
+            "femme": {"for": 30, "against": 20, "abstain": 11},
+            "homme": {"for": 25, "against": 19, "abstain": 14},
+        },
+    )
+    text = page()
+    assert "Part attendue : ce que donnerait un panel représentatif" in text
+    assert "n'a pas de chiffre INSEE" not in text, "no « autre » row, no « autre » sentence"
+    assert "palier plus ancien" not in text, "no held row, no held sentence"
+
+    _seed_cells(db_session, open_law, "sexe", {"autre": {"for": 10, "against": 10, "abstain": 10}})
+    assert "La catégorie « autre » n'a pas de chiffre INSEE" in page()

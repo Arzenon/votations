@@ -151,15 +151,24 @@ def test_search_ignores_punctuation_a_visitor_types(client, db_session):
 def test_the_curve_keeps_the_days_nobody_voted(db_session, open_law, monkeypatch):
     """Days without votes are kept as zeros, so spikes stand out."""
     monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    monkeypatch.setattr(get_settings(), "min_cell_count", 3, raising=False)
     base = datetime(2026, 5, 4, 12, 0, tzinfo=UTC)
+    # Two choices each day, so neither day needs merging.
     for i in range(3):
-        db_session.add(Vote(law_id=open_law.id, voter_token=f"a{i}", choice="for", created_at=base))
+        db_session.add(
+            Vote(
+                law_id=open_law.id,
+                voter_token=f"a{i}",
+                choice="against" if i == 0 else "for",
+                created_at=base,
+            )
+        )
     for i in range(3):
         db_session.add(
             Vote(
                 law_id=open_law.id,
                 voter_token=f"b{i}",
-                choice="for",
+                choice="against" if i == 0 else "for",
                 created_at=base + timedelta(days=4),
             )
         )
@@ -188,3 +197,76 @@ def test_the_curve_does_not_invent_days_outside_the_votes(db_session, open_law, 
 
     buckets = results_crud.evolution(db_session, open_law.id)
     assert [b.label for b in buckets] == ["2026-05-04"]
+
+
+def _votes_on(db_session, law, day: int, choice: str, n: int) -> None:
+    """``n`` votes at noon UTC on that day of May 2026."""
+    moment = datetime(2026, 5, day, 12, 0, tzinfo=UTC)
+    for i in range(n):
+        db_session.add(
+            Vote(
+                law_id=law.id, voter_token=f"q{day}-{choice}-{i}", choice=choice, created_at=moment
+            )
+        )
+    db_session.commit()
+
+
+def test_a_quiet_day_is_merged_until_it_hides_its_voters(db_session, open_law, monkeypatch):
+    """A day with too few votes is merged with the next ones.
+
+    One "Contre" on a quiet day would tell anyone who knows that person voted
+    that day how they voted.
+    """
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
+    _votes_on(db_session, open_law, 4, "for", 18)
+    _votes_on(db_session, open_law, 4, "against", 2)
+    _votes_on(db_session, open_law, 8, "against", 1)
+    _votes_on(db_session, open_law, 10, "for", 9)
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [(b.label, b.days, sum(b.counts.values())) for b in buckets] == [
+        ("2026-05-04", 1, 20),
+        ("2026-05-05", 1, 0),
+        ("2026-05-06", 1, 0),
+        ("2026-05-07", 1, 0),
+        ("2026-05-08", 3, 10),
+    ]
+    assert buckets[-1].counts == {"for": 9, "against": 1, "abstain": 0}
+    assert buckets[-1].daily == [1, 0, 9], "each day keeps its number of votes"
+
+
+def test_a_day_of_one_choice_is_merged_too(db_session, open_law, monkeypatch):
+    """Twelve "Pour" in a day tell anyone who knows someone voted that day how they voted."""
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
+    _votes_on(db_session, open_law, 4, "for", 18)
+    _votes_on(db_session, open_law, 4, "against", 2)
+    # The 5th has enough votes, all "Pour"; the 6th could stand on its own.
+    _votes_on(db_session, open_law, 5, "for", 12)
+    _votes_on(db_session, open_law, 6, "for", 9)
+    _votes_on(db_session, open_law, 6, "abstain", 1)
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [(b.label, b.days, b.daily) for b in buckets] == [
+        ("2026-05-04", 1, [20]),
+        ("2026-05-05", 2, [12, 10]),
+    ]
+    assert buckets[-1].counts == {"for": 21, "against": 0, "abstain": 1}
+
+
+def test_quiet_days_at_the_end_join_the_last_period(client, db_session, open_law, monkeypatch):
+    """Leftover quiet days join the period before, so every period adds up.
+
+    Left alone, the tally minus the other periods would give them back.
+    """
+    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
+    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
+    _votes_on(db_session, open_law, 4, "for", 20)
+    _votes_on(db_session, open_law, 6, "against", 1)
+
+    buckets = results_crud.evolution(db_session, open_law.id)
+    assert [(b.label, b.days) for b in buckets] == [("2026-05-04", 3)]
+    assert buckets[0].counts == {"for": 20, "against": 1, "abstain": 0}
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "du 4 mai 2026 au 6 mai 2026" in page, "the table names the merged period"

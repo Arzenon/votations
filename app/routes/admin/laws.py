@@ -11,9 +11,9 @@ from app.crud import imports as imports_crud
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.db import as_utc, get_db, utcnow
-from app.models import STATUS_IMPORTED, ImportedLaw, Law
+from app.models import ImportedLaw, Law
 from app.routes.admin.context import cached_draft, law_form_context
-from app.routes.admin.forms import LawForm, law_form, preview_form
+from app.routes.admin.forms import InvalidFormValue, LawForm, dt_local, law_form, preview_form
 from app.routes.public.exports import at_capacity, csv_response
 from app.routes.public.laws import law_page_context
 from app.security import is_head
@@ -194,10 +194,11 @@ def create_law(
     form: LawForm = Depends(law_form),
     import_id: int | None = Form(None),
 ):
-    item = imports_crud.get_by_id(db, import_id) if import_id else None
+    # Locked until the law is linked: a double click waits here, then gets the 409.
+    item = db.get(ImportedLaw, import_id, with_for_update=True) if import_id else None
 
-    # One law per dossier. Otherwise `set_status` would move the import's link
-    # to the new law and the first one would lose its draft.
+    # One law per dossier. Otherwise the import's link would move to the new
+    # law and the first one would lose its draft.
     if item is not None and item.law_id:
         raise HTTPException(
             status_code=409,
@@ -209,9 +210,7 @@ def create_law(
             ),
         )
 
-    law = laws_crud.create(db, **form.columns(), **_parliament_record(item))
-    if item is not None:
-        imports_crud.set_status(db, item, status=STATUS_IMPORTED, law_id=law.id)
+    laws_crud.create(db, imported=item, **form.columns(), **_parliament_record(item))
     return RedirectResponse("/admin", status_code=303)
 
 
@@ -224,7 +223,20 @@ def update_law(
     law = laws_crud.get_by_id(db, law_id)
     if law is None:
         raise HTTPException(404)
-    laws_crud.update(db, law, **form.columns())
+    columns = form.columns()
+    # A time the form shows unchanged keeps its stored value: the form drops the
+    # seconds, and reads the repeated autumn hour as its first occurrence.
+    for name in ("opens_at", "closes_at"):
+        if dt_local(columns[name]) == dt_local(getattr(law, name)):
+            columns[name] = getattr(law, name)
+    columns["closes_at"] = laws_crud.closing_from_now(db, law, columns["closes_at"])
+    if laws_crud.moves_final_closing(db, law, columns["closes_at"]):
+        raise InvalidFormValue(
+            "« Clôture du vote » ne peut plus changer : cette votation est close et a "
+            "reçu des votes. La rouvrir permettrait de comparer ses résultats de "
+            "clôture aux suivants, et d'en isoler un vote"
+        )
+    laws_crud.update(db, law, **columns)
     return RedirectResponse("/admin", status_code=303)
 
 

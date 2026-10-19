@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -21,9 +21,6 @@ from sqlalchemy.orm import Session
 from app.config import display_zone, get_settings
 from app.db import as_utc
 from app.models import Vote, VoteChoice
-
-# How the export rounds `created_at`, per `export_time_resolution`.
-_EXPORT_TRUNC = {"day": "day", "hour": "hour"}
 
 
 def _bucketed(unit: str, zone: str):
@@ -205,23 +202,112 @@ def count_profiled(db: Session, law_id: int) -> int:
 
 @dataclass
 class EvolutionBucket:
-    # ISO date (`date.isoformat()`), parsed back by `app.charts`.
+    # ISO date of the first day (`date.isoformat()`), parsed back by `app.charts`.
     label: str
-    counts: dict[str, int] = field(default_factory=dict)
+    counts: dict[str, int]
+    # How many voted on each day covered, not how: only the split is merged.
+    daily: list[int]
+
+    @property
+    def days(self) -> int:
+        """Calendar days covered: more than one when quiet days are merged."""
+        return len(self.daily)
 
     @property
     def day(self) -> date:
         """The label as a date, for French formatting in templates."""
         return date.fromisoformat(self.label)
 
+    @property
+    def last_day(self) -> date:
+        return self.day + timedelta(days=self.days - 1)
+
+
+def _merge_quiet[T](
+    units: list[tuple[T, dict[str, int]]], k: int
+) -> list[tuple[T, T, dict[str, int]]]:
+    """Group consecutive units until each group has ``k`` votes over two choices.
+
+    A day showing one "Contre" tells anyone who knows that person voted that
+    day how they voted, and so does a day of ten "Pour". Hiding the split
+    alone isn't enough: the tally minus the other days gives it back.
+    Leftover units join the last group, so the groups always add up to the
+    tally. Returns (first, last, counts).
+    """
+    groups: list[tuple[T, T, dict[str, int]]] = []
+    pending: tuple[T, dict[str, int]] | None = None
+    for unit, counts in units:
+        first, summed = pending if pending else (unit, dict.fromkeys(counts, 0))
+        summed = {c: summed[c] + n for c, n in counts.items()}
+        if sum(summed.values()) >= k and sum(1 for n in summed.values() if n) >= 2:
+            groups.append((first, unit, summed))
+            pending = None
+        else:
+            pending = (first, summed)
+    if pending:
+        first, summed = pending
+        if groups:
+            first, _, before = groups.pop()
+            summed = {c: before[c] + summed[c] for c in summed}
+        groups.append((first, units[-1][0], summed))
+    return groups
+
+
+def _units(db: Session, law_id: int, unit: str) -> list[tuple[datetime, dict[str, int]]]:
+    """Vote counts per ``unit`` ("day" or "hour") in the display zone, oldest first."""
+    bucket = _bucketed(unit, get_settings().display_timezone)
+    rows = db.execute(
+        select(bucket.label("bucket"), Vote.choice, func.count())
+        .where(Vote.law_id == law_id)
+        .group_by("bucket", Vote.choice)
+        .order_by("bucket")
+    ).all()
+    found: dict[datetime, dict[str, int]] = {}
+    for moment, choice, n in rows:
+        found.setdefault(moment, {c.value: 0 for c in VoteChoice})[choice] = n
+    return list(found.items())
+
+
+def _periods(
+    db: Session, law_id: int, unit: str
+) -> list[tuple[datetime, datetime, dict[str, int]]]:
+    """Vote counts per ``unit`` ("day" or "hour"), quiet ones merged (see `_merge_quiet`).
+
+    Hours are merged inside each merged day, so they add up to the curve's
+    days: otherwise a day minus its hour groups could give back a late vote
+    whose hour group runs past midnight.
+    """
+    units = _units(db, law_id, unit)
+    k = get_settings().min_cell_count
+    if unit == "day":
+        return _merge_quiet(units, k)
+
+    # The same days as the curve, rebuilt from the hours.
+    zone = display_zone()
+    by_day: dict[date, dict[str, int]] = {}
+    for moment, counts in units:
+        day = by_day.setdefault(as_utc(moment).astimezone(zone).date(), dict.fromkeys(counts, 0))
+        for choice, n in counts.items():
+            day[choice] += n
+    periods = []
+    end = 0
+    for _, last_day, _ in _merge_quiet(list(by_day.items()), k):
+        start = end
+        while end < len(units) and as_utc(units[end][0]).astimezone(zone).date() <= last_day:
+            end += 1
+        periods += _merge_quiet(units[start:end], k)
+    return periods
+
 
 def evolution(
     db: Session, law_id: int, *, total: int | None = None, max_age: float = 0.0
 ) -> list[EvolutionBucket]:
-    """Daily vote counts, one bucket per calendar day.
+    """Vote counts over time: one bucket per calendar day, or per merged period.
 
     Empty until the total reaches ``min_bucket_volume``, so low-volume votes
-    can't be used to identify voters.
+    can't be used to identify voters. The split between choices is merged
+    over neighbouring days (see `_merge_quiet`); each day keeps its own number
+    of votes, so a campaign's spike still shows inside a merged period.
 
     Days without votes are filled with zeros, otherwise a spike from an
     organised campaign wouldn't stand out on the chart.
@@ -239,29 +325,28 @@ def evolution(
         return []
 
     zone = display_zone()
-    bucket = _bucketed("day", settings.display_timezone)
-    rows = db.execute(
-        select(bucket.label("bucket"), Vote.choice, func.count())
-        .where(Vote.law_id == law_id)
-        .group_by("bucket", Vote.choice)
-        .order_by("bucket")
-    ).all()
-
-    out: dict[date, dict[str, int]] = {}
-    for moment, choice, n in rows:
-        day = as_utc(moment).astimezone(zone).date()
-        out.setdefault(day, {c.value: 0 for c in VoteChoice})[choice] = n
-
-    # Step by calendar day, not 24 hours, because of DST.
+    units = _units(db, law_id, "day")
+    voted = {as_utc(moment).astimezone(zone).date(): sum(c.values()) for moment, c in units}
     curve: list[EvolutionBucket] = []
-    if out:
-        curve = [
+    for first, last, counts in _merge_quiet(units, settings.min_cell_count):
+        start, end = (as_utc(moment).astimezone(zone).date() for moment in (first, last))
+        if curve:
+            # Step by calendar day, not 24 hours, because of DST.
+            curve += [
+                EvolutionBucket(
+                    label=day.isoformat(), counts={c.value: 0 for c in VoteChoice}, daily=[0]
+                )
+                for day in _days_between(
+                    curve[-1].last_day + timedelta(days=1), start - timedelta(days=1)
+                )
+            ]
+        curve.append(
             EvolutionBucket(
-                label=day.isoformat(),
-                counts=out.get(day) or {c.value: 0 for c in VoteChoice},
+                label=start.isoformat(),
+                counts=counts,
+                daily=[voted.get(day, 0) for day in _days_between(start, end)],
             )
-            for day in _days_between(min(out), max(out))
-        ]
+        )
     _EVOLUTIONS.put(law_id, curve)
     return curve
 
@@ -285,7 +370,21 @@ def export_note(db: Session, law_id: int, *, total: int | None = None) -> str:
         )
     if settings.export_time_resolution == "exact":
         return "L'horodatage est publié à la seconde près."
-    return "L'export ne révèle rien de plus que la page de résultats."
+    k = settings.min_cell_count
+    if settings.export_time_resolution == "day":
+        rounded = (
+            f"de son jour, mais les jours sont regroupés avec leurs voisins jusqu'à "
+            f"compter {k} votes partagés entre au moins deux choix, comme sur la courbe"
+        )
+    else:
+        rounded = (
+            f"de son heure, mais les heures sont regroupées avec leurs voisines jusqu'à "
+            f"compter {k} votes partagés entre au moins deux choix, sans sortir des "
+            "jours regroupés de la courbe"
+        )
+    return (
+        f"Chaque vote est daté {rounded} : 'created_at' est alors le début de la période regroupée."
+    )
 
 
 def _timestamps_allowed(db: Session, law_id: int, *, total: int | None = None) -> bool:
@@ -301,23 +400,27 @@ def iter_export_rows(
     """Stream anonymised rows: law_id, choice and created_at only.
 
     Below ``min_bucket_volume`` created_at is empty. Above it, it is truncated
-    to ``export_time_resolution``, like the published curve.
+    to ``export_time_resolution`` with quiet periods merged, like the published
+    curve: created_at is then the period's start.
 
     Rows are sorted by (time, choice) so their order doesn't leak the sequence
     in which votes arrived.
     """
-    settings = get_settings()
-    trunc = _EXPORT_TRUNC.get(settings.export_time_resolution)
+    resolution = get_settings().export_time_resolution
     with_time = _timestamps_allowed(db, law_id, total=total)
     zone = display_zone()
 
-    moment: ColumnElement[Any]
-    if not with_time:
-        moment = literal(None)
-    elif trunc:
-        moment = _bucketed(trunc, settings.display_timezone)
-    else:
-        moment = Vote.created_at.expression
+    if with_time and resolution != "exact":
+        # Rounded rows are identical within a period: rebuilt from its counts.
+        for first, _, counts in _periods(db, law_id, resolution):
+            created = _iso(first, resolution, zone)
+            for choice in sorted(counts):
+                row = {"law_id": law_id, "choice": choice, "created_at": created}
+                for _ in range(counts[choice]):
+                    yield row
+        return
+
+    moment: ColumnElement[Any] = Vote.created_at.expression if with_time else literal(None)
 
     result = db.execute(
         select(moment.label("moment"), Vote.choice)
@@ -329,7 +432,7 @@ def iter_export_rows(
         yield {
             "law_id": law_id,
             "choice": choice,
-            "created_at": _iso(created, trunc, zone) if with_time else "",
+            "created_at": _iso(created, None, zone) if with_time else "",
         }
 
 

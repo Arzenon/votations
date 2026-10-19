@@ -127,6 +127,7 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
     tally = results_crud.tally(db, law.id)
     total = tally.total
 
+    breakdowns = demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
     # Only breakdowns that pass the suppression threshold.
     demographics = [
         {
@@ -137,15 +138,16 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
                     "counts": r.counts,
                     "share_pct": r.share,
                     "reference_pct": r.reference,
+                    "as_of": r.as_of.isoformat() if r.as_of else None,
                 }
                 for r in bd.rows
             ],
         }
-        for bd in demo_crud.all_breakdowns(db, law, profiled=tally.with_profile)
+        for bd in breakdowns
         if bd.shown
     ]
     # Same snapshot date as the results page.
-    as_of = demo_crud.published_as_of(db, law, profiled=tally.with_profile)
+    as_of = demo_crud.published_as_of(law, breakdowns)
     provision = demo_crud.provision_rate(db, law.id, tally=tally)
     envelope = {
         "law": {"id": law.id, "slug": law.slug, "title": law.title},
@@ -160,12 +162,21 @@ def export_json(request: Request, slug: str, db: Session = Depends(get_db)):
         "demographics_as_of": as_of.isoformat() if as_of else None,
         "demographics_note": (
             "Répartitions agrégées uniquement, masquées sous le seuil "
-            "d'anonymat. Aucune ligne par votant·e. 'reference_pct' = ordre "
-            "de grandeur national INSEE (approx.), jamais utilisé pour "
-            "repondérer. Lorsque 'demographics_as_of' est renseigné, ces "
+            "d'anonymat. Aucune ligne par votant·e. 'share_pct' = part parmi "
+            "les catégories publiées, 'reference_pct' = ordre de grandeur "
+            "national INSEE (approx.) parmi ces mêmes catégories, jamais utilisé "
+            "pour repondérer ; une catégorie sans chiffre national ('autre') n'en "
+            "a pas, et les autres se calculent sur le reste des votant·e·s. "
+            "Lorsque 'demographics_as_of' est renseigné, ces "
             "répartitions y sont arrêtées et n'avancent que par paliers : les "
             "publier en direct permettrait de déduire le profil d'une personne "
-            "en comparant deux téléchargements."
+            "en comparant deux téléchargements. Chaque catégorie porte la date "
+            "de ses chiffres dans 'as_of' (null si en direct) : une catégorie "
+            "qui n'a gagné que quelques votes reste à son dernier palier. Une "
+            "catégorie plus ancienne que les autres n'a ni 'share_pct' ni "
+            "'reference_pct' : les parts, et la part nationale en regard, se "
+            "calculent entre catégories de même date. Une catégorie encore jamais "
+            "publiée n'apparaît pas."
         ),
     }
 

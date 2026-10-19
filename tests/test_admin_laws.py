@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, date, datetime, timedelta
+
+from fastapi import HTTPException
+from sqlalchemy import delete
 
 from app.config import get_settings
 from app.crud import laws as laws_crud
 from app.crud import results as results_crud
 from app.crud.laws import REVISIONS_PAGE_SIZE
-from app.models import Law, LawRevision
+from app.models import ImportedLaw, Law, LawRevision, Vote
+from app.routes.admin.forms import LawForm, dt_local
+from app.routes.admin.laws import create_law
 from tests.helpers import admin_headers, make_law
 
 # --- Public history of edits after publication --------------------------------
@@ -210,7 +216,8 @@ def test_ignoring_an_imported_row_keeps_its_link_to_the_law(db_session, open_law
     db_session.add(item)
     db_session.commit()
 
-    imports_crud.set_status(db_session, item, status="importe", law_id=open_law.id)
+    item.law_id = open_law.id
+    imports_crud.set_status(db_session, item, status="importe")
     assert item.law_id == open_law.id
 
     imports_crud.set_status(db_session, item, status="ignore")
@@ -587,3 +594,155 @@ def test_previewing_an_unsaved_law_touches_no_memo_and_no_query(client, db_sessi
     assert "Loi jamais enregistrée" in r.text
     assert results_crud._TALLIES.get(None, max_age=3600) is None  # type: ignore[arg-type]
     assert results_crud._TALLIES._entries == {}, "a preview left an entry behind"
+
+
+def test_a_double_click_on_create_makes_one_votation(sessionmaker_for):
+    """Two simultaneous creations from one dossier: one law, and a 409 for the other."""
+    Session = sessionmaker_for
+    setup = Session()
+    now = datetime.now(UTC)
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid="DDOUBLE",
+        title="Loi cliquée deux fois",
+        law_code="2026-10",
+        promulgated_on=date(2026, 1, 1),
+        dossier_url="https://an.fr",
+        first_seen_at=now,
+        last_seen_at=now,
+    )
+    setup.add(item)
+    setup.commit()
+    item_id = item.id
+    form = LawForm(
+        title="Loi cliquée deux fois",
+        official_ref="",
+        legifrance_url="",
+        summary_text="",
+        practical_changes="",
+        arguments_for=[],
+        arguments_against=[],
+        debate_summary="",
+        promulgated_on=None,
+        opens_at=None,
+        closes_at=None,
+        published=False,
+    )
+    start = threading.Barrier(2, timeout=10)
+    outcomes: list[str] = []
+
+    def submit() -> None:
+        db = Session()
+        try:
+            start.wait()
+            create_law(db=db, form=form, import_id=item_id)
+            outcomes.append("created")
+        except HTTPException as exc:
+            outcomes.append(str(exc.status_code))
+        except Exception as exc:  # shown by the assert below
+            outcomes.append(repr(exc))
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=submit) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    try:
+        assert sorted(outcomes) == ["409", "created"], outcomes
+        assert setup.query(Law).filter_by(title=form.title).count() == 1
+    finally:
+        # The dossier first: it references the law.
+        setup.execute(delete(ImportedLaw).where(ImportedLaw.id == item_id))
+        setup.execute(delete(Law).where(Law.title == form.title))
+        setup.commit()
+        setup.close()
+
+
+# --- A closed vote that has votes keeps its closing date ------------------------
+
+
+def _save_form(client, law, **fields):
+    """Post the admin form with the law's current values, overridden by ``fields``."""
+    data = {
+        "title": law.title,
+        "published": "1",
+        "opens_at": dt_local(law.opens_at),
+        "closes_at": dt_local(law.closes_at),
+        **fields,
+    }
+    return client.post(
+        f"/admin/lois/{law.id}", headers=admin_headers(), data=data, follow_redirects=False
+    )
+
+
+def test_a_closed_vote_with_votes_cannot_be_reopened(client, closed_law, db_session):
+    """Reopening would let the next snapshot step be compared with the closing page."""
+    db_session.add(Vote(law_id=closed_law.id, voter_token="avant-cloture", choice="for"))
+    db_session.commit()
+    closing = closed_law.closes_at
+
+    later = dt_local(datetime.now(UTC) + timedelta(days=3))
+    r = _save_form(client, closed_law, closes_at=later)
+    assert r.status_code == 400
+    assert "ne peut plus changer" in r.text
+    db_session.refresh(closed_law)
+    assert closed_law.closes_at == closing
+
+    r = _save_form(client, closed_law, closes_at="")
+    assert r.status_code == 400, "clearing the date would reopen it too"
+
+    r = _save_form(client, closed_law, title="Loi close, titre corrigé")
+    assert r.status_code == 303, "other edits are still fine"
+    db_session.refresh(closed_law)
+    assert closed_law.title == "Loi close, titre corrigé"
+
+
+def test_a_closed_vote_without_votes_can_be_reopened(client, closed_law, db_session):
+    later = datetime.now(UTC) + timedelta(days=3)
+    r = _save_form(client, closed_law, closes_at=dt_local(later))
+    assert r.status_code == 303
+    db_session.refresh(closed_law)
+    assert closed_law.is_open()
+
+
+def test_saving_a_closed_vote_keeps_its_stored_times(client, db_session):
+    """The form drops seconds and reads the repeated autumn hour as its first one.
+
+    Saving another field must neither refuse the closed vote nor move or log
+    its times.
+    """
+    # 01:30 UTC on 26 October 2025 is 02:30 in Paris for the second time (CET).
+    law = make_law(
+        db_session,
+        slug="loi-heure-repetee",
+        opens_at=datetime(2025, 10, 1, 8, 0, 17, tzinfo=UTC),
+        closes_at=datetime(2025, 10, 26, 1, 30, tzinfo=UTC),
+    )
+    db_session.add(Vote(law_id=law.id, voter_token="avant-cloture", choice="for"))
+    db_session.commit()
+
+    r = _save_form(client, law, title="Loi à l'heure répétée")
+    assert r.status_code == 303
+    db_session.refresh(law)
+    assert law.title == "Loi à l'heure répétée"
+    assert law.closes_at == datetime(2025, 10, 26, 1, 30, tzinfo=UTC)
+    assert law.opens_at == datetime(2025, 10, 1, 8, 0, 17, tzinfo=UTC)
+    fields = {r.field for r in db_session.query(LawRevision).filter_by(law_id=law.id)}
+    assert fields == {"title"}, "only the real change is in the public history"
+
+
+def test_closing_an_ongoing_vote_in_the_past_closes_it_now(client, db_session):
+    """Ballots under way still see the old closing: closing now leaves them the grace."""
+    law = make_law(db_session, slug="loi-close-a-l-avance")
+    db_session.add(Vote(law_id=law.id, voter_token="en-cours", choice="for"))
+    db_session.commit()
+
+    before = datetime.now(UTC)
+    # Still after the opening, an hour ago, so the form accepts it.
+    half_an_hour_ago = dt_local(datetime.now(UTC) - timedelta(minutes=30))
+    assert _save_form(client, law, closes_at=half_an_hour_ago).status_code == 303
+    db_session.refresh(law)
+    assert law.closes_at >= before - timedelta(seconds=1), "closed now, not half an hour ago"
+    assert not law.is_open()

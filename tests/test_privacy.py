@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.crud import demographics as demo_crud
 from app.crud import votes as votes_crud
 from app.models import Law, Vote, VoteChoice
-from tests.helpers import cast_ballot, demographic_cells, make_law
+from tests.helpers import breakdown, cast_ballot, demographic_cells, make_law
 
 # --- Nothing is issued to someone who only reads ------------------------------
 
@@ -433,6 +433,179 @@ def test_two_vote_changes_at_once_move_the_profile_once(sessionmaker_for):
             check.close()
 
 
+def test_two_ballots_at_once_take_one_snapshot(sessionmaker_for):
+    """Two simultaneous ballots when a snapshot is due take it once.
+
+    A second snapshot right after the first would be a step of one voter.
+    """
+    Session = sessionmaker_for
+    volume = get_settings().min_bucket_volume
+    with _law_of_its_own(Session) as law_id:
+        setup = Session()
+        try:
+            law = setup.get(Law, law_id)
+            for i in range(volume):
+                cast_ballot(setup, law, f"avant-{i}", VoteChoice.FOR, age_bracket="35-49")
+            assert law.demographics_snapshot_at is None, "one profile short of a snapshot"
+        finally:
+            setup.close()
+
+        def ballot(db):
+            law = db.get(Law, law_id)
+            vote, previous = votes_crud.cast_vote(
+                db, law, f"voter-{threading.get_ident()}", VoteChoice.FOR
+            )
+            demo_crud.refresh_snapshot(db, law)
+            # Keeps the counters locked while the other thread checks.
+            time.sleep(0.1)
+            demo_crud.record(
+                db,
+                vote=vote,
+                choice=VoteChoice.FOR,
+                previous_choice=previous,
+                # Same cell as before, so an extra step would show in it.
+                age_bracket="35-49",
+            )
+
+        _both_at_once(Session, ballot)
+
+        check = Session()
+        try:
+            _, published = demo_crud._cells_by_dimension(demo_crud._counters(check, law_id))
+            assert published["age"]["35-49"]["for"] == volume, "a step of one voter"
+        finally:
+            check.close()
+
+
+def _snapshot_while_a_ballot_holds_a_cell(
+    Session, law_id, monkeypatch, *, ballot_profile, trigger_profile=None
+):
+    """A ballot takes its first cell and waits; meanwhile a ballot takes a snapshot.
+
+    ``trigger_profile`` is the snapshotting voter's own profile, added after
+    the snapshot as the vote route does. Fails on any error, deadlocks included.
+    """
+    holds_a_cell = threading.Event()
+    original_add = demo_crud._add
+
+    def slow_add(*args, **kwargs):
+        original_add(*args, **kwargs)
+        if not holds_a_cell.is_set():
+            holds_a_cell.set()
+            # Holds this cell while the snapshot locks the others.
+            time.sleep(0.5)
+
+    monkeypatch.setattr(demo_crud, "_add", slow_add)
+    failures: list[Exception] = []
+
+    def ballot():
+        db = Session()
+        try:
+            vote, previous = votes_crud.cast_vote(
+                db, db.get(Law, law_id), "pendant", VoteChoice.FOR
+            )
+            demo_crud.record(
+                db, vote=vote, choice=VoteChoice.FOR, previous_choice=previous, **ballot_profile
+            )
+            db.commit()
+        except Exception as exc:  # re-raised below
+            failures.append(exc)
+        finally:
+            db.close()
+
+    def snapshot():
+        db = Session()
+        try:
+            assert holds_a_cell.wait(timeout=10)
+            law = db.get(Law, law_id)
+            vote, previous = votes_crud.cast_vote(db, law, "declencheur", VoteChoice.FOR)
+            assert demo_crud.refresh_snapshot(db, law) is True
+            if trigger_profile:
+                demo_crud.record(
+                    db,
+                    vote=vote,
+                    choice=VoteChoice.FOR,
+                    previous_choice=previous,
+                    **trigger_profile,
+                )
+            db.commit()
+        except Exception as exc:  # re-raised below
+            failures.append(exc)
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=ballot), threading.Thread(target=snapshot)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert not failures, failures
+    assert not any(thread.is_alive() for thread in threads)
+
+
+def test_a_snapshot_and_a_ballot_do_not_deadlock(sessionmaker_for, monkeypatch):
+    """A snapshot and a ballot take the counters in the same order, so they can't deadlock."""
+    Session = sessionmaker_for
+    volume = get_settings().min_bucket_volume
+    profile = {"sexe": "femme", "region": "Bretagne"}
+    with _law_of_its_own(Session) as law_id:
+        setup = Session()
+        try:
+            law = setup.get(Law, law_id)
+            # The region cell is created first, so a scan meets it before sexe.
+            cast_ballot(setup, law, "avant-region", VoteChoice.FOR, region="Bretagne")
+            for i in range(volume - 1):
+                cast_ballot(setup, law, f"avant-{i}", VoteChoice.FOR, **profile)
+            assert law.demographics_snapshot_at is None, "due on the next check"
+        finally:
+            setup.close()
+
+        _snapshot_while_a_ballot_holds_a_cell(Session, law_id, monkeypatch, ballot_profile=profile)
+
+        check = Session()
+        try:
+            law = check.get(Law, law_id)
+            _, published = demo_crud._cells_by_dimension(demo_crud._counters(check, law_id))
+            # The snapshot waited for the ballot, so it holds it and counts it.
+            assert published["sexe"]["femme"]["for"] == volume
+            assert law.demographics_snapshot_profiles == volume + 1
+        finally:
+            check.close()
+
+
+def test_a_snapshot_and_a_ballot_creating_a_cell_do_not_deadlock(sessionmaker_for, monkeypatch):
+    """A ballot creating a cell during a snapshot doesn't deadlock with it."""
+    Session = sessionmaker_for
+    volume = get_settings().min_bucket_volume
+    with _law_of_its_own(Session) as law_id:
+        setup = Session()
+        try:
+            law = setup.get(Law, law_id)
+            for i in range(volume):
+                cast_ballot(
+                    setup, law, f"avant-{i}", VoteChoice.FOR, age_bracket="35-49", region="Bretagne"
+                )
+            assert law.demographics_snapshot_at is None, "due on the next check"
+        finally:
+            setup.close()
+
+        _snapshot_while_a_ballot_holds_a_cell(
+            Session,
+            law_id,
+            monkeypatch,
+            ballot_profile={"age_bracket": "18-24", "region": "Bretagne"},
+            trigger_profile={"age_bracket": "18-24"},
+        )
+
+        check = Session()
+        try:
+            counted, published = demo_crud._cells_by_dimension(demo_crud._counters(check, law_id))
+            assert counted["age"]["18-24"]["for"] == 2, "both ballots counted"
+            assert published["age"]["18-24"]["for"] == 0, "a new cell below a full step waits"
+        finally:
+            check.close()
+
+
 # --- The published breakdown is a snapshot, not the live counters -------------
 
 
@@ -498,13 +671,23 @@ def test_nothing_is_published_before_the_first_snapshot(open_law, db_session):
     assert {bd.reason for bd in breakdowns} == {"pending"}
 
 
+def _settle_the_trigger(db, law, *, start):
+    """Bring the first step's triggering cell to a full ``min_cell_count`` change.
+
+    The ballot that triggers a step is counted after it, so its cell moved by
+    one: on its own, that cell would hold its category back (see `_held`).
+    """
+    _profiled_ballots(db, law, get_settings().min_cell_count - 1, start=start, age_bracket="35-49")
+
+
 def _close(db, law):
-    law.closes_at = datetime.now(UTC) - timedelta(minutes=1)
+    """Close the vote, past the grace that keeps the last step after closing."""
+    law.closes_at = datetime.now(UTC) - timedelta(minutes=5)
     db.commit()
 
 
-def _age(db, law):
-    return next(bd for bd in demo_crud.all_breakdowns(db, law) if bd.dimension == "age")
+def _as_of(db, law):
+    return demo_crud.published_as_of(law, demo_crud.all_breakdowns(db, law))
 
 
 def test_a_votation_that_never_published_shows_its_live_counters_once_closed(open_law, db_session):
@@ -518,10 +701,10 @@ def test_a_votation_that_never_published_shows_its_live_counters_once_closed(ope
 
     _close(db_session, open_law)
 
-    age = _age(db_session, open_law)
+    age = breakdown(db_session, open_law, "age")
     assert age.shown is True
     assert age.rows[0].counts["for"] == 12
-    assert demo_crud.published_as_of(db_session, open_law) is None, "live, so undated"
+    assert _as_of(db_session, open_law) is None, "live, so undated"
 
 
 def test_closing_does_not_release_a_step_too_small_to_be_one(open_law, db_session, client):
@@ -542,18 +725,42 @@ def test_closing_does_not_release_a_step_too_small_to_be_one(open_law, db_sessio
     assert _published_cells(client, open_law) == before, (
         "closing published the residual, so one voter's whole profile is the difference"
     )
-    assert demo_crud.published_as_of(db_session, open_law) is not None, "and it is dated"
-    assert _age(db_session, open_law).shown is True, "the last step's figures are still shown"
+    assert _as_of(db_session, open_law) is not None, "and it is dated"
+    assert breakdown(db_session, open_law, "age").shown is True, (
+        "the last step's figures are still shown"
+    )
+
+
+def test_closing_releases_settled_categories_and_holds_the_others(open_law, db_session, client):
+    """Closing is a step too: age goes live, a lone Corsican vote stays unpublished."""
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
+    _settle_the_trigger(db_session, open_law, start=volume + 1)
+    cast_ballot(db_session, open_law, "seul-en-corse", VoteChoice.AGAINST, region="Corse")
+    _profiled_ballots(db_session, open_law, volume, start=volume + 100, age_bracket="65+")
+    _close(db_session, open_law)
+
+    assert {r.category for r in breakdown(db_session, open_law, "age").rows} == {"35-49", "65+"}, (
+        "live"
+    )
+    # Not "all live": a category with a vote is left out, and the page says so.
+    assert _as_of(db_session, open_law) == open_law.closes_at
+
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "Corse" not in page
+    assert "Non publiée" in page
+    assert "Pas encore publiée" not in page, "a closed vote has no later step to promise"
+    assert "jamais publiée n'apparaît pas" in page
 
 
 def test_a_closed_votation_publishes_live_once_the_residual_is_a_real_step(open_law, db_session):
     """Live counters are shown once the remainder is large enough."""
     volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
-    _profiled_ballots(db_session, open_law, volume, start=volume + 1, age_bracket="65+")
+    _settle_the_trigger(db_session, open_law, start=volume + 1)
+    _profiled_ballots(db_session, open_law, volume, start=volume + 100, age_bracket="65+")
     _close(db_session, open_law)
 
-    age = _age(db_session, open_law)
-    assert demo_crud.published_as_of(db_session, open_law) is None, "live, so undated"
+    age = breakdown(db_session, open_law, "age")
+    assert _as_of(db_session, open_law) is None, "live, so undated"
     assert {r.category for r in age.rows} == {"35-49", "65+"}
 
 
@@ -590,11 +797,90 @@ def test_the_snapshot_does_move_once_enough_profiles_arrive(open_law, db_session
     # Move the clock back past the hourly limit.
     open_law.demographics_snapshot_at = datetime.now(UTC) - timedelta(days=1)
     db_session.commit()
-    _profiled_ballots(db_session, open_law, volume + 1, start=volume + 1, age_bracket="65+")
+    _settle_the_trigger(db_session, open_law, start=volume + 1)
+    _profiled_ballots(db_session, open_law, volume + 1, start=volume + 100, age_bracket="65+")
 
-    age = next(bd for bd in demo_crud.all_breakdowns(db_session, open_law) if bd.dimension == "age")
+    age = breakdown(db_session, open_law, "age")
     assert age.shown is True
     assert {r.category for r in age.rows} == {"35-49", "65+"}
+
+
+def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_session, client):
+    """A step copies a category only if each of its cells moved by 0 or a full cell.
+
+    Otherwise a step of 50 profiles moving "Corse, Pour" by one would tell
+    anyone who knows a Corsican voted in that window how they voted. The rest
+    of the table moves on, and the held category says how old it is.
+    """
+    _profiled_ballots(db_session, open_law, 15, region="Corse")
+    _profiled_ballots(db_session, open_law, 36, start=15, region="Bretagne")
+    first_step = open_law.demographics_snapshot_at
+    assert first_step is not None, "a first step, Corse at 15"
+    open_law.demographics_snapshot_at = first_step - timedelta(days=1)
+    db_session.commit()
+    first_step = open_law.demographics_snapshot_at
+
+    # Bretagne gains enough for a second step; Corse gains one vote.
+    _profiled_ballots(db_session, open_law, 1, start=100, region="Corse")
+    _profiled_ballots(db_session, open_law, 60, start=200, region="Bretagne")
+    assert open_law.demographics_snapshot_at > first_step, "expected a second step"
+
+    _, published = demo_crud._cells_by_dimension(demo_crud._counters(db_session, open_law.id))
+    assert published["region"]["Bretagne"]["for"] > 36, "Bretagne moved"
+    assert published["region"]["Corse"]["for"] == 15, "Corse waited"
+
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert 'Corse<br><span class="meta">arrêtée au' in page
+    assert "Bretagne<br>" not in page, "only the held category is dated"
+    assert "palier plus ancien que les autres" in " ".join(page.split()), (
+        "and the footnote says why"
+    )
+    payload = client.get(f"/loi/{open_law.slug}/export.json").json()
+    region = next(block for block in payload["demographics"] if block["dimension"] == "region")
+    as_of = {row["category"]: row["as_of"] for row in region["rows"]}
+    assert as_of["Bretagne"] == payload["demographics_as_of"]
+    assert as_of["Corse"] < payload["demographics_as_of"]
+    # Corse's old count against Bretagne's new one would be neither date's share.
+    shares = {row["category"]: row["share_pct"] for row in region["rows"]}
+    assert shares == {"Bretagne": 100.0, "Corse": None}
+    national = {row["category"]: row["reference_pct"] for row in region["rows"]}
+    # On the same categories as the shares: Bretagne alone would read 100%.
+    assert national == {"Bretagne": None, "Corse": None}
+
+
+def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session, client):
+    """Every region from the same older step: compared with each other, not hidden."""
+    _profiled_ballots(db_session, open_law, 20, region="Bretagne", age_bracket="35-49")
+    _profiled_ballots(db_session, open_law, 31, start=20, region="Corse", age_bracket="35-49")
+    first_step = open_law.demographics_snapshot_at
+    assert first_step is not None
+    open_law.demographics_snapshot_at = first_step - timedelta(days=1)
+    db_session.commit()
+
+    # Age carries the second step; each region gained a single vote.
+    _settle_the_trigger(db_session, open_law, start=100)
+    _profiled_ballots(db_session, open_law, 1, start=200, region="Bretagne")
+    _profiled_ballots(db_session, open_law, 50, start=300, age_bracket="65+")
+    assert open_law.demographics_snapshot_at > first_step - timedelta(days=1)
+
+    region = breakdown(db_session, open_law, "region")
+    assert all(row.held for row in region.rows), "both from the first step"
+    assert {row.category: row.share for row in region.rows} == {"Bretagne": 40.0, "Corse": 60.0}
+    page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+    assert "n'a pas de parts" not in page, "every row has its shares, nothing to explain"
+
+
+def test_the_pending_label_does_not_move_with_one_voter(open_law, db_session):
+    """While open, a field nobody filled in reads "pending", not "empty".
+
+    Otherwise the first voter to give a sex would flip the label at once and
+    tell which field they filled in.
+    """
+    _first_snapshot(db_session, open_law, age_bracket="35-49")
+
+    assert breakdown(db_session, open_law, "sexe").reason == "pending"
+    cast_ballot(db_session, open_law, "premiere-a-dire", VoteChoice.FOR, sexe="femme")
+    assert breakdown(db_session, open_law, "sexe").reason == "pending"
 
 
 def test_a_voter_never_reads_themselves_in_the_step_they_triggered(open_law, db_session):
@@ -609,7 +895,7 @@ def test_a_voter_never_reads_themselves_in_the_step_they_triggered(open_law, db_
 
     cells = demographic_cells(db_session, open_law.id)
     assert cells[("age", "65+", "for")] == 1, "the live counter has it"
-    published = demo_crud._cells_by_dimension(db_session, open_law.id, live=False)
+    _, published = demo_crud._cells_by_dimension(demo_crud._counters(db_session, open_law.id))
     assert published["age"]["35-49"]["for"] == volume, "the step published the others"
     assert published["age"]["65+"]["for"] == 0, "but never the voter who triggered it"
 
@@ -626,3 +912,75 @@ def test_a_trimmed_profile_cookie_leaves_the_store_saying_the_same_thing():
     assert store.for_law(999) == {"age": "18-24"}, "the law just written must survive the trim"
     _value, kept = profile_cookie._fit(store.laws)
     assert kept == store.laws
+
+
+# --- Only a vote that is over for good shows live figures ----------------------
+
+
+def test_a_rescheduled_vote_never_shows_its_live_counters(open_law, db_session, client):
+    """Moving the opening to later isn't closing: ballots will come after it.
+
+    The live tables would otherwise show below any step, then be compared
+    with the next one once voting resumes.
+    """
+    for i in range(30):
+        cast_ballot(db_session, open_law, f"tot-{i}", VoteChoice.FOR, age_bracket="25-34")
+    open_law.opens_at = datetime.now(UTC) + timedelta(hours=1)
+    db_session.commit()
+    assert open_law.status() == "scheduled"
+
+    assert all(bd.reason == "pending" for bd in demo_crud.all_breakdowns(db_session, open_law))
+    payload = client.get(f"/loi/{open_law.slug}/export.json").json()
+    assert payload["demographics"] == []
+    assert payload["demographics_as_of"] is None
+
+
+def test_the_last_step_holds_for_a_moment_after_the_closing(open_law, db_session):
+    """A ballot that passed its last check before the closing may still be committing."""
+    volume = _first_snapshot(db_session, open_law, age_bracket="35-49")
+    _settle_the_trigger(db_session, open_law, start=volume + 1)
+    _profiled_ballots(db_session, open_law, volume, start=volume + 100, age_bracket="65+")
+
+    open_law.closes_at = datetime.now(UTC) - timedelta(seconds=30)
+    db_session.commit()
+    assert _as_of(db_session, open_law) == open_law.demographics_snapshot_at, "still the step"
+    assert "65+" not in {r.category for r in breakdown(db_session, open_law, "age").rows}
+
+
+def test_a_ballot_still_recording_at_the_closing_is_refused(
+    client, open_law, db_session, monkeypatch
+):
+    """A ballot that crosses the closing is refused, so nothing lands after it."""
+    original_record = demo_crud.record
+
+    def record_then_close(db, *, vote, **kwargs):
+        on_file = original_record(db, vote=vote, **kwargs)
+        # The clock passes the closing while this ballot is still in its transaction.
+        db.get(Law, vote.law_id).closes_at = datetime.now(UTC) - timedelta(seconds=1)
+        return on_file
+
+    monkeypatch.setattr(demo_crud, "record", record_then_close)
+    r = client.post(
+        f"/loi/{open_law.slug}/vote",
+        data={"choice": "for", "age_bracket": "35-49"},
+        headers={"HX-Request": "true"},
+    )
+    assert "vient de se clore" in r.text
+    assert db_session.query(Vote).filter_by(law_id=open_law.id).count() == 0
+    assert demographic_cells(db_session, open_law.id).get(("age", "35-49", "for"), 0) == 0
+
+
+def test_the_page_says_the_final_figures_are_coming_during_the_grace(open_law, db_session, client):
+    """Right after the closing the figures aren't final yet, and the page says so."""
+    for i in range(30):
+        cast_ballot(db_session, open_law, f"grace-{i}", VoteChoice.FOR, age_bracket="25-34")
+    open_law.closes_at = datetime.now(UTC) - timedelta(seconds=30)
+    db_session.commit()
+
+    page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+    assert "paraissent quelques minutes après la clôture" in page
+    assert "Non publiée" not in page, "nothing was refused, it just isn't final yet"
+
+    _close(db_session, open_law)
+    page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+    assert "quelques minutes" not in page

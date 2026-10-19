@@ -207,7 +207,9 @@ def _seed_demographics(db, law: Law, data: dict) -> None:
                     )
                 )
 
-    # Mark as many votes as profiled as the largest dimension total.
+    # Mark as many votes as profiled as the largest dimension total. Flushed
+    # first: sessions don't autoflush, so votes just added wouldn't be found.
+    db.flush()
     n = max(
         sum(c for choices in categories.values() for c in choices.values())
         for categories in data.values()
