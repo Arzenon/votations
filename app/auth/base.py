@@ -22,16 +22,16 @@ class AuthProvider(Protocol):
     # When False, no login button is shown at all.
     login_enabled: bool
 
-    def get_voter_token(self, request: Request, response: Response) -> str:
-        """Return a stable anonymous token for this voter, creating it if needed.
+    def get_voter_token(self, request: Request, response: Response, law_id: int) -> str:
+        """Return this voter's anonymous token for this law, creating it if needed.
 
         Only used to enforce one vote per law; must not be linkable to an
-        identity. ``response`` is used to set the cookie. Only call when
-        actually voting.
+        identity, nor across laws. ``response`` is used to set the cookie. Only
+        call when actually voting.
         """
         ...
 
-    def peek_voter_token(self, request: Request) -> str | None:
+    def peek_voter_token(self, request: Request, law_id: int) -> str | None:
         """The existing token, or None. Never creates one (for read-only pages)."""
         ...
 

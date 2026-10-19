@@ -123,7 +123,7 @@ def _refused_ballot(
 
     Keeps their existing vote and their profile selection (``chosen``).
     """
-    voter_token = auth.peek_voter_token(request)
+    voter_token = auth.peek_voter_token(request, law.id)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
     return _ballot_fragment(
         request,
@@ -188,7 +188,7 @@ def law_page(
         return not_found(request)
 
     # Don't create a token for readers, only for voters.
-    voter_token = auth.peek_voter_token(request)
+    voter_token = auth.peek_voter_token(request, law.id)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
 
     return templates.TemplateResponse(
@@ -255,7 +255,7 @@ def cast_vote(
         return too_many_votes(request)
 
     carrier = Response()  # collects cookies set by the helpers
-    voter_token = auth.get_voter_token(request, carrier)
+    voter_token = auth.get_voter_token(request, carrier, law.id)
 
     # One transaction until the commit below. `cast_vote` locks the vote row
     # meanwhile, so concurrent ballots can't count the profile twice.

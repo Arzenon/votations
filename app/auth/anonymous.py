@@ -1,8 +1,8 @@
 """Anonymous auth provider: a random token in a signed cookie.
 
-The token is created on the first vote, not on reading. The database stores
-its SHA-256, so a leak reveals neither the cookie nor which votes come from
-the same browser. The hash is unkeyed on purpose: the token is 256 random
+The token is created on the first vote, not on reading. The database stores a
+hash of it per law, so a leak reveals neither the cookie nor which votes come
+from the same browser. The hash is unkeyed on purpose: the token is 256 random
 bits, and rotating SECRET_KEY mustn't let everyone vote again.
 """
 
@@ -20,6 +20,19 @@ COOKIE_NAME = "vf_voter"
 _COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
 
 
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def law_token(raw_token: str, law_id: int) -> str:
+    """The value stored for this voter on this law.
+
+    Built on the token's own hash so migration 7b1e4c9d2a60 could convert the
+    rows stored before (one hash shared by every law) in SQL.
+    """
+    return _sha256(f"{law_id}:{_sha256(raw_token)}")
+
+
 class AnonymousProvider:
     login_label = "Se connecter"
     login_enabled = False
@@ -28,14 +41,11 @@ class AnonymousProvider:
         settings = get_settings()
         self._serializer = URLSafeSerializer(settings.signing_keys, salt="voter-token")
 
-    def _hash(self, raw_token: str) -> str:
-        return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-
-    def peek_voter_token(self, request: Request) -> str | None:
+    def peek_voter_token(self, request: Request, law_id: int) -> str | None:
         raw = self._read_cookie(request)
-        return self._hash(raw) if raw is not None else None
+        return law_token(raw, law_id) if raw is not None else None
 
-    def get_voter_token(self, request: Request, response: Response) -> str:
+    def get_voter_token(self, request: Request, response: Response, law_id: int) -> str:
         raw = self._read_cookie(request)
         if raw is None:
             raw = secrets.token_urlsafe(32)
@@ -47,7 +57,7 @@ class AnonymousProvider:
                 samesite="lax",
                 secure=get_settings().cookie_secure,
             )
-        return self._hash(raw)
+        return law_token(raw, law_id)
 
     def _read_cookie(self, request: Request) -> str | None:
         signed = request.cookies.get(COOKIE_NAME)

@@ -77,6 +77,44 @@ def test_counting_profiled_votes_can_use_that_index(engine):
     assert "is true" not in compiled.lower(), compiled
 
 
+def test_stored_voter_tokens_become_per_law_without_losing_ballots(engine):
+    """7b1e4c9d2a60 turns the shared hash into the value the app now looks up."""
+    import hashlib
+
+    from sqlalchemy import delete, select
+    from sqlalchemy.orm import Session
+
+    from app.auth.anonymous import law_token
+    from app.models import Law, Vote
+
+    raw = "jeton-de-test"
+    shared = hashlib.sha256(raw.encode()).hexdigest()
+    config = alembic_config(TEST_DATABASE_URL)
+    # The tables are the same at that revision, so the models can fill them.
+    command.downgrade(config, "5e8b2d47a1c9")
+    try:
+        with Session(engine) as db:
+            laws = [Law(slug=f"migration-{n}", title="L", published=True) for n in "ab"]
+            db.add_all(laws)
+            db.flush()
+            db.add_all(Vote(law_id=law.id, voter_token=shared, choice="for") for law in laws)
+            db.commit()
+            law_ids = [law.id for law in laws]
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            stored = dict(
+                db.execute(
+                    select(Vote.law_id, Vote.voter_token).where(Vote.law_id.in_(law_ids))
+                ).all()
+            )
+        assert stored == {law_id: law_token(raw, law_id) for law_id in law_ids}
+    finally:
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            db.execute(delete(Law).where(Law.slug.like("migration-%")))
+            db.commit()
+
+
 def test_a_dossier_cannot_claim_two_votations(engine):
     """A dossier can't be linked to two laws."""
     names = {c["name"] for c in inspect(engine).get_unique_constraints("imported_laws")}
