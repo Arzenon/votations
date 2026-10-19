@@ -162,11 +162,14 @@ décision à prendre au moment d'écrire la migration, pas après l'avoir appliq
 La migration `7b1e4c9d2a60` (une empreinte du jeton de vote différente pour
 chaque loi) ne s'annule pas. Une fois appliquée :
 
-- une version antérieure du code ne retrouve plus les bulletins déjà déposés, et
-  chacun pourrait revoter sur les votations ouvertes. Ne relancez pas le job
-  `Deploy` d'une exécution antérieure à cette migration. Si `deploy.sh` revient
-  de lui-même à la version précédente, restaurez le dump qu'il vient de prendre
-  (`backup.sh restore`) ou redéployez la nouvelle version ;
+- une version antérieure du code ne démarre plus : son `alembic upgrade head` ne
+  connaît pas cette migration. Ne relancez donc pas le job `Deploy` d'une
+  exécution antérieure. Si `deploy.sh` revient de lui-même à la version
+  précédente, elle ne démarrera pas non plus : restaurez le dump qu'il vient de
+  prendre (`backup.sh restore`) ou redéployez la nouvelle version. Ne contournez
+  pas l'erreur (en marquant la base à une révision antérieure, par exemple) :
+  l'ancien code ne retrouverait plus les bulletins déjà déposés, et chacun
+  pourrait revoter sur les votations ouvertes ;
 - `alembic downgrade` refuse de passer tant que la table `votes` n'est pas vide :
   la rejouer ensuite hacherait les jetons une seconde fois ;
 - les dumps antérieurs, dont celui que `deploy.sh` prend juste avant, gardent
