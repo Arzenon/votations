@@ -843,6 +843,9 @@ def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_sess
     page = client.get(f"/loi/{open_law.slug}/resultats").text
     assert 'Corse<br><span class="meta">arrêtée au' in page
     assert "Bretagne<br>" not in page, "only the held category is dated"
+    assert "palier plus ancien que les autres" in " ".join(page.split()), (
+        "and the footnote says why"
+    )
     payload = client.get(f"/loi/{open_law.slug}/export.json").json()
     region = next(block for block in payload["demographics"] if block["dimension"] == "region")
     as_of = {row["category"]: row["as_of"] for row in region["rows"]}

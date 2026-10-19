@@ -142,8 +142,8 @@
         <caption class="visually-hidden">Répartition des votes par {{ bd.label | lower }}</caption>
         <thead><tr>
           <th scope="col">{{ bd.label }}</th>{% for label in CHOICE_LABELS.values() %}<th scope="col">{{ label }}</th>{% endfor %}
-          <th scope="col">Part ici</th>
-          <th scope="col">France{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
+          <th scope="col">Parmi nos votant·e·s</th>
+          <th scope="col">Part attendue{% if bd.reference_year %} (INSEE&nbsp;{{ bd.reference_year }}){% else %} (réf.){% endif %}</th>
         </tr></thead>
         <tbody>
           {% for row in bd.rows %}
@@ -178,14 +178,25 @@
     <p class="meta">Aucune donnée renseignée pour cette répartition.</p>
     {% endif %}
     {% endfor %}
+    {# Each sentence only when its case is on the page. #}
+    {% set shown = namespace(any=false, autre=false, held=false) %}
+    {% for bd in breakdowns if bd.shown %}
+      {% set shown.any = true %}
+      {% for row in bd.rows %}
+        {% if row.category == "autre" %}{% set shown.autre = true %}{% endif %}
+        {% if row.held %}{% set shown.held = true %}{% endif %}
+      {% endfor %}
+    {% endfor %}
+    {% if shown.any %}
     <p class="meta">
-      « Part ici » : part de chaque catégorie parmi les votant·e·s des catégories
-      affichées. « France » : sa part dans la population selon l'INSEE,
-      recalculée sur ces mêmes catégories. Elle sert seulement à comparer : les
-      résultats ne sont jamais repondérés. La catégorie « autre », sans chiffre
-      INSEE, garde sa part d'ici. Une catégorie arrêtée à un palier plus ancien
-      que les autres n'a pas de part et ne compte pas dans celles des autres.
+      Part attendue : ce que donnerait un panel représentatif de la population,
+      sur les mêmes catégories.
+      {%- if shown.autre %} La catégorie « autre » n'a pas de chiffre INSEE : les
+      autres parts attendues se calculent sur le reste des votant·e·s.{% endif %}
+      {%- if shown.held %} Une catégorie arrêtée à un palier plus ancien que les
+      autres n'a pas de parts et ne compte pas dans celles des autres.{% endif %}
     </p>
+    {% endif %}
   </section>
 
   <section class="block" id="historique">

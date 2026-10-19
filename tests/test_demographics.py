@@ -198,7 +198,7 @@ def test_the_national_share_covers_the_same_categories_as_the_share_here():
     _same_date_shares(sexe)
     assert [r.reference for r in sexe.rows] == [None, None], "femme alone would read 100%"
 
-    # "autre" has no national figure but counts in "Part ici": 45/45 against
+    # "autre" has no national figure but counts among our voters: 45/45 against
     # 51.5/48.5 made both sexes look under-represented.
     sexe.rows = [
         row("femme", 135, 45.0, 51.5),
@@ -207,3 +207,27 @@ def test_the_national_share_covers_the_same_categories_as_the_share_here():
     ]
     _same_date_shares(sexe)
     assert [r.reference for r in sexe.rows] == [46.4, 43.6, None]
+
+
+def test_the_footnote_only_explains_what_the_page_shows(client, open_law, db_session):
+    def page():
+        return " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+
+    assert "Part attendue :" not in page(), "no table yet, nothing to explain"
+
+    _seed_cells(
+        db_session,
+        open_law,
+        "sexe",
+        {
+            "femme": {"for": 30, "against": 20, "abstain": 11},
+            "homme": {"for": 25, "against": 19, "abstain": 14},
+        },
+    )
+    text = page()
+    assert "Part attendue : ce que donnerait un panel représentatif" in text
+    assert "n'a pas de chiffre INSEE" not in text, "no « autre » row, no « autre » sentence"
+    assert "palier plus ancien" not in text, "no held row, no held sentence"
+
+    _seed_cells(db_session, open_law, "sexe", {"autre": {"for": 10, "against": 10, "abstain": 10}})
+    assert "La catégorie « autre » n'a pas de chiffre INSEE" in page()
