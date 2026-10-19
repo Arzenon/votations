@@ -257,5 +257,5 @@ def test_a_revision_page_only_shows_that_law_s_revisions(client, db_session):
 
 def test_a_revision_id_that_cannot_exist_is_a_404_not_an_error(client, db_session):
     law = make_law(db_session, slug="loi-ids")
-    for odd in ("99999999999999999999", "abc", "-1", "1e3", "١٢"):
+    for odd in ("99999999999999999999", "abc", "-1", "1e3", "١٢", "0", "007"):
         assert client.get(f"/loi/{law.slug}/modifications/{odd}").status_code == 404, odd

@@ -374,8 +374,9 @@ def results_page(
     )
 
 
-# A stored id: digits only, and within Postgres's integer (anything else is a 404).
-_REVISION_ID = re.compile(r"[0-9]{1,9}")
+# A stored id: digits without a leading zero, within Postgres's integer. Anything
+# else is a 404.
+_REVISION_ID = re.compile(r"[1-9][0-9]{0,8}")
 
 
 @router.get("/loi/{slug}/modifications/{revision_id}", response_class=HTMLResponse)
