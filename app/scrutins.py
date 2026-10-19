@@ -106,11 +106,14 @@ def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scruti
     return found
 
 
-# A vote on part of a text (e.g. "la première partie" of a loi de finances)
-# isn't a vote on the whole text. Some read "l'ensemble de la première partie",
-# so checking for "l'ensemble" isn't enough. The ordinal is required: "partie"
-# alone also matches "partie législative du code", "États parties", "contrepartie".
-_A_PART_OF_THE_TEXT = re.compile(r"\b(premi[eè]re|deuxi[eè]me|seconde|troisi[eè]me) partie\b")
+# A vote on part of a text isn't a vote on the whole text: "la première partie"
+# of a loi de finances, up to the fourth of a loi de financement de la sécurité
+# sociale. Some read "l'ensemble de la première partie", so checking for
+# "l'ensemble" isn't enough. The ordinal is required: "partie" alone also matches
+# "partie législative du code", "États parties", "contrepartie".
+_A_PART_OF_THE_TEXT = re.compile(
+    r"\b(premi[eè]re|deuxi[eè]me|seconde|troisi[eè]me|quatri[eè]me) partie\b"
+)
 
 # Only adopted votes count. Also guards against motions de rejet, where "pour"
 # means rejecting the text (already excluded in `app.assemblee`).

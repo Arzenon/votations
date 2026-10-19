@@ -112,8 +112,11 @@ def test_a_vote_on_part_of_a_text_is_not_a_vote_on_the_text():
     """A vote on part of a text doesn't count, even "l'ensemble de la première partie"."""
     from app.scrutins import final_vote
 
-    partielle = _scrutin("p", objet="l'ensemble de la première partie du projet de loi de finances")
-    assert final_vote(["p"], {"p": partielle}) is None
+    for objet in (
+        "l'ensemble de la première partie du projet de loi de finances",
+        "la quatrième partie du projet de loi de financement de la sécurité sociale",
+    ):
+        assert final_vote(["p"], {"p": _scrutin("p", objet=objet)}) is None, objet
 
 
 def test_the_word_partie_alone_does_not_make_a_partial_vote():
