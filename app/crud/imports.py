@@ -55,6 +55,10 @@ _REFRESHED = (
     *PARLIAMENT_RECORD,
 )
 
+# Read from the scrutins export, not the dossier: kept as they are when that
+# download fails.
+_FROM_SCRUTINS = frozenset({"an_vote_for", "an_vote_against", "an_vote_abstain", "an_vote_checked"})
+
 log = get_logger("imports")
 
 
@@ -81,12 +85,19 @@ def _too_long(row: dict) -> str | None:
 
 
 def sync(
-    db: Session, *, records: list[PromulgatedLaw], source: str = SOURCE_ASSEMBLEE
+    db: Session,
+    *,
+    records: list[PromulgatedLaw],
+    source: str = SOURCE_ASSEMBLEE,
+    with_scrutins: bool = True,
 ) -> tuple[int, int]:
     """Upsert the export into the staging table. Returns (created, refreshed).
 
     Everything goes in a single statement, so one oversized value would make
     Postgres reject the whole import. Such rows are skipped and logged instead.
+
+    ``with_scrutins`` is False when the scrutins export couldn't be read: the
+    vote counts already stored are then left alone.
     """
     if not records:
         return 0, 0
@@ -123,7 +134,11 @@ def sync(
     stmt = stmt.on_conflict_do_update(
         constraint="uq_imported_law_source_uid",
         set_={
-            **{name: stmt.excluded[name] for name in _REFRESHED},
+            **{
+                name: stmt.excluded[name]
+                for name in _REFRESHED
+                if with_scrutins or name not in _FROM_SCRUTINS
+            },
             "last_seen_at": stmt.excluded.last_seen_at,
         },
     )
