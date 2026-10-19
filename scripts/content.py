@@ -202,7 +202,7 @@ class PublishedLawError(RuntimeError):
     """``--replace`` was asked to overwrite a law that is currently published."""
 
 
-class FinalClosingError(PublishedLawError):
+class FinalClosingError(RuntimeError):
     """``--replace`` would move the closing of a closed vote that has votes."""
 
 
@@ -354,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         counts = import_content(args.path, replace=args.replace)
-    except (ContentFormatError, PublishedLawError) as exc:
+    except (ContentFormatError, PublishedLawError, FinalClosingError) as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1
     print(

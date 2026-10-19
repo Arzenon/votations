@@ -73,10 +73,10 @@
     </p>
 
     <details class="chart-data">
-      <summary>Voir les chiffres jour par jour</summary>
+      <summary>Voir les chiffres par jour</summary>
       <div class="table-scroll">
         <table class="evolution">
-          <caption class="visually-hidden">Nombre de votes par jour et par choix</caption>
+          <caption class="visually-hidden">Nombre de votes par jour ou par période regroupée, et par choix</caption>
           <thead><tr><th scope="col">Période</th>{% for label in CHOICE_LABELS.values() %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
           <tbody>
             {% for bucket in evolution %}

@@ -80,7 +80,7 @@ def test_the_results_page_draws_the_curve(client, open_law, db_session, monkeypa
     assert 'role="img"' in page
     assert "Évolution des votes, par jour" in page
     # The data table is still there.
-    assert "Voir les chiffres jour par jour" in page
+    assert "Voir les chiffres par jour" in page
 
 
 # --- A year-long vote ----------------------------------------------------------

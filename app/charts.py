@@ -90,7 +90,7 @@ def _daily(buckets) -> list[_Point]:
     """
     out = []
     for b in buckets:
-        left = {key: b.counts.get(key, 0) for key in CHOICE_LABELS}
+        left = {key: b.counts[key] for key in CHOICE_LABELS}
         for i, n in enumerate(b.daily):
             part = dict(zip(left, _spread(n, list(left.values())), strict=True))
             for key in left:
@@ -221,7 +221,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
     drawn = _grouped(days, period)
 
     keys = list(CHOICE_LABELS)
-    peak = max((max(b.counts.get(k, 0) for k in keys) for b in drawn), default=0)
+    peak = max((max(b.counts[k] for k in keys) for b in drawn), default=0)
     top, step = _nice_ceiling(peak)
 
     plot_left, plot_right = PAD_LEFT, WIDTH - PAD_RIGHT
@@ -239,7 +239,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
 
     series = []
     for key in keys:
-        points = [(x_at(i), y_at(b.counts.get(key, 0))) for i, b in enumerate(drawn)]
+        points = [(x_at(i), y_at(b.counts[key])) for i, b in enumerate(drawn)]
         line = _smooth(points)
         area = ""
         if len(points) > 1:
@@ -247,7 +247,7 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
                 f"{line} L {points[-1][0]:.1f} {plot_bottom:.1f} "
                 f"L {points[0][0]:.1f} {plot_bottom:.1f} Z"
             )
-        counts = [b.counts.get(key, 0) for b in drawn]
+        counts = [b.counts[key] for b in drawn]
         series.append(
             Series(
                 key=key,

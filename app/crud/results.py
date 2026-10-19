@@ -238,7 +238,7 @@ def _merge_quiet[T](
     pending: tuple[T, dict[str, int]] | None = None
     for unit, counts in units:
         first, summed = pending if pending else (unit, dict.fromkeys(counts, 0))
-        summed = {c: summed.get(c, 0) + n for c, n in counts.items()}
+        summed = {c: summed[c] + n for c, n in counts.items()}
         if sum(summed.values()) >= k and sum(1 for n in summed.values() if n) >= 2:
             groups.append((first, unit, summed))
             pending = None

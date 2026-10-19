@@ -170,7 +170,7 @@ class Breakdown:
     label: str
     shown: bool
     threshold: int
-    # A REASON_* value. "pending" means there are votes not shown (the vote
+    # A REASON_* value. "pending" means there may be votes not shown (the vote
     # isn't final, or its categories were never published), not "no data".
     reason: str = REASON_NONE
 
@@ -408,20 +408,17 @@ def is_final(law: Law) -> bool:
 
 
 def _live_categories(
-    db: Session, law: Law, counters: list[Row], *, final: bool, profiled: int | None = None
+    db: Session, law: Law, counters: list[Row], *, profiled: int | None = None
 ) -> set[tuple[str, str]]:
-    """(dimension, category) that may use the live counters instead of the snapshot.
+    """(dimension, category) that may use the live counters, once the vote is final.
 
     Closing the vote is one more step and follows the same rules: otherwise a
     single ballot cast after the last snapshot could be recovered by comparing
     the page before and after closing. If no snapshot was ever published there
     is nothing to compare against, so live counters are fine.
 
-    ``final`` is `is_final`. ``profiled`` is ``Tally.with_profile``, to save a
-    query.
+    ``profiled`` is ``Tally.with_profile``, to save a query.
     """
-    if not final:
-        return set()
     every = {(row.dimension, row.category) for row in counters}
     if law.demographics_snapshot_at is None:
         return every
@@ -476,7 +473,7 @@ def all_breakdowns(db: Session, law: Law, *, profiled: int | None = None) -> lis
         ]
 
     counters = _counters(db, law.id)
-    live = _live_categories(db, law, counters, final=final, profiled=profiled)
+    live = _live_categories(db, law, counters, profiled=profiled) if final else set()
     counted, published = _cells_by_dimension(counters)
     # A step copies all of a category's cells at once, so they share a date.
     copied = {(r.dimension, r.category): r.published_at for r in counters if r.published_at}
