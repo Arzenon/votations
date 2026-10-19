@@ -34,9 +34,6 @@ def law_token(raw_token: str, law_id: int) -> str:
 
 
 class AnonymousProvider:
-    login_label = "Se connecter"
-    login_enabled = False
-
     def __init__(self) -> None:
         settings = get_settings()
         self._serializer = URLSafeSerializer(settings.signing_keys, salt="voter-token")
@@ -67,6 +64,3 @@ class AnonymousProvider:
             return self._serializer.loads(signed)
         except BadSignature:
             return None
-
-    def login_url(self) -> str:
-        return "/connexion"

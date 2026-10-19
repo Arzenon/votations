@@ -17,11 +17,6 @@ from fastapi import Request, Response
 class AuthProvider(Protocol):
     """What the app needs from an authentication backend."""
 
-    # Label of the login button.
-    login_label: str
-    # When False, no login button is shown at all.
-    login_enabled: bool
-
     def get_voter_token(self, request: Request, response: Response, law_id: int) -> str:
         """Return this voter's anonymous token for this law, creating it if needed.
 
@@ -33,10 +28,6 @@ class AuthProvider(Protocol):
 
     def peek_voter_token(self, request: Request, law_id: int) -> str | None:
         """The existing token, or None. Never creates one (for read-only pages)."""
-        ...
-
-    def login_url(self) -> str:
-        """Target of the login button."""
         ...
 
 

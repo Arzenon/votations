@@ -7,7 +7,6 @@ from pathlib import Path
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from app.auth.base import get_auth_provider
 from app.config import get_settings
 from app.labels import (
     CHOICE_LABELS,
@@ -47,11 +46,6 @@ DISCLAIMER = (
 )
 
 
-def _auth_context(request: Request) -> dict:
-    """Resolve the auth provider on each render, so it can be swapped."""
-    return {"auth": get_auth_provider()}
-
-
 def _page_context(request: Request) -> dict:
     """Absolute origin and canonical URL, for tags that need full URLs.
 
@@ -63,9 +57,7 @@ def _page_context(request: Request) -> dict:
     return {"site_origin": origin, "canonical_url": f"{origin}{request.url.path}"}
 
 
-templates = Jinja2Templates(
-    directory=str(TEMPLATES_DIR), context_processors=[_auth_context, _page_context]
-)
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR), context_processors=[_page_context])
 
 # Don't check templates for changes on every render in production.
 templates.env.auto_reload = not get_settings().is_production
