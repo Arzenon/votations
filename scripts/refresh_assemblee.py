@@ -39,10 +39,12 @@ def _attach_votes(records: list[PromulgatedLaw]) -> tuple[str, bool]:
 
     resolved = 0
     for record in records:
-        record.an_vote_checked = True
         vote = final_vote(record.vote_refs, index)
         if vote is None:
+            # "No public scrutin" only if every referenced vote could be read.
+            record.an_vote_checked = all(ref in index for ref in record.vote_refs)
             continue
+        record.an_vote_checked = True
         record.an_vote_for = vote.pour
         record.an_vote_against = vote.contre
         record.an_vote_abstain = vote.abstentions

@@ -474,3 +474,14 @@ def test_a_failed_scrutins_download_keeps_the_counts_already_published(db_sessio
     db_session.expire_all()
     staged = db_session.query(ImportedLaw).filter_by(dossier_uid="DLR5L17NSCRUT").one()
     assert (staged.an_vote_for, staged.an_vote_checked) == (300, True)
+
+
+def test_an_unreadable_scrutin_is_not_reported_as_no_scrutin(monkeypatch):
+    """A referenced vote missing from the export leaves the question open."""
+    from scripts import refresh_assemblee
+
+    monkeypatch.setattr(refresh_assemblee, "fetch_votes", lambda wanted: {})
+    record = _record()
+    refresh_assemblee._attach_votes([record])
+    assert record.an_vote_checked is False
+    assert record.an_vote_for is None

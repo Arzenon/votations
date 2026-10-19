@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from dataclasses import dataclass
 
@@ -107,8 +108,9 @@ def fetch_votes(wanted: set[str], get: Getter | None = None) -> dict[str, Scruti
 
 # A vote on part of a text (e.g. "la première partie" of a loi de finances)
 # isn't a vote on the whole text. Some read "l'ensemble de la première partie",
-# so checking for "l'ensemble" isn't enough.
-_A_PART_OF_THE_TEXT = "partie"
+# so checking for "l'ensemble" isn't enough. The ordinal is required: "partie"
+# alone also matches "partie législative du code", "États parties", "contrepartie".
+_A_PART_OF_THE_TEXT = re.compile(r"\b(premi[eè]re|deuxi[eè]me|seconde|troisi[eè]me) partie\b")
 
 # Only adopted votes count. Also guards against motions de rejet, where "pour"
 # means rejecting the text (already excluded in `app.assemblee`).
@@ -127,7 +129,7 @@ def final_vote(vote_refs: list[str], index: dict[str, Scrutin]) -> Scrutin | Non
         scrutin = index.get(ref)
         if scrutin is None or scrutin.sort != _ADOPTED:
             continue
-        if _A_PART_OF_THE_TEXT in scrutin.objet.lower():
+        if _A_PART_OF_THE_TEXT.search(scrutin.objet.lower()):
             continue
         chosen = scrutin
     return chosen
