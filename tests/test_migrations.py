@@ -6,7 +6,7 @@ import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from alembic import command
 from app.db import Base, include_object
@@ -112,6 +112,32 @@ def test_stored_voter_tokens_become_per_law_without_losing_ballots(engine):
         command.upgrade(config, "head")
         with Session(engine) as db:
             db.execute(delete(Law).where(Law.slug.like("migration-%")))
+            db.commit()
+
+
+def test_the_per_law_token_migration_refuses_to_downgrade_over_votes(engine):
+    """Upgrading again would hash the stored tokens twice, so votes block the downgrade."""
+    from sqlalchemy import delete
+    from sqlalchemy.orm import Session
+
+    from app.models import Law, Vote
+
+    config = alembic_config(TEST_DATABASE_URL)
+    with Session(engine) as db:
+        law = Law(slug="migration-garde", title="L", published=True)
+        db.add(law)
+        db.flush()
+        db.add(Vote(law_id=law.id, voter_token="t" * 64, choice="for"))
+        db.commit()
+    try:
+        with pytest.raises(RuntimeError, match="irréversible"):
+            command.downgrade(config, "5e8b2d47a1c9")
+        with Session(engine) as db:
+            assert db.scalar(text("SELECT voter_token FROM votes")) == "t" * 64
+    finally:
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            db.execute(delete(Law).where(Law.slug == "migration-garde"))
             db.commit()
 
 

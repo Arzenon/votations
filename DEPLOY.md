@@ -157,6 +157,24 @@ ouvre, et demande un `with op.get_context().autocommit_block():`. C'est une
 décision à prendre au moment d'écrire la migration, pas après l'avoir appliquée :
 `SELECT count(*) FROM votes` dit dans lequel des deux cas vous êtes.
 
+### Les migrations irréversibles
+
+La migration `7b1e4c9d2a60` (une empreinte du jeton de vote différente pour
+chaque loi) ne s'annule pas. Une fois appliquée :
+
+- une version antérieure du code ne retrouve plus les bulletins déjà déposés, et
+  chacun pourrait revoter sur les votations ouvertes. Ne relancez pas le job
+  `Deploy` d'une exécution antérieure à cette migration. Si `deploy.sh` revient
+  de lui-même à la version précédente, restaurez le dump qu'il vient de prendre
+  (`backup.sh restore`) ou redéployez la nouvelle version ;
+- `alembic downgrade` refuse de passer tant que la table `votes` n'est pas vide :
+  la rejouer ensuite hacherait les jetons une seconde fois ;
+- les dumps antérieurs, dont celui que `deploy.sh` prend juste avant, gardent
+  l'ancienne empreinte, commune à toutes les lois. Avec l'un d'eux et la base
+  actuelle, on peut regrouper les votes d'un même navigateur, y compris ceux à
+  venir. Une fois la nouvelle version validée, supprimez-les (volume `backups`
+  et copies hors de la machine) sans attendre leur expiration.
+
 ## Sauvegardes
 
 Les lois importées se reconstruisent en relançant l'import. **Les votes ne se
