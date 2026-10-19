@@ -205,11 +205,14 @@ class EvolutionBucket:
     # ISO date of the first day (`date.isoformat()`), parsed back by `app.charts`.
     label: str
     counts: dict[str, int] = field(default_factory=dict)
-    # Calendar days covered: more than one when quiet days are merged.
-    days: int = 1
-    # How many voted on each of those days, not how: only the split is merged.
+    # How many voted on each day covered, not how: only the split is merged.
     # Empty means a single day holding all of ``counts``.
     daily: list[int] = field(default_factory=list)
+
+    @property
+    def days(self) -> int:
+        """Calendar days covered: more than one when quiet days are merged."""
+        return len(self.daily) or 1
 
     @property
     def day(self) -> date:
@@ -300,7 +303,7 @@ def _periods(
 def evolution(
     db: Session, law_id: int, *, total: int | None = None, max_age: float = 0.0
 ) -> list[EvolutionBucket]:
-    """Daily vote counts, one bucket per calendar day.
+    """Vote counts over time: one bucket per calendar day, or per merged period.
 
     Empty until the total reaches ``min_bucket_volume``, so low-volume votes
     can't be used to identify voters. The split between choices is merged
@@ -342,7 +345,6 @@ def evolution(
             EvolutionBucket(
                 label=start.isoformat(),
                 counts=counts,
-                days=(end - start).days + 1,
                 daily=[voted.get(day, 0) for day in _days_between(start, end)],
             )
         )

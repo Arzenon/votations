@@ -436,8 +436,7 @@ def test_two_vote_changes_at_once_move_the_profile_once(sessionmaker_for):
 def test_two_ballots_at_once_take_one_snapshot(sessionmaker_for):
     """Two simultaneous ballots when a snapshot is due take it once.
 
-    Without the lock, the second snapshot waited on the first ballot's
-    counters and published a step of that one voter.
+    A second snapshot right after the first would be a step of one voter.
     """
     Session = sessionmaker_for
     volume = get_settings().min_bucket_volume
@@ -545,11 +544,7 @@ def _snapshot_while_a_ballot_holds_a_cell(
 
 
 def test_a_snapshot_and_a_ballot_do_not_deadlock(sessionmaker_for, monkeypatch):
-    """A snapshot and a ballot take the counters in the same order.
-
-    The ballot used to lock "sexe" then "region", the snapshot "region" then
-    "sexe": each waited for the other, and Postgres killed one of them.
-    """
+    """A snapshot and a ballot take the counters in the same order, so they can't deadlock."""
     Session = sessionmaker_for
     volume = get_settings().min_bucket_volume
     profile = {"sexe": "femme", "region": "Bretagne"}
@@ -579,12 +574,7 @@ def test_a_snapshot_and_a_ballot_do_not_deadlock(sessionmaker_for, monkeypatch):
 
 
 def test_a_snapshot_and_a_ballot_creating_a_cell_do_not_deadlock(sessionmaker_for, monkeypatch):
-    """Creating a cell during a snapshot doesn't deadlock either.
-
-    The snapshot used to lock the existing cells, then create "18-24" for its
-    own voter: it waited on a ballot creating "18-24" too, which waited on
-    "Bretagne", held by the snapshot.
-    """
+    """A ballot creating a cell during a snapshot doesn't deadlock with it."""
     Session = sessionmaker_for
     volume = get_settings().min_bucket_volume
     with _law_of_its_own(Session) as law_id:
@@ -681,14 +671,13 @@ def test_nothing_is_published_before_the_first_snapshot(open_law, db_session):
     assert {bd.reason for bd in breakdowns} == {"pending"}
 
 
-def _settle_the_trigger(db, law, *, start, **profile):
+def _settle_the_trigger(db, law, *, start):
     """Bring the first step's triggering cell to a full ``min_cell_count`` change.
 
     The ballot that triggers a step is counted after it, so its cell moved by
     one: on its own, that cell would hold its category back (see `_held`).
     """
-    profile = profile or {"age_bracket": "35-49"}
-    _profiled_ballots(db, law, get_settings().min_cell_count - 1, start=start, **profile)
+    _profiled_ballots(db, law, get_settings().min_cell_count - 1, start=start, age_bracket="35-49")
 
 
 def _close(db, law):
@@ -859,7 +848,7 @@ def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_sess
     assert national == {"Bretagne": None, "Corse": None}
 
 
-def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session):
+def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session, client):
     """Every region from the same older step: compared with each other, not hidden."""
     _profiled_ballots(db_session, open_law, 20, region="Bretagne", age_bracket="35-49")
     _profiled_ballots(db_session, open_law, 31, start=20, region="Corse", age_bracket="35-49")
@@ -879,6 +868,8 @@ def test_a_table_held_at_one_older_step_keeps_its_shares(open_law, db_session):
     )
     assert all(row.held for row in region.rows), "both from the first step"
     assert {row.category: row.share for row in region.rows} == {"Bretagne": 40.0, "Corse": 60.0}
+    page = " ".join(client.get(f"/loi/{open_law.slug}/resultats").text.split())
+    assert "n'a pas de parts" not in page, "every row has its shares, nothing to explain"
 
 
 def test_the_pending_label_does_not_move_with_one_voter(open_law, db_session):
@@ -961,10 +952,6 @@ def test_the_last_step_holds_for_a_moment_after_the_closing(open_law, db_session
     db_session.commit()
     assert _as_of(db_session, open_law) == open_law.demographics_snapshot_at, "still the step"
     assert "65+" not in {r.category for r in _age(db_session, open_law).rows}
-
-    _close(db_session, open_law)
-    assert _as_of(db_session, open_law) is None, "then live"
-    assert "65+" in {r.category for r in _age(db_session, open_law).rows}
 
 
 def test_a_ballot_still_recording_at_the_closing_is_refused(

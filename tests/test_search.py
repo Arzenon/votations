@@ -255,7 +255,7 @@ def test_a_day_of_one_choice_is_merged_too(db_session, open_law, monkeypatch):
     assert buckets[-1].counts == {"for": 21, "against": 0, "abstain": 1}
 
 
-def test_quiet_days_at_the_end_join_the_last_period(db_session, open_law, monkeypatch):
+def test_quiet_days_at_the_end_join_the_last_period(client, db_session, open_law, monkeypatch):
     """Leftover quiet days join the period before, so every period adds up.
 
     Left alone, the tally minus the other periods would give them back.
@@ -268,13 +268,5 @@ def test_quiet_days_at_the_end_join_the_last_period(db_session, open_law, monkey
     buckets = results_crud.evolution(db_session, open_law.id)
     assert [(b.label, b.days) for b in buckets] == [("2026-05-04", 3)]
     assert buckets[0].counts == {"for": 20, "against": 1, "abstain": 0}
-
-
-def test_the_results_table_names_a_merged_period(client, open_law, db_session, monkeypatch):
-    monkeypatch.setattr(get_settings(), "min_bucket_volume", 3, raising=False)
-    monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)
-    _votes_on(db_session, open_law, 4, "for", 20)
-    _votes_on(db_session, open_law, 6, "against", 1)
-
     page = client.get(f"/loi/{open_law.slug}/resultats").text
-    assert "du 4 mai 2026 au 6 mai 2026" in page
+    assert "du 4 mai 2026 au 6 mai 2026" in page, "the table names the merged period"

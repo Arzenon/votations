@@ -59,7 +59,7 @@
       </figcaption>
     </figure>
     {# Past three months the curve is grouped by week or more (see
-       `app.charts.MAX_POINTS`), while the table stays daily, so say so. #}
+       `app.charts.MAX_POINTS`), while the table keeps days and merged periods. #}
     <p class="meta">
       Une mobilisation organisée se voit ici : elle laisse un pic sur {{ chart.period.span }}.
       {% if chart.period.days > 1 %}
@@ -179,12 +179,12 @@
     {% endif %}
     {% endfor %}
     {# Each sentence only when its case is on the page. #}
-    {% set shown = namespace(any=false, autre=false, held=false) %}
+    {% set shown = namespace(any=false, autre=false, unshared=false) %}
     {% for bd in breakdowns if bd.shown %}
       {% set shown.any = true %}
       {% for row in bd.rows %}
         {% if row.category == "autre" %}{% set shown.autre = true %}{% endif %}
-        {% if row.held %}{% set shown.held = true %}{% endif %}
+        {% if row.share is none %}{% set shown.unshared = true %}{% endif %}
       {% endfor %}
     {% endfor %}
     {% if shown.any %}
@@ -193,7 +193,7 @@
       sur les mêmes catégories.
       {%- if shown.autre %} La catégorie « autre » n'a pas de chiffre INSEE : les
       autres parts attendues se calculent sur le reste des votant·e·s.{% endif %}
-      {%- if shown.held %} Une catégorie arrêtée à un palier plus ancien que les
+      {%- if shown.unshared %} Une catégorie arrêtée à un palier plus ancien que les
       autres n'a pas de parts et ne compte pas dans celles des autres.{% endif %}
     </p>
     {% endif %}

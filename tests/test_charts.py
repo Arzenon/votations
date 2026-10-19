@@ -209,36 +209,17 @@ def test_merged_quiet_days_are_spread_not_drawn_as_one_day():
         EvolutionBucket(
             label=f"2026-05-{1 + 10 * i:02}",
             counts={"for": 9, "against": 1, "abstain": 0},
-            days=10,
             daily=[1] * 10,
         )
         for i in range(3)
     ]
     chart = build_evolution_chart(buckets)
     assert "Pour : 27 votes, au plus 1 en une journée" in chart.description
-    assert "chaque jour garde son nombre de votes" in chart.description
     assert chart.x_ticks[-1][1] == "30/05", "the axis ends on the last merged day"
 
 
-def test_a_spike_inside_a_merged_period_still_shows():
-    """Nine quiet days then a 2,000-vote day: every day keeps its own total."""
-    from app.charts import _daily
-    from app.crud.results import EvolutionBucket
-
-    bucket = EvolutionBucket(
-        label="2026-05-01",
-        counts={"for": 1800, "against": 200, "abstain": 9},
-        days=10,
-        daily=[1] * 9 + [2000],
-    )
-    days = _daily([bucket])
-    assert [sum(point.counts.values()) for point in days] == bucket.daily
-    for key, n in bucket.counts.items():
-        assert sum(point.counts[key] for point in days) == n, "the period's split is exact"
-
-
 def test_every_merged_day_keeps_its_total_whatever_the_split():
-    """Rounding each choice on its own drew 3, 3, 3, 1 then six empty days."""
+    """Each merged day keeps its own total, and each choice adds up to the period's."""
     from app.charts import _daily
     from app.crud.results import EvolutionBucket
 
@@ -247,8 +228,10 @@ def test_every_merged_day_keeps_its_total_whatever_the_split():
         ({"for": 5, "against": 5, "abstain": 0}, [5, 5]),
         ({"for": 9, "against": 1, "abstain": 0}, [1] * 10),
         ({"for": 7, "against": 0, "abstain": 6}, [0, 4, 0, 9]),
+        # A spike inside a merged period stays on its day.
+        ({"for": 1800, "against": 200, "abstain": 9}, [1] * 9 + [2000]),
     ]:
-        bucket = EvolutionBucket(label="2026-05-01", counts=counts, days=len(daily), daily=daily)
+        bucket = EvolutionBucket(label="2026-05-01", counts=counts, daily=daily)
         days = _daily([bucket])
         assert [sum(point.counts.values()) for point in days] == daily, (counts, daily)
         for key, n in counts.items():

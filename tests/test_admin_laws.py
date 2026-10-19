@@ -216,7 +216,8 @@ def test_ignoring_an_imported_row_keeps_its_link_to_the_law(db_session, open_law
     db_session.add(item)
     db_session.commit()
 
-    imports_crud.set_status(db_session, item, status="importe", law_id=open_law.id)
+    item.law_id = open_law.id
+    imports_crud.set_status(db_session, item, status="importe")
     assert item.law_id == open_law.id
 
     imports_crud.set_status(db_session, item, status="ignore")
@@ -596,10 +597,7 @@ def test_previewing_an_unsaved_law_touches_no_memo_and_no_query(client, db_sessi
 
 
 def test_a_double_click_on_create_makes_one_votation(sessionmaker_for):
-    """Two simultaneous creations from one dossier: one law, and a 409 for the other.
-
-    Both used to read the dossier as unlinked and each create a law.
-    """
+    """Two simultaneous creations from one dossier: one law, and a 409 for the other."""
     Session = sessionmaker_for
     setup = Session()
     now = datetime.now(UTC)

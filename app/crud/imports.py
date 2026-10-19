@@ -55,9 +55,6 @@ _REFRESHED = (
     *PARLIAMENT_RECORD,
 )
 
-# Sentinel: `set_status` leaves `law_id` unchanged.
-_KEEP = object()
-
 log = get_logger("imports")
 
 
@@ -263,13 +260,9 @@ def get_by_law_id(db: Session, law_id: int) -> ImportedLaw | None:
     return db.scalar(select(ImportedLaw).where(ImportedLaw.law_id == law_id))
 
 
-def set_status(
-    db: Session, item: ImportedLaw, *, status: str, law_id: int | object | None = _KEEP
-) -> ImportedLaw:
-    """Set the review status. ``law_id`` only changes if passed explicitly."""
+def set_status(db: Session, item: ImportedLaw, *, status: str) -> ImportedLaw:
+    """Set the review status. ``law_id`` is left alone (see `app.crud.laws.create`)."""
     item.status = status
-    if law_id is not _KEEP:
-        item.law_id = law_id  # type: ignore[assignment]
     db.commit()
     db.refresh(item)
     return item

@@ -245,9 +245,8 @@ déjà donné par le décompte en direct : ce qui fuit, c'est le profil.
 Exiger au moins deux choix ayant bougé par catégorie (une forme de l-diversité)
 fermerait le cas, mais retiendrait la plupart des catégories à chaque palier :
 les votes d'une heure vont très souvent tous du même côté dans une petite
-catégorie. Les répartitions resteraient figées des jours, ce qu'on vient
-justement de corriger en passant d'une retenue par dimension à une retenue par
-catégorie.
+catégorie. Les répartitions resteraient figées des jours, ce que la retenue
+par catégorie (plutôt que par dimension) a justement été choisie pour éviter.
 
 ### Un cas dégénéré entre dimensions
 

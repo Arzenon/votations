@@ -11,11 +11,7 @@ from tests.conftest import _NoCloseSession
 
 
 def test_sample_votes_carry_their_profiles(db_session):
-    """The votes behind the sample counters are marked as profiled.
-
-    They used to be picked before being written, so none were found: the page
-    showed full breakdowns next to "0 sur 706" profiles.
-    """
+    """The votes behind the sample counters are marked as profiled."""
     with patch("scripts.seed.SessionLocal", lambda: _NoCloseSession(db_session)):
         seed.main()
 

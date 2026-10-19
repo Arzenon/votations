@@ -2,8 +2,8 @@
 
 ``record`` adds a voter's optional age/sex/region to per-law counters, once,
 without storing anything per voter. ``all_breakdowns`` reads them back with
-cell suppression, and from a snapshot while the vote is open (see
-``refresh_snapshot``).
+cell suppression, and from a snapshot until the vote is final (see
+``refresh_snapshot`` and ``is_final``).
 
 Nothing here commits: the route commits the vote and its counters together.
 """
@@ -147,9 +147,9 @@ class BreakdownRow:
     counts: dict[str, int]
     total: int
     percentages: dict[str, float]
-    # Share of this category among profiled voters, vs the national reference.
-    # None for a row older than the table's newest (see `_same_date_shares`).
-    share: float | None = 0.0
+    # Share among the table's newest rows, vs the national reference beside it.
+    # None for a row older than the newest (see `_same_date_shares`).
+    share: float | None = None
     reference: float | None = None
     # When these figures were copied, or None if read live (see `all_breakdowns`).
     as_of: datetime | None = None
@@ -170,8 +170,8 @@ class Breakdown:
     label: str
     shown: bool
     threshold: int
-    # A REASON_* value. "pending" means the vote is open and no snapshot has
-    # been published yet, which is different from having no data.
+    # A REASON_* value. "pending" means figures may still come (the vote isn't
+    # final, or its categories were never published), not "no data".
     reason: str = REASON_NONE
 
     @property
@@ -183,7 +183,6 @@ class Breakdown:
         return self.reason == REASON_PENDING
 
     rows: list[BreakdownRow] = field(default_factory=list)
-    dimension_total: int = 0
     reference_year: int | None = None  # INSEE source year if cached values are used
     # A category with votes is left out: never published, and held back since.
     withheld: bool = False
@@ -234,7 +233,6 @@ def _build(
     if min(populated) < k:
         return Breakdown(dimension, label, shown=False, threshold=k, reason=REASON_BELOW_THRESHOLD)
 
-    dimension_total = sum(populated)
     # Skip empty categories. A row of zeros would reveal that someone just
     # picked that category, before the snapshot catches up.
     ordered = [
@@ -247,14 +245,12 @@ def _build(
         counts = cells[category]
         total = sum(counts.values())
         pct = {ch: (round(100 * v / total, 1) if total else 0.0) for ch, v in counts.items()}
-        share = round(100 * total / dimension_total, 1) if dimension_total else 0.0
         out_rows.append(
             BreakdownRow(
                 category=category,
                 counts=counts,
                 total=total,
                 percentages=pct,
-                share=share,
                 reference=reference.get(category),
             )
         )
@@ -265,7 +261,6 @@ def _build(
         shown=True,
         threshold=k,
         rows=out_rows,
-        dimension_total=dimension_total,
         reference_year=reference_year,
     )
 
@@ -288,8 +283,8 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
 
     Without a snapshot, comparing the public page before and after a single
     ballot would reveal that voter's choice along with their age, sex and
-    region. So while the vote is open the page shows ``published_count``,
-    which only moves when:
+    region. So until the vote is final the page shows ``published_count``,
+    which only moves, while the vote is open, when:
 
     * at least ``_SNAPSHOT_INTERVAL`` has passed since the last move, and
     * at least ``min_bucket_volume`` profiled votes have arrived since.
@@ -386,11 +381,7 @@ def _held(counters: list[Row]) -> set[tuple[str, str]]:
     A step of 50 profiles can still move one cell by 1 ("Corse, Contre"):
     anyone who knows a Corsican voted in that window would learn their vote.
     Such a category waits for a later step; the rest of its table moves on.
-
-    Known limit: a category that gained 10 votes, all "Pour", is published.
-    Someone who knows X voted "Pour" in that window then learns X's category.
-    The live tally already gives the choice; closing this would need at least
-    two moved choices per category, and would hold most categories back.
+    Known limit: see PISTES.md, "Paliers homogènes".
     """
     k = get_settings().min_cell_count
     return {
@@ -417,7 +408,7 @@ def is_final(law: Law) -> bool:
 
 
 def _live_categories(
-    db: Session, law: Law, counters: list[Row], *, profiled: int | None = None
+    db: Session, law: Law, counters: list[Row], *, final: bool, profiled: int | None = None
 ) -> set[tuple[str, str]]:
     """(dimension, category) that may use the live counters instead of the snapshot.
 
@@ -426,9 +417,10 @@ def _live_categories(
     the page before and after closing. If no snapshot was ever published there
     is nothing to compare against, so live counters are fine.
 
-    ``profiled`` is ``Tally.with_profile``, to save a query.
+    ``final`` is `is_final`, read once per page. ``profiled`` is
+    ``Tally.with_profile``, to save a query.
     """
-    if not is_final(law):
+    if not final:
         return set()
     every = {(row.dimension, row.category) for row in counters}
     if law.demographics_snapshot_at is None:
@@ -470,12 +462,11 @@ def _cells_by_dimension(counters: list[Row]) -> tuple[_Cells, _Cells]:
     return counted, published
 
 
-def all_breakdowns(
-    db: Session, law: Law, *, min_cell: int | None = None, profiled: int | None = None
-) -> list[Breakdown]:
+def all_breakdowns(db: Session, law: Law, *, profiled: int | None = None) -> list[Breakdown]:
     """Breakdowns for every dimension, each category from its live counters or its last step."""
-    k = min_cell if min_cell is not None else get_settings().min_cell_count
-    if law.demographics_snapshot_at is None and not is_final(law):
+    k = get_settings().min_cell_count
+    final = is_final(law)
+    if law.demographics_snapshot_at is None and not final:
         # Not over and no snapshot yet: everything is "pending", not "empty".
         return [
             Breakdown(
@@ -485,14 +476,10 @@ def all_breakdowns(
         ]
 
     counters = _counters(db, law.id)
-    live = _live_categories(db, law, counters, profiled=profiled)
+    live = _live_categories(db, law, counters, final=final, profiled=profiled)
     counted, published = _cells_by_dimension(counters)
-    # A category's cells are copied together; cells created since have no date yet.
-    copied: dict[tuple[str, str], datetime] = {}
-    for row in counters:
-        key = (row.dimension, row.category)
-        if row.published_at is not None:
-            copied[key] = max(copied.get(key, row.published_at), row.published_at)
+    # A step copies all of a category's cells at once, so they share a date.
+    copied = {(r.dimension, r.category): r.published_at for r in counters if r.published_at}
     references = all_references(db)
     out = []
     for dimension in DIMENSIONS:
@@ -514,7 +501,7 @@ def all_breakdowns(
         has_votes = any(n for cell in counted.get(dimension, {}).values() for n in cell.values())
         # Before the end, "empty" would flip to "pending" with the first voter to
         # fill this field in, and tell which field they filled in.
-        if breakdown.reason == REASON_EMPTY and (not is_final(law) or has_votes):
+        if breakdown.reason == REASON_EMPTY and (not final or has_votes):
             breakdown.reason = REASON_PENDING
         out.append(breakdown)
 
@@ -541,20 +528,19 @@ def _same_date_shares(breakdown: Breakdown) -> None:
     dates = [shown.as_of for shown in rows]
     newest = None if None in dates else max(d for d in dates if d is not None)
     current = [shown for shown in rows if shown.as_of == newest]
-    if len(current) < len(rows):
-        total = sum(shown.total for shown in current)
-        for shown in rows:
-            current_row = shown.as_of == newest
-            shown.share = round(100 * shown.total / total, 1) if current_row and total else None
+    # Shown rows always have votes, so the total isn't zero.
+    total = sum(shown.total for shown in current)
     # One category alone would read 100%, which compares nothing.
     known = [shown.reference for shown in current if shown.reference is not None]
-    # A category with no national figure ("autre") still counts in "Part ici":
+    # A category with no national figure ("autre") still counts among our voters:
     # scale to the share of voters the others cover, so both compare the same people.
-    covered = sum(shown.total for shown in current if shown.reference is not None) / sum(
-        shown.total for shown in current
-    )
+    covered = sum(shown.total for shown in current if shown.reference is not None) / total
     for shown in rows:
-        if shown.as_of != newest or shown.reference is None or len(known) < 2:
+        if shown.as_of != newest:
+            shown.share = shown.reference = None
+            continue
+        shown.share = round(100 * shown.total / total, 1)
+        if shown.reference is None or len(known) < 2:
             shown.reference = None
         else:
             shown.reference = round(100 * covered * shown.reference / sum(known), 1)

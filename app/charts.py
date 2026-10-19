@@ -91,7 +91,7 @@ def _daily(buckets) -> list[_Point]:
     out = []
     for b in buckets:
         left = {key: b.counts.get(key, 0) for key in CHOICE_LABELS}
-        totals = b.daily or _spread(sum(left.values()), [1] * b.days)
+        totals = b.daily or [sum(left.values())]
         for i, n in enumerate(totals):
             part = dict(zip(left, _spread(n, list(left.values())), strict=True))
             for key in left:
@@ -196,7 +196,7 @@ def _short_date(label: str) -> str:
         return label
 
 
-def _describe(buckets, series: list[Series], period: Period, *, merged: bool) -> str:
+def _describe(buckets, series: list[Series], period: Period) -> str:
     """Text alternative for screen readers.
 
     Takes the daily buckets so the range ends on the actual last day.
@@ -205,13 +205,7 @@ def _describe(buckets, series: list[Series], period: Period, *, merged: bool) ->
         return "Aucune donnée."
     span = f"du {_short_date(buckets[0].label)} au {_short_date(buckets[-1].label)}"
     parts = [f"{s.label} : {s.total} votes, au plus {s.peak} en {period.span}" for s in series]
-    text = f"Votes par {period.name} {span}. " + " ; ".join(parts) + "."
-    if merged:
-        text += (
-            " Dans une période regroupée, chaque jour garde son nombre de votes ;"
-            " seule la répartition entre les choix est celle de la période."
-        )
-    return text
+    return f"Votes par {period.name} {span}. " + " ; ".join(parts) + "."
 
 
 def build_evolution_chart(buckets) -> EvolutionChart | None:
@@ -223,7 +217,6 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         return None
 
     # One point per day, then `drawn` is what goes on the chart.
-    merged = any(b.days > 1 for b in buckets)
     buckets = _daily(buckets)
     period = _period_for(len(buckets))
     drawn = _grouped(buckets, period)
@@ -298,6 +291,6 @@ def build_evolution_chart(buckets) -> EvolutionChart | None:
         y_ticks=y_ticks,
         x_ticks=x_ticks,
         max_value=top,
-        description=_describe(buckets, series, period, merged=merged),
+        description=_describe(buckets, series, period),
         period=period,
     )

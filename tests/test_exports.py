@@ -256,8 +256,7 @@ def test_the_export_merges_quiet_days_like_the_curve(client, open_law, db_sessio
 def test_hour_groups_never_cross_the_curve_s_days(client, open_law, db_session, monkeypatch):
     """With hour precision, the hour groups add up to the days on the results page.
 
-    A 23:00 vote used to share an hour group with the next morning: the day's
-    figures minus its 10:00 group then gave back that one late "Contre".
+    Otherwise a day's figures minus its hour groups could give back a late vote.
     """
     monkeypatch.setattr(get_settings(), "export_time_resolution", "hour", raising=False)
     monkeypatch.setattr(get_settings(), "min_cell_count", 10, raising=False)

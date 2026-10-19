@@ -149,7 +149,6 @@ def test_breakdown_includes_share_and_reference(open_law, db_session):
     )
     bd = _dimension(db_session, open_law, "sexe")
     assert bd.shown is True
-    assert bd.dimension_total == 105
     femme = bd.rows[0]
     assert femme.share == round(100 * 60 / 105, 1)
     assert femme.reference == 51.5  # from INSEE_REFERENCE
@@ -184,26 +183,25 @@ def test_the_national_share_covers_the_same_categories_as_the_share_here():
     """
     from app.crud.demographics import Breakdown, BreakdownRow, _same_date_shares
 
-    def row(category, total, share, reference):
+    def row(category, total, reference):
         counts = {"for": total, "against": 0, "abstain": 0}
-        return BreakdownRow(category, counts, total, {}, share=share, reference=reference)
+        return BreakdownRow(category, counts, total, {}, reference=reference)
 
     age = Breakdown("age", "Tranche d'âge", shown=True, threshold=10)
-    age.rows = [row("35-49", 60, 54.5, 23.5), row("65+", 50, 45.5, 27.8)]
+    age.rows = [row("35-49", 60, 23.5), row("65+", 50, 27.8)]
     _same_date_shares(age)
     assert [(r.share, r.reference) for r in age.rows] == [(54.5, 45.8), (45.5, 54.2)]
 
     sexe = Breakdown("sexe", "Sexe", shown=True, threshold=10)
-    sexe.rows = [row("femme", 40, 80.0, 51.5), row("autre", 10, 20.0, None)]
+    sexe.rows = [row("femme", 40, 51.5), row("autre", 10, None)]
     _same_date_shares(sexe)
     assert [r.reference for r in sexe.rows] == [None, None], "femme alone would read 100%"
 
-    # "autre" has no national figure but counts among our voters: 45/45 against
-    # 51.5/48.5 made both sexes look under-represented.
+    # "autre" has no national figure but counts among our voters.
     sexe.rows = [
-        row("femme", 135, 45.0, 51.5),
-        row("homme", 135, 45.0, 48.5),
-        row("autre", 30, 10.0, None),
+        row("femme", 135, 51.5),
+        row("homme", 135, 48.5),
+        row("autre", 30, None),
     ]
     _same_date_shares(sexe)
     assert [r.reference for r in sexe.rows] == [46.4, 43.6, None]
