@@ -26,7 +26,7 @@ REWRITE_SHARE = 0.5
 
 # Above this many characters on either side of the changed region, the diff
 # isn't drawn on the results page but on the revision's own page. Bounds a page
-# of 20 revisions to about a second.
+# of 20 revisions to under two seconds.
 INLINE_DIFF_CHARS = 20_000
 
 # Words and whitespace as separate tokens, so paragraph breaks are preserved.
@@ -35,10 +35,11 @@ _TOKENS = re.compile(r"\s+|\S+")
 # Each word with the whitespace before it, for changed regions over
 # FINE_DIFF_TOKENS. difflib's cost grows with how often tokens repeat, and the
 # spaces of `_TOKENS` are half of all tokens: on 50,000 characters this takes
-# 0.3 s instead of 36 s. Only cost: a change at the field's very start also
-# marks its first word.
+# 0.2 s instead of 36 s. Replaced blocks up to REFINE_CHARS are then diffed
+# again on `_TOKENS`, so a whitespace change marks only the whitespace.
 _WORD_TOKENS = re.compile(r"\s*\S+|\s+")
 FINE_DIFF_TOKENS = 1000
+REFINE_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -119,9 +120,6 @@ def diff(old: str, new: str, *, max_chars: int | None = None) -> list[Segment] |
 
     None if the changed region has more than ``max_chars`` characters on a side.
     """
-    # Lazy import: only the revision log needs difflib.
-    import difflib
-
     before = _TOKENS.findall(old or "")
     after = _TOKENS.findall(new or "")
     # Linear, and leaves difflib only the region that changed.
@@ -130,24 +128,39 @@ def diff(old: str, new: str, *, max_chars: int | None = None) -> list[Segment] |
     middle_after = after[head : len(after) - tail]
     if max_chars is not None and max(_chars(middle_before), _chars(middle_after)) > max_chars:
         return None
-    if max(len(middle_before), len(middle_after)) > FINE_DIFF_TOKENS:
+    coarse = max(len(middle_before), len(middle_after)) > FINE_DIFF_TOKENS
+    if coarse:
         middle_before = _WORD_TOKENS.findall("".join(middle_before))
         middle_after = _WORD_TOKENS.findall("".join(middle_after))
 
     out: list[Segment] = _equal_segments(before[:head]) if head else []
-    # autojunk would ignore frequent tokens like spaces and "de", "la".
-    matcher = difflib.SequenceMatcher(a=middle_before, b=middle_after, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            out.extend(_equal_segments(middle_before[i1:i2]))
-            continue
-        # A replacement is shown as a deletion followed by an insertion.
-        if tag in ("replace", "delete"):
-            out.append(Segment("removed", "".join(middle_before[i1:i2])))
-        if tag in ("replace", "insert"):
-            out.append(Segment("added", "".join(middle_after[j1:j2])))
+    out.extend(_segments(middle_before, middle_after, coarse=coarse))
     if tail:
         out.extend(_equal_segments(before[len(before) - tail :]))
+    return out
+
+
+def _segments(before: list[str], after: list[str], *, coarse: bool) -> list[Segment]:
+    # Lazy import: only the revision log needs difflib.
+    import difflib
+
+    out: list[Segment] = []
+    # autojunk would ignore frequent tokens like spaces and "de", "la".
+    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            out.extend(_equal_segments(before[i1:i2]))
+            continue
+        removed, added = "".join(before[i1:i2]), "".join(after[j1:j2])
+        if coarse and tag == "replace" and len(removed) + len(added) <= REFINE_CHARS:
+            fine = _segments(_TOKENS.findall(removed), _TOKENS.findall(added), coarse=False)
+            out.extend(fine)
+            continue
+        # A replacement is shown as a deletion followed by an insertion.
+        if removed:
+            out.append(Segment("removed", removed))
+        if added:
+            out.append(Segment("added", added))
     return out
 
 

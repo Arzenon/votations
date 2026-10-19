@@ -203,8 +203,8 @@ def test_a_change_spread_over_a_long_field_is_left_to_its_own_page():
 
     full = textdiff.full_change(old, new)
     assert full.deferred is False
-    assert _text(full.segments, "added").split() == ["DÉBUT", "FIN"]
-    assert _text(full.segments, "removed").split() == ["de", "la"]
+    assert [seg.text for seg in full.segments if seg.kind == "added"] == ["DÉBUT", "FIN"]
+    assert [seg.text for seg in full.segments if seg.kind == "removed"] == ["de", "la"]
 
 
 def test_a_large_changed_region_still_rebuilds_both_versions():
@@ -218,6 +218,20 @@ def test_a_large_changed_region_still_rebuilds_both_versions():
     assert segments is not None
     assert not [s for s in segments if s.kind == "elided"], "runs too short to collapse"
     assert _rebuilt(segments) == (old, new)
+
+
+def test_a_whitespace_change_in_a_large_region_marks_only_the_whitespace():
+    """A paragraph break added among coarse tokens doesn't mark the next word."""
+    # Distinct words: a repeating text can be aligned one period off.
+    old = " ".join(f"mot{i}" for i in range(1200))
+    words = old.split(" ")
+    words[1], words[-2] = "DÉBUT", "FIN"
+    words[500] = "\n\n" + words[500]
+    new = " ".join(words)
+    segments = textdiff.diff(old, new)
+    # Only the space that became a paragraph break is marked, not the words around it.
+    assert [seg.text for seg in segments if seg.kind == "added"] == ["DÉBUT", " \n\n", "FIN"]
+    assert [seg.text for seg in segments if seg.kind == "removed"] == ["mot1", " ", "mot1198"]
 
 
 def test_the_results_page_links_a_large_change_to_its_own_page(client, db_session):
