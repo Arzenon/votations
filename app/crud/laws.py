@@ -384,6 +384,13 @@ def revisions(
     return Page(rows=rows, total=total, number=number, count=pages)
 
 
+def get_revision(db: Session, law_id: int, revision_id: int) -> LawRevision | None:
+    """One recorded change, only if it belongs to this law."""
+    return db.scalar(
+        select(LawRevision).where(LawRevision.id == revision_id, LawRevision.law_id == law_id)
+    )
+
+
 def count_revisions(db: Session, law_id: int) -> int:
     return (
         db.scalar(select(func.count()).select_from(LawRevision).where(LawRevision.law_id == law_id))

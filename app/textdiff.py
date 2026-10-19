@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache, partial
 
 # Short single-line values (flags, dates, references) are shown as
 # "before / after" instead of diffed. Real sentences are longer than this.
@@ -22,6 +23,12 @@ CONTEXT_WORDS = 12
 # Above this share of changed words, show both versions instead of a diff,
 # which becomes unreadable for a rewrite.
 REWRITE_SHARE = 0.5
+
+# Above this many tokens (about 500 words) on either side of the changed region,
+# the word diff isn't drawn on the results page but on the revision's own page.
+# difflib's cost grows with the product of both sides: 30 ms at this size, 1.6 s
+# for edits at both ends of a 20,000-character field.
+INLINE_DIFF_TOKENS = 1000
 
 # Words and whitespace as separate tokens, so paragraph breaks are preserved.
 _TOKENS = re.compile(r"\s+|\S+")
@@ -48,6 +55,8 @@ class FieldChange:
     old: str
     new: str
     segments: list[Segment]
+    # Too large to diff on the results page (see INLINE_DIFF_TOKENS).
+    deferred: bool = False
 
 
 def _words(tokens: list[str]) -> int:
@@ -82,31 +91,61 @@ def _equal_segments(tokens: list[str]) -> list[Segment]:
     ]
 
 
-def diff(old: str, new: str) -> list[Segment]:
-    """Word-level diff between two versions of a field."""
+def _common_ends(before: list[str], after: list[str]) -> tuple[int, int]:
+    """Number of tokens the two versions share at the start, then at the end."""
+    head = 0
+    limit = min(len(before), len(after))
+    while head < limit and before[head] == after[head]:
+        head += 1
+    # Leave a trailing space to the change, so it reads " très grandes" as before.
+    if head and not before[head - 1].strip():
+        head -= 1
+    tail = 0
+    while tail < limit - head and before[-1 - tail] == after[-1 - tail]:
+        tail += 1
+    return head, tail
+
+
+def diff(old: str, new: str, *, max_tokens: int | None = None) -> list[Segment] | None:
+    """Word-level diff between two versions of a field.
+
+    None if the changed region has more than ``max_tokens`` tokens on a side.
+    """
     # Lazy import: only the revision log needs difflib.
     import difflib
 
     before = _TOKENS.findall(old or "")
     after = _TOKENS.findall(new or "")
-    # autojunk would ignore frequent tokens like spaces and "de", "la".
-    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
+    # Linear, and leaves difflib only the region that changed.
+    head, tail = _common_ends(before, after)
+    middle_before = before[head : len(before) - tail]
+    middle_after = after[head : len(after) - tail]
+    if max_tokens is not None and max(len(middle_before), len(middle_after)) > max_tokens:
+        return None
 
-    out: list[Segment] = []
+    out: list[Segment] = _equal_segments(before[:head]) if head else []
+    # autojunk would ignore frequent tokens like spaces and "de", "la".
+    matcher = difflib.SequenceMatcher(a=middle_before, b=middle_after, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
-            out.extend(_equal_segments(before[i1:i2]))
+            out.extend(_equal_segments(middle_before[i1:i2]))
             continue
         # A replacement is shown as a deletion followed by an insertion.
         if tag in ("replace", "delete"):
-            out.append(Segment("removed", "".join(before[i1:i2])))
+            out.append(Segment("removed", "".join(middle_before[i1:i2])))
         if tag in ("replace", "insert"):
-            out.append(Segment("added", "".join(after[j1:j2])))
+            out.append(Segment("added", "".join(middle_after[j1:j2])))
+    if tail:
+        out.extend(_equal_segments(before[len(before) - tail :]))
     return out
 
 
-def field_change(old: str | None, new: str | None) -> FieldChange:
-    """Build the display for one revision: short values as is, the rest diffed."""
+def field_change(old: str | None, new: str | None, *, inline: bool = True) -> FieldChange:
+    """Build the display for one revision: short values as is, the rest diffed.
+
+    ``inline`` (the results page) leaves large changes to the revision's own
+    page, which passes False.
+    """
     old, new = old or "", new or ""
     short = (
         len(old) <= SHORT_VALUE_CHARS
@@ -117,7 +156,11 @@ def field_change(old: str | None, new: str | None) -> FieldChange:
     if short:
         return FieldChange(short=True, rewritten=False, old=old, new=new, segments=[])
 
-    segments = diff(old, new)
+    segments = diff(old, new, max_tokens=INLINE_DIFF_TOKENS if inline else None)
+    if segments is None:
+        return FieldChange(
+            short=False, rewritten=False, old=old, new=new, segments=[], deferred=True
+        )
     touched = sum(
         _words(_TOKENS.findall(s.text)) for s in segments if s.kind in ("added", "removed")
     )
@@ -128,3 +171,7 @@ def field_change(old: str | None, new: str | None) -> FieldChange:
     return FieldChange(
         short=False, rewritten=rewritten, old=old, new=new, segments=[] if rewritten else segments
     )
+
+
+# Revisions never change, so the revision page computes each diff once per process.
+full_change = lru_cache(maxsize=32)(partial(field_change, inline=False))

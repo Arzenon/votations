@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+
 from app import textdiff
+from app.models import LawRevision
 from app.textdiff import field_change
 from tests.helpers import make_law
 
@@ -168,3 +171,52 @@ def test_the_thresholds_are_the_ones_the_module_declares():
         "a collapsed run must be longer than the context kept around it, or the "
         "marker would replace less text than it stands for"
     )
+
+
+# --- Large changes --------------------------------------------------------------
+
+
+def _long_text(words: int) -> str:
+    return " ".join(f"mot{i % 97} de la loi" for i in range(words // 4))
+
+
+def test_a_small_edit_in_a_long_field_is_still_diffed_inline():
+    """Only the changed region counts towards the inline limit."""
+    old = _long_text(8000)
+    new = old.replace("mot50 de", "mot50 modifié de", 1)
+    change = field_change(old, new)
+    assert change.deferred is False
+    assert _text(change.segments, "added").strip() == "modifié"
+
+
+def test_a_change_spread_over_a_long_field_is_left_to_its_own_page():
+    """Edits at both ends of a long field aren't diffed on the results page."""
+    old = _long_text(8000)
+    new = f"Début. {old} Fin."
+    assert field_change(old, new).deferred is True
+
+    full = textdiff.full_change(old, new)
+    assert full.deferred is False
+    assert _text(full.segments, "added").split() == ["Début.", "Fin."]
+    assert _text(full.segments, "removed") == ""
+
+
+def test_the_results_page_links_a_large_change_to_its_own_page(client, db_session):
+    old = _long_text(8000)
+    law = _law_with_revision(db_session, old, f"Début. {old} Fin.")
+    body = client.get(f"/loi/{law.slug}/resultats").text
+    link = re.search(r'href="(/loi/loi-diff/modifications/\d+)"', body)
+    assert link, "the full diff stays reachable"
+
+    page = client.get(link.group(1))
+    assert page.status_code == 200
+    assert "<ins>Début. </ins>" in page.text
+    assert "Ce que dit la loi" in page.text
+
+
+def test_a_revision_page_only_shows_that_law_s_revisions(client, db_session):
+    law = _law_with_revision(db_session, "Texte initial parfaitement ordinaire.", "Autre texte.")
+    revision_id = db_session.query(LawRevision).filter_by(law_id=law.id).one().id
+    other = make_law(db_session, slug="loi-voisine", title="Loi voisine")
+    assert client.get(f"/loi/{other.slug}/modifications/{revision_id}").status_code == 404
+    assert client.get(f"/loi/{law.slug}/modifications/{revision_id}").status_code == 200

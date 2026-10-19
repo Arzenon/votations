@@ -30,6 +30,7 @@ from app.models import (
     VoteChoice,
 )
 from app.routes.public.common import (
+    PUBLIC_PAGE_CACHE,
     not_found,
     results_cache,
     results_memo_age,
@@ -37,6 +38,7 @@ from app.routes.public.common import (
     visible,
 )
 from app.templating import templates
+from app.textdiff import full_change
 
 router = APIRouter()
 
@@ -367,4 +369,23 @@ def results_page(
             "revision_pages": history.count,
         },
         headers=results_cache(status),
+    )
+
+
+@router.get("/loi/{slug}/modifications/{revision_id}", response_class=HTMLResponse)
+def revision_page(request: Request, slug: str, revision_id: int, db: Session = Depends(get_db)):
+    """One change in full, for those too large to diff on the results page."""
+    law = visible(db, slug)
+    revision = laws_crud.get_revision(db, law.id, revision_id) if law else None
+    if law is None or revision is None:
+        return not_found(request)
+    return templates.TemplateResponse(
+        request,
+        "revision.html",
+        {
+            "law": law,
+            "rev": revision,
+            "change": full_change(revision.old_value, revision.new_value),
+        },
+        headers=PUBLIC_PAGE_CACHE,
     )
