@@ -176,7 +176,11 @@ chaque loi) ne s'annule pas. Une fois appliquée :
   l'ancienne empreinte, commune à toutes les lois. Avec l'un d'eux et la base
   actuelle, on peut regrouper les votes d'un même navigateur, y compris ceux à
   venir. Une fois la nouvelle version validée, supprimez-les (volume `backups`
-  et copies hors de la machine) sans attendre leur expiration.
+  et copies hors de la machine) sans attendre leur expiration ;
+- dans la base elle-même, la migration suivante (`a3d9f6c1e872`) réécrit la
+  table `votes` (`VACUUM FULL`), sans quoi les anciennes versions des lignes y
+  resteraient lisibles. Le journal de PostgreSQL (WAL) peut en garder une copie
+  jusqu'à son recyclage, quelques heures en général.
 
 ## Sauvegardes
 

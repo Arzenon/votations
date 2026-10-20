@@ -115,6 +115,21 @@ def test_stored_voter_tokens_become_per_law_without_losing_ballots(engine):
             db.commit()
 
 
+def test_the_old_shared_hash_does_not_stay_in_the_table_files(engine):
+    """a3d9f6c1e872 rewrites `votes`, so the row versions holding it are gone."""
+    config = alembic_config(TEST_DATABASE_URL)
+    filenode = text("SELECT pg_relation_filenode('votes')")
+    command.downgrade(config, "7b1e4c9d2a60")
+    try:
+        with engine.connect() as conn:
+            before = conn.scalar(filenode)
+        command.upgrade(config, "head")
+        with engine.connect() as conn:
+            assert conn.scalar(filenode) != before, "votes was not rewritten"
+    finally:
+        command.upgrade(config, "head")
+
+
 def test_the_per_law_token_migration_refuses_to_downgrade_over_votes(engine):
     """Upgrading again would hash the stored tokens twice, so votes block the downgrade."""
     from sqlalchemy import delete
