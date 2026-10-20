@@ -28,6 +28,7 @@ from app.models import (
     DIMENSION_SEXE,
     STATUS_CLOSED,
     STATUS_OPEN,
+    STATUS_SCHEDULED,
     Law,
     VoteChoice,
 )
@@ -153,7 +154,7 @@ def law_page_context(
     """Context for ``law.html``. Also used by the admin preview."""
     # The tally is only shown once the vote is closed. law.id is None for the
     # preview of an unsaved law.
-    if status == STATUS_OPEN:
+    if status in (STATUS_OPEN, STATUS_SCHEDULED):
         tally = None
     elif law.id:
         tally = results_crud.tally(db, law.id, max_age=results_memo_age(law))

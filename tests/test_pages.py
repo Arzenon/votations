@@ -2,6 +2,7 @@
 
 import base64
 import re
+from datetime import UTC, datetime, timedelta
 
 from app.config import get_settings
 from app.crud import results as results_crud
@@ -489,6 +490,16 @@ def test_the_cards_carry_the_date_the_page_is_ordered_by(client, db_session):
     _dated(db_session, "loi-datee", "2026-06-24")
     page = client.get("/").text
     assert "Promulguée le 24 juin 2026" in page
+
+
+def test_a_scheduled_votation_says_when_voting_opens(client, db_session):
+    """Before the opening: the date, not an empty result."""
+    opens = datetime(2030, 3, 2, 9, 0, tzinfo=UTC)
+    make_law(db_session, opens_at=opens, closes_at=opens + timedelta(days=30))
+    page = client.get("/loi/loi-x").text
+    assert "Le vote ouvrira le 02/03/2030 à 10:00 (Europe/Paris)." in page
+    assert "Nombre total de votant" not in page
+    assert "Ouverture le 2 mars 2030" in client.get("/").text
 
 
 def test_the_cards_show_participation(client, db_session, open_law):

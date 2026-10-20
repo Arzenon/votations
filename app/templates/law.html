@@ -83,7 +83,7 @@
   {% endif %}
 
   {# Link to the ballot, below the top box. #}
-  <p class="aller-au-vote"><a href="#voter">{% if voting_open %}Aller au vote{% else %}Voir les résultats{% endif %}</a></p>
+  <p class="aller-au-vote"><a href="#voter">{% if voting_open %}Aller au vote{% elif status == "scheduled" %}Ouverture du vote{% else %}Voir les résultats{% endif %}</a></p>
 
   {# Folded when the first paragraph is in the top box, open otherwise. #}
   <section class="block prose">
@@ -182,6 +182,8 @@
     <h2>Voter</h2>
     {% if voting_open %}
       {% include "_ballot.html" %}
+    {% elif status == "scheduled" %}
+      <p class="closed-note">Le vote ouvrira le {{ law.opens_at | french_datetime }}.</p>
     {% else %}
       <h3>Résultats</h3>
       {% include "_results_bars.html" %}
