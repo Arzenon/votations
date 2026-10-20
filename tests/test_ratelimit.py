@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from types import SimpleNamespace
 
+import pytest
 from markupsafe import escape
 
 from app import ratelimit
@@ -98,6 +99,42 @@ def test_the_real_client_address_still_separates_voters(client, open_law, monkey
     )
     assert first.status_code == 303
     assert other.status_code == 303, "a genuinely different address gets its own budget"
+
+
+def test_one_ipv6_connection_cannot_vote_from_a_fresh_address_each_time(
+    client, open_law, monkeypatch
+):
+    """Addresses of the same /64 share one budget."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "vote_rate_limit", 1, raising=False)
+    monkeypatch.setattr(settings, "trusted_proxy_hops", 1, raising=False)
+
+    codes = [
+        client.post(
+            f"/loi/{open_law.slug}/vote",
+            data={"choice": "for"},
+            headers={"X-Forwarded-For": f"2001:db8:1:2::{i}"},
+            follow_redirects=False,
+        ).status_code
+        for i in (1, 2)
+    ]
+    assert codes == [303, 429]
+
+
+@pytest.mark.parametrize(
+    ("address", "key"),
+    [
+        ("203.0.113.7", "203.0.113.7"),
+        ("::ffff:203.0.113.7", "203.0.113.7"),
+        ("2001:db8:1:2:aaaa::1", "2001:db8:1:2::/64"),
+        ("2001:db8:1:3::1", "2001:db8:1:3::/64"),
+        ("pas-une-adresse", "pas-une-adresse"),
+    ],
+)
+def test_the_key_is_one_connection(monkeypatch, address, key):
+    monkeypatch.setattr(get_settings(), "trusted_proxy_hops", 1, raising=False)
+    request = SimpleNamespace(headers={"x-forwarded-for": address}, client=None)
+    assert ratelimit.client_key(request) == key
 
 
 def test_without_a_declared_proxy_the_header_is_ignored(client, open_law, monkeypatch):

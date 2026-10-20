@@ -346,6 +346,14 @@ rien tourné.
   docker compose -f docker-compose.prod.yml logs --tail=50 assemblee-refresh
   ```
 
+- **Avec une adresse IPv6 (enregistrement AAAA), vérifier que Docker la gère.**
+  Réglé par défaut, Docker fait passer les connexions IPv6 par `docker-proxy`,
+  et Caddy voit alors l'adresse de sa passerelle pour tous les visiteurs IPv6 :
+  ils partagent une seule limite de votes (`VOTE_RATE_LIMIT`) et se font refuser
+  en masse. Activez IPv6 pour les réseaux Docker (documentation Docker « Use
+  IPv6 networking »), ou ne publiez pas d'enregistrement AAAA. L'application
+  compte une adresse IPv6 par bloc /64, celui d'une connexion.
+
 - **Ne pas rallumer les journaux d'accès.** Ils sont désactivés des deux côtés
   (`--no-access-log`, Caddy en `level ERROR`) parce qu'ils associeraient une
   adresse IP à l'horodatage d'un vote — exactement le lien que la charte promet
