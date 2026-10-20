@@ -8,12 +8,11 @@ matter, not a technical one. See CLAUDE.md, Authentication.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from fastapi import Request, Response
 
 
-@runtime_checkable
 class AuthProvider(Protocol):
     """What the app needs from an authentication backend."""
 
