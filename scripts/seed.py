@@ -179,7 +179,7 @@ def _seed_votes(db, law: Law, counts: dict[str, int]) -> None:
     n = 0
     for choice, count in counts.items():
         for _ in range(count):
-            # Hashed like the real provider does.
+            # Same shape as a stored token: 64 hex characters.
             token = hashlib.sha256(f"{law.slug}-{n}".encode()).hexdigest()
             created = window_start + timedelta(seconds=rng.random() * span)
             db.add(

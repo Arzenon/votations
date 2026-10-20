@@ -8,35 +8,35 @@ matter, not a technical one. See CLAUDE.md, Authentication.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from fastapi import Request, Response
 
 
-@runtime_checkable
 class AuthProvider(Protocol):
     """What the app needs from an authentication backend."""
 
-    # Label of the login button.
-    login_label: str
-    # When False, no login button is shown at all.
-    login_enabled: bool
-
-    def get_voter_token(self, request: Request, response: Response) -> str:
-        """Return a stable anonymous token for this voter, creating it if needed.
+    def get_voter_token(
+        self, request: Request, response: Response, law_id: int, *, form_token: str = ""
+    ) -> str:
+        """Return this voter's anonymous token for this law, creating it if needed.
 
         Only used to enforce one vote per law; must not be linkable to an
-        identity. ``response`` is used to set the cookie. Only call when
-        actually voting.
+        identity, nor across laws. ``response`` is used to set the cookie. Only
+        call when actually voting. ``form_token`` is the ballot form's
+        `ballot_token`, used by a voter who has none yet.
         """
         ...
 
-    def peek_voter_token(self, request: Request) -> str | None:
-        """The existing token, or None. Never creates one (for read-only pages)."""
+    def ballot_token(self, request: Request) -> str:
+        """A value for the ballot form, so a form posted twice counts once.
+
+        Empty when the visitor already has a token. Never stores anything.
+        """
         ...
 
-    def login_url(self) -> str:
-        """Target of the login button."""
+    def peek_voter_token(self, request: Request, law_id: int) -> str | None:
+        """The existing token, or None. Never creates one (for read-only pages)."""
         ...
 
 

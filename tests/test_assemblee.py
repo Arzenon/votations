@@ -432,3 +432,90 @@ def test_propagation_writes_no_entry_in_the_public_history(db_session):
     db_session.refresh(law)
     assert law.an_vote_for == 291, "the vote count arrived"
     assert db_session.query(LawRevision).filter_by(law_id=law.id).count() == 0
+
+
+# --- Attaching the scrutins ---------------------------------------------------
+
+
+def _record(uid: str = "DLR5L17NSCRUT", refs: tuple[str, ...] = ("VTA1",)):
+    return assemblee.PromulgatedLaw(
+        dossier_uid=uid,
+        legislature="17",
+        title="Loi scrutée",
+        law_code="2026-77",
+        procedure="Projet de loi ordinaire",
+        promulgated_on=date(2026, 6, 24),
+        jo_date=None,
+        jo_number=None,
+        nor=None,
+        legifrance_url=None,
+        dossier_url="",
+        vote_refs=list(refs),
+    )
+
+
+def _two_nights(db_session, monkeypatch, second_night) -> ImportedLaw:
+    """Import once with the scrutin readable, then with ``second_night`` as fetch_votes."""
+    from scripts import refresh_assemblee
+    from tests.conftest import _NoCloseSession
+    from tests.test_opendata import _scrutin
+
+    monkeypatch.setattr(refresh_assemblee, "SessionLocal", lambda: _NoCloseSession(db_session))
+    monkeypatch.setattr(refresh_assemblee, "fetch_promulgated_laws", lambda: [_record()])
+    monkeypatch.setattr(refresh_assemblee, "fetch_votes", lambda wanted: {"VTA1": _scrutin("VTA1")})
+    assert refresh_assemblee.main() == 0
+    monkeypatch.setattr(refresh_assemblee, "fetch_votes", second_night)
+    assert refresh_assemblee.main() == 0
+
+    db_session.expire_all()
+    return db_session.query(ImportedLaw).filter_by(dossier_uid="DLR5L17NSCRUT").one()
+
+
+def test_a_failed_scrutins_download_keeps_the_counts_already_published(db_session, monkeypatch):
+    """A day without the scrutins export doesn't wipe yesterday's counts."""
+    from scripts import refresh_assemblee
+
+    def unreachable(wanted):
+        raise refresh_assemblee.ScrutinsFetchError("hors ligne")
+
+    staged = _two_nights(db_session, monkeypatch, unreachable)
+    assert (staged.an_vote_for, staged.an_vote_checked) == (300, True)
+
+
+def test_a_scrutin_missing_from_one_export_keeps_its_counts(db_session, monkeypatch):
+    """One unreadable or absent member doesn't wipe that law's counts either."""
+    staged = _two_nights(db_session, monkeypatch, lambda wanted: {})
+    assert (staged.an_vote_for, staged.an_vote_checked) == (300, True)
+
+
+def test_a_final_scrutin_missing_from_one_export_does_not_bring_back_an_earlier_reading(
+    db_session, monkeypatch
+):
+    """Without the final adoption, the first reading's count must not replace it."""
+    from scripts import refresh_assemblee
+    from tests.conftest import _NoCloseSession
+    from tests.test_opendata import _scrutin
+
+    readings = {"V1": _scrutin("V1", pour=100), "V2": _scrutin("V2", pour=357)}
+    monkeypatch.setattr(refresh_assemblee, "SessionLocal", lambda: _NoCloseSession(db_session))
+    monkeypatch.setattr(
+        refresh_assemblee, "fetch_promulgated_laws", lambda: [_record(refs=("V1", "V2"))]
+    )
+    for night in (readings, {"V1": readings["V1"]}):
+        monkeypatch.setattr(refresh_assemblee, "fetch_votes", lambda wanted, night=night: night)
+        assert refresh_assemblee.main() == 0
+
+    db_session.expire_all()
+    staged = db_session.query(ImportedLaw).filter_by(dossier_uid="DLR5L17NSCRUT").one()
+    assert (staged.an_vote_for, staged.an_vote_checked) == (357, True)
+
+
+def test_an_unreadable_scrutin_is_not_reported_as_no_scrutin(monkeypatch):
+    """A referenced vote missing from the export leaves the question open."""
+    from scripts import refresh_assemblee
+
+    monkeypatch.setattr(refresh_assemblee, "fetch_votes", lambda wanted: {})
+    record = _record()
+    refresh_assemblee._attach_votes([record])
+    assert record.an_vote_checked is False
+    assert record.an_vote_for is None

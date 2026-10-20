@@ -118,6 +118,10 @@ expect 404 "$SITE/sante"
 expect 308 "http://localhost:$HTTP_PORT/"
 expect 301 "https://www.localhost:$HTTPS_PORT/"
 expect 401 "$SITE/admin"
+# A POST from the site passes the origin check (then 404: the base is empty),
+# which needs the app to see https behind Caddy. Another site's is refused.
+expect 404 -X POST -H "Origin: $SITE" -d choice=for "$SITE/loi/inconnue/vote"
+expect 403 -X POST -H "Origin: https://ailleurs.example" -d choice=for "$SITE/loi/inconnue/vote"
 
 headers=$(curl -ksSI "$SITE/")
 for header in content-security-policy strict-transport-security x-frame-options; do

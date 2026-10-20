@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Modification - {{ law.title }} - Votations Françaises{% endblock %}
+{% block description %}Détail d'une modification de la présentation de « {{ law.title }} » après sa publication.{% endblock %}
+{% block content %}
+<article class="law">
+  <p class="breadcrumb"><a href="/loi/{{ law.slug }}/resultats#historique">← Retour à l'historique des modifications</a></p>
+  <h1>Modification - {{ law.title }}</h1>
+  <div class="revision">
+    <p class="revision-head">
+      <span class="revision-field">{{ rev.field | field_label }}</span>
+      <span class="meta">{{ rev.changed_at | french_datetime }}</span>
+    </p>
+    {% include "_revision_change.html" %}
+  </div>
+</article>
+{% endblock %}

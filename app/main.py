@@ -24,13 +24,15 @@ from app.templating import STATIC_DIR, templates
 
 log = get_logger("app")
 
-# Everything is indexable except the admin and the exports (large, useless to
-# crawlers). See also `app.seo.votation_dataset`.
+# Everything is indexable except the admin, the exports (large, useless to
+# crawlers) and the revision pages (each can cost seconds to compute). See also
+# `app.seo.votation_dataset`.
 ROBOTS_TXT = """\
 User-agent: *
 Disallow: /admin
 Disallow: /loi/*/export.csv
 Disallow: /loi/*/export.json
+Disallow: /loi/*/modifications/
 Allow: /
 """
 

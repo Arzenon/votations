@@ -84,7 +84,14 @@ tests/
 Le code de vote ne dépend que de l'interface `AuthProvider`
 (`app/auth/base.py`). Le seul fournisseur actuel, `AnonymousProvider`, dépose un
 jeton aléatoire dans un cookie signé au moment du vote (jamais à la simple
-lecture) et n'en stocke que le hash. Aucun bouton de connexion n'est affiché.
+lecture) et n'en stocke qu'une empreinte différente pour chaque loi : ces
+empreintes ne permettent pas de regrouper les votes d'un même navigateur (la base
+garde en revanche l'heure de chaque vote et un numéro de ligne). Aucun bouton de
+connexion n'est affiché.
+
+Avant un premier vote, le formulaire porte un jeton signé, qui ne devient celui
+du votant que si le bulletin arrive sans cookie : un formulaire envoyé deux fois
+(double clic sans JavaScript) ne compte alors qu'une voix.
 
 FranceConnect n'est pas accessible à ce projet pour des raisons juridiques (voir
 `CLAUDE.md`).
@@ -136,8 +143,9 @@ Réglages : `ANTHROPIC_API_KEY`, `AI_MODEL`, `AI_EFFORT`, `AI_MAX_INPUT_TOKENS`,
 - **Administration** : HTTP Basic, comparaison à temps constant, blocage après
   `ADMIN_RATE_LIMIT` échecs. Identifiants en ASCII uniquement.
 - **Liens** : seuls `http` et `https` sont acceptés, à la saisie et à l'affichage.
-- **Historique public** : toute modification d'une loi publiée est enregistrée et
-  affichée sur la page de résultats.
+- **Historique public** : dès sa première publication, toute modification d'une
+  loi est enregistrée (même dépubliée entre-temps) et affichée sur la page de
+  résultats.
 - **Suppression** : une votation s'archive (réversible). La suppression
   définitive se fait depuis les archives.
 - **En-têtes** : CSP stricte (`script-src 'self'`, rien en ligne), `nosniff`,

@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.crud import results
 from app.models import Law, Vote, VoteChoice
 
 
@@ -32,9 +31,6 @@ def cast_vote(
     """
     if not law.is_open():
         raise VotingClosed(law.slug)
-
-    # Invalidate the cached tally before writing, since the caller commits.
-    results.forget(law.id)
 
     # DO NOTHING rather than DO UPDATE so we can read the previous choice below.
     # A returned id means this is the first ballot.

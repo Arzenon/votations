@@ -6,7 +6,7 @@ import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from alembic import command
 from app.db import Base, include_object
@@ -75,6 +75,125 @@ def test_counting_profiled_votes_can_use_that_index(engine):
     )
     assert "votes.demographics_recorded" in compiled
     assert "is true" not in compiled.lower(), compiled
+
+
+def test_stored_voter_tokens_become_per_law_without_losing_ballots(engine):
+    """7b1e4c9d2a60 turns the shared hash into the value the app now looks up."""
+    import hashlib
+
+    from sqlalchemy import delete, select
+    from sqlalchemy.orm import Session
+
+    from app.auth.anonymous import law_token
+    from app.models import Law, Vote
+
+    raw = "jeton-de-test"
+    shared = hashlib.sha256(raw.encode()).hexdigest()
+    config = alembic_config(TEST_DATABASE_URL)
+    # The tables are the same at that revision, so the models can fill them.
+    command.downgrade(config, "5e8b2d47a1c9")
+    try:
+        with Session(engine) as db:
+            laws = [Law(slug=f"migration-{n}", title="L", published=True) for n in "ab"]
+            db.add_all(laws)
+            db.flush()
+            db.add_all(Vote(law_id=law.id, voter_token=shared, choice="for") for law in laws)
+            db.commit()
+            law_ids = [law.id for law in laws]
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            stored = dict(
+                db.execute(
+                    select(Vote.law_id, Vote.voter_token).where(Vote.law_id.in_(law_ids))
+                ).all()
+            )
+        assert stored == {law_id: law_token(raw, law_id) for law_id in law_ids}
+    finally:
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            db.execute(delete(Law).where(Law.slug.like("migration-%")))
+            db.commit()
+
+
+def test_the_old_shared_hash_does_not_stay_in_the_table_files(engine):
+    """a3d9f6c1e872 rewrites `votes`, so the row versions holding it are gone."""
+    config = alembic_config(TEST_DATABASE_URL)
+    filenode = text("SELECT pg_relation_filenode('votes')")
+    command.downgrade(config, "7b1e4c9d2a60")
+    try:
+        with engine.connect() as conn:
+            before = conn.scalar(filenode)
+        command.upgrade(config, "head")
+        with engine.connect() as conn:
+            assert conn.scalar(filenode) != before, "votes was not rewritten"
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_the_old_shared_hash_does_not_stay_in_the_planner_statistics(engine):
+    """ANALYZE copies sample voter_token values into pg_statistic, which
+    rewriting `votes` leaves alone."""
+    import hashlib
+
+    from sqlalchemy import delete
+    from sqlalchemy.orm import Session
+
+    from app.models import Law, Vote
+
+    shared = hashlib.sha256(b"jeton-de-test").hexdigest()
+    stats = text(
+        "SELECT coalesce(most_common_vals::text, '') || coalesce(histogram_bounds::text, '')"
+        " FROM pg_stats WHERE tablename = 'votes' AND attname = 'voter_token'"
+    )
+    config = alembic_config(TEST_DATABASE_URL)
+    command.downgrade(config, "5e8b2d47a1c9")
+    try:
+        with Session(engine) as db:
+            laws = [Law(slug=f"migration-{n}", title="L", published=True) for n in "ab"]
+            db.add_all(laws)
+            db.flush()
+            db.add_all(Vote(law_id=law.id, voter_token=shared, choice="for") for law in laws)
+            db.commit()
+            db.execute(text("ANALYZE votes"))
+            db.commit()
+            assert shared in (db.scalar(stats) or ""), "the setup should put it in the stats"
+            before = db.scalar(text("SELECT pg_relation_filenode('pg_statistic')"))
+        command.upgrade(config, "head")
+        with engine.connect() as conn:
+            assert shared not in (conn.scalar(stats) or "")
+            # Rewritten too, or the replaced statistics stay in its file.
+            assert conn.scalar(text("SELECT pg_relation_filenode('pg_statistic')")) != before
+    finally:
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            db.execute(delete(Law).where(Law.slug.like("migration-%")))
+            db.commit()
+
+
+def test_the_per_law_token_migration_refuses_to_downgrade_over_votes(engine):
+    """Upgrading again would hash the stored tokens twice, so votes block the downgrade."""
+    from sqlalchemy import delete
+    from sqlalchemy.orm import Session
+
+    from app.models import Law, Vote
+
+    config = alembic_config(TEST_DATABASE_URL)
+    with Session(engine) as db:
+        law = Law(slug="migration-garde", title="L", published=True)
+        db.add(law)
+        db.flush()
+        db.add(Vote(law_id=law.id, voter_token="t" * 64, choice="for"))
+        db.commit()
+    try:
+        with pytest.raises(RuntimeError, match="irréversible"):
+            command.downgrade(config, "5e8b2d47a1c9")
+        with Session(engine) as db:
+            assert db.scalar(text("SELECT voter_token FROM votes")) == "t" * 64
+    finally:
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            db.execute(delete(Law).where(Law.slug == "migration-garde"))
+            db.commit()
 
 
 def test_a_dossier_cannot_claim_two_votations(engine):

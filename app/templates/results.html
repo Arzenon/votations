@@ -216,32 +216,7 @@
           <span class="revision-field">{{ rev.field | field_label }}</span>
           <span class="meta">{{ rev.changed_at | french_datetime }}</span>
         </p>
-        {% if change.short %}
-        {# Short values (flag, dates): shown as before/after. #}
-        <p class="revision-swap">
-          <del>{{ change.old or "(vide)" }}</del>
-          <span aria-hidden="true">→</span>
-          <ins>{{ change.new or "(vide)" }}</ins>
-        </p>
-        {% elif change.rewritten %}
-        {# Mostly rewritten (see `REWRITE_SHARE`): both versions in full. #}
-        <p class="meta revision-note">Bloc réécrit : les deux versions sont données entières.</p>
-        <div class="revision-rewrite">
-          <p class="revision-before"><del>{{ change.old or "(vide)" }}</del></p>
-          <p class="revision-after"><ins>{{ change.new or "(vide)" }}</ins></p>
-        </div>
-        {% else %}
-        {# <del> and <ins> so screen readers announce the changes, not just colour. #}
-        <p class="revision-diff">
-          {%- for seg in change.segments -%}
-            {%- if seg.kind == "added" %}<ins>{{ seg.text }}</ins>
-            {%- elif seg.kind == "removed" %}<del>{{ seg.text }}</del>
-            {%- elif seg.kind == "elided" %}<span class="diff-elided"
-              >… {{ seg.words }} mots inchangés …</span>
-            {%- else %}{{ seg.text }}{% endif -%}
-          {%- endfor -%}
-        </p>
-        {% endif %}
+        {% include "_revision_change.html" %}
       </li>
       {% endfor %}
     </ol>

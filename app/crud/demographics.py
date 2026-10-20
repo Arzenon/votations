@@ -36,6 +36,7 @@ from app.models import (
     Law,
     Vote,
     VoteChoice,
+    clean_profile,
 )
 
 
@@ -69,15 +70,6 @@ def _requested(age_bracket: str | None, sexe: str | None, region: str | None) ->
     return [(dim, cat) for dim, cat in candidates.items() if cat and cat in VALID_CATEGORIES[dim]]
 
 
-def _known(categories: dict[str, str] | None) -> dict[str, str]:
-    """Drop unknown (dimension, category) pairs."""
-    return {
-        dimension: category
-        for dimension, category in (categories or {}).items()
-        if dimension in VALID_CATEGORIES and category in VALID_CATEGORIES[dimension]
-    }
-
-
 def record(
     db: Session,
     *,
@@ -104,7 +96,7 @@ def record(
             vote=vote,
             choice=choice,
             previous_choice=previous_choice,
-            categories=_known(previous_categories),
+            categories=clean_profile(previous_categories),
         )
 
     provided = _requested(age_bracket, sexe, region)
@@ -322,8 +314,17 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
         )
         .values(published_count=DemographicTally.count, published_at=now)
     )
-    law.demographics_snapshot_at = now
-    law.demographics_snapshot_profiles = profiled
+    # updated_at is set to itself: the snapshot isn't an edit, and the column
+    # feeds the sitemap's lastmod.
+    db.execute(
+        update(Law)
+        .where(Law.id == law.id)
+        .values(
+            demographics_snapshot_at=now,
+            demographics_snapshot_profiles=profiled,
+            updated_at=Law.updated_at,
+        )
+    )
     return True
 
 

@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import get_settings
 from app.debates import Speech
@@ -208,9 +208,46 @@ def _refuse_if_oversized(
         )
 
 
+def _ask[T: BaseModel](
+    client: Any, output_type: type[T], *, system: str, messages: list[MessageParam]
+) -> T:
+    """One structured request, read as ``output_type``. Raises AiDraftError.
+
+    `messages.create` rather than `messages.parse`, which validates the JSON
+    first and so reports a cut-off or refused answer as a validation error.
+    """
+    from anthropic import transform_schema
+
+    settings = get_settings()
+    try:
+        response = client.messages.create(
+            model=settings.ai_model,
+            max_tokens=16000,
+            system=system,
+            messages=messages,
+            output_config={
+                "effort": settings.ai_effort,
+                "format": {"type": "json_schema", "schema": transform_schema(output_type)},
+            },
+        )
+    except Exception as exc:
+        raise AiDraftError(str(exc)) from exc
+
+    if response.stop_reason == "max_tokens":
+        raise AiDraftError("réponse tronquée (max_tokens)")
+    if response.stop_reason == "model_context_window_exceeded":
+        raise AiDraftError("réponse tronquée : fenêtre de contexte du modèle atteinte")
+    if response.stop_reason == "refusal":
+        raise AiDraftError("refus du modèle")
+    text = next((block.text for block in response.content if block.type == "text"), "")
+    try:
+        return output_type.model_validate_json(text)
+    except ValidationError as exc:
+        raise AiDraftError("réponse illisible du modèle") from exc
+
+
 def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
     """Draft the two factual blocks for this law. Raises AiDraftError on failure."""
-    settings = get_settings()
     client = build_client() if client is None else client
 
     if not law.articles:
@@ -218,23 +255,7 @@ def generate_draft(law: LawText, *, client: Any | None = None) -> LawDraft:
 
     messages: list[MessageParam] = [{"role": "user", "content": _user_prompt(law)}]
     _refuse_if_oversized(client, system=SYSTEM_PROMPT, messages=messages, what="texte")
-
-    try:
-        response = client.messages.parse(
-            model=settings.ai_model,
-            max_tokens=16000,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-            output_config={"effort": settings.ai_effort},
-            output_format=LawDraft,
-        )
-    except Exception as exc:
-        raise AiDraftError(str(exc)) from exc
-
-    draft = response.parsed_output
-    if draft is None:
-        raise AiDraftError("réponse illisible du modèle")
-    return draft
+    return _ask(client, LawDraft, system=SYSTEM_PROMPT, messages=messages)
 
 
 # --- Argument selection ------------------------------------------------------
@@ -421,21 +442,7 @@ def select_arguments(
         client, system=ARGUMENTS_SYSTEM_PROMPT, messages=messages, what="corpus de séance"
     )
 
-    try:
-        response = client.messages.parse(
-            model=settings.ai_model,
-            max_tokens=16000,
-            system=ARGUMENTS_SYSTEM_PROMPT,
-            messages=messages,
-            output_config={"effort": settings.ai_effort},
-            output_format=ArgumentSelection,
-        )
-    except Exception as exc:
-        raise AiDraftError(str(exc)) from exc
-
-    selection = response.parsed_output
-    if selection is None:
-        raise AiDraftError("réponse illisible du modèle")
+    selection = _ask(client, ArgumentSelection, system=ARGUMENTS_SYSTEM_PROMPT, messages=messages)
 
     by_id = {s.speech_id: s for s in pool}
     result = SelectedArguments(notes=notes, sujet_debat=(selection.sujet_debat or "").strip())

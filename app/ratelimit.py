@@ -8,6 +8,7 @@ multiplied.
 
 from __future__ import annotations
 
+import ipaddress
 import threading
 import time
 from collections import deque
@@ -55,8 +56,24 @@ def client_key(request: Request) -> str:
             if chain:
                 # hops=1: the last entry, added by our proxy.
                 index = max(0, len(chain) - hops)
-                return chain[index]
-    return request.client.host if request.client else "inconnu"
+                return _per_connection(chain[index])
+    return _per_connection(request.client.host) if request.client else "inconnu"
+
+
+def _per_connection(address: str) -> str:
+    """An IPv6 address as its /64, the block one connection usually gets.
+
+    Otherwise a single home could use a fresh address for every vote.
+    """
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if isinstance(ip, ipaddress.IPv4Address):
+        return address
+    if ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.ip_network((ip, 64), strict=False))
 
 
 def too_many(request: Request, *, limit: int, window_seconds: int, bucket: str = "vote") -> bool:

@@ -28,6 +28,7 @@ from app.labels import french_date, french_datetime
 from app.models import (
     SEARCH_VECTOR_QUERY_SQL,
     STATUS_CLOSED,
+    STATUS_IGNORED,
     STATUS_IMPORTED,
     STATUS_OPEN,
     STATUS_SCHEDULED,
@@ -307,12 +308,21 @@ def _as_text(value) -> str:
     return str(value)
 
 
+def records_changes(db: Session, law: Law) -> bool:
+    """Whether edits go to the public history: from the first publication on.
+
+    Unpublishing doesn't stop it, so a text can't be changed out of sight and
+    republished. The unpublication itself is a revision, hence the count.
+    """
+    return law.published or count_revisions(db, law.id) > 0
+
+
 def update(db: Session, law: Law, **fields) -> Law:
-    """Apply an edit, logging changes if the law is already published.
+    """Apply an edit, logging changes once the law has been published.
 
     Draft edits aren't logged: nobody has voted on a draft.
     """
-    record = law.published
+    record = records_changes(db, law)
     changed_at = utcnow()
     for key, value in fields.items():
         before = getattr(law, key, None)
@@ -384,6 +394,13 @@ def revisions(
     return Page(rows=rows, total=total, number=number, count=pages)
 
 
+def get_revision(db: Session, law_id: int, revision_id: int) -> LawRevision | None:
+    """One recorded change, only if it belongs to this law."""
+    return db.scalar(
+        select(LawRevision).where(LawRevision.id == revision_id, LawRevision.law_id == law_id)
+    )
+
+
 def count_revisions(db: Session, law_id: int) -> int:
     return (
         db.scalar(select(func.count()).select_from(LawRevision).where(LawRevision.law_id == law_id))
@@ -411,7 +428,15 @@ def restore(db: Session, law: Law) -> Law:
 
 
 def purge(db: Session, law: Law) -> None:
-    """Permanently delete a law and its votes. Only offered for archived laws."""
+    """Permanently delete a law and its votes. Only offered for archived laws.
+
+    Its dossier goes back among the ignored ones, where it can be voted on
+    again: left "importée" without a law, the admin offers it no action.
+    """
+    staged = db.scalar(select(ImportedLaw).where(ImportedLaw.law_id == law.id))
+    if staged is not None:
+        staged.status = STATUS_IGNORED
+        staged.law_id = None
     db.delete(law)
     db.commit()
 

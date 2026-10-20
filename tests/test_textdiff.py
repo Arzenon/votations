@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+
 from app import textdiff
+from app.models import LawRevision
 from app.textdiff import field_change
 from tests.helpers import make_law
 
@@ -168,3 +171,101 @@ def test_the_thresholds_are_the_ones_the_module_declares():
         "a collapsed run must be longer than the context kept around it, or the "
         "marker would replace less text than it stands for"
     )
+
+
+# --- Large changes --------------------------------------------------------------
+
+
+def _long_text(words: int) -> str:
+    return " ".join(f"mot{i % 97} de la loi" for i in range(words // 4))
+
+
+def test_a_small_edit_in_a_long_field_is_still_diffed_inline():
+    """Only the changed region counts towards the inline limit."""
+    old = _long_text(8000)
+    new = old.replace("mot50 de", "mot50 modifié de", 1)
+    change = field_change(old, new)
+    assert change.deferred is False
+    assert _text(change.segments, "added").strip() == "modifié"
+
+
+def _edited_at_both_ends(text: str) -> str:
+    words = text.split(" ")
+    words[1], words[-2] = "DÉBUT", "FIN"
+    return " ".join(words)
+
+
+def test_a_change_spread_over_a_long_field_is_left_to_its_own_page():
+    """Edits at both ends of a long field aren't diffed on the results page."""
+    old = _long_text(8000)
+    new = _edited_at_both_ends(old)
+    assert field_change(old, new).deferred is True
+
+    full = textdiff.full_change(old, new)
+    assert full.deferred is False
+    assert [seg.text for seg in full.segments if seg.kind == "added"] == ["DÉBUT", "FIN"]
+    assert [seg.text for seg in full.segments if seg.kind == "removed"] == ["de", "la"]
+
+
+def test_a_large_changed_region_still_rebuilds_both_versions():
+    """Above FINE_DIFF_TOKENS the coarser tokens keep every character."""
+    old = " ".join(f"mot{i}\n\n" if i % 50 == 0 else f"mot{i}" for i in range(900))
+    words = old.split(" ")
+    for i in range(1, len(words) - 1, 30):
+        words[i] = "changé"
+    new = " ".join(words)
+    segments = textdiff.diff(old, new)
+    assert segments is not None
+    assert not [s for s in segments if s.kind == "elided"], "runs too short to collapse"
+    assert _rebuilt(segments) == (old, new)
+
+
+def test_a_whitespace_change_in_a_large_region_marks_only_the_whitespace():
+    """A paragraph break added among coarse tokens doesn't mark the next word."""
+    # Distinct words: a repeating text can be aligned one period off.
+    old = " ".join(f"mot{i}" for i in range(1200))
+    words = old.split(" ")
+    words[1], words[-2] = "DÉBUT", "FIN"
+    words[500] = "\n\n" + words[500]
+    new = " ".join(words)
+    segments = textdiff.diff(old, new)
+    # Only the space that became a paragraph break is marked, not the words around it.
+    assert [seg.text for seg in segments if seg.kind == "added"] == ["DÉBUT", " \n\n", "FIN"]
+    assert [seg.text for seg in segments if seg.kind == "removed"] == ["mot1", " ", "mot1198"]
+
+
+def test_the_results_page_links_a_large_change_to_its_own_page(client, db_session):
+    old = _long_text(8000)
+    law = _law_with_revision(db_session, old, _edited_at_both_ends(old))
+    body = client.get(f"/loi/{law.slug}/resultats").text
+    link = re.search(r'href="(/loi/loi-diff/modifications/\d+)"', body)
+    assert link, "the full diff stays reachable"
+
+    page = client.get(link.group(1))
+    assert page.status_code == 200
+    assert "DÉBUT</ins>" in page.text and "FIN</ins>" in page.text
+    assert "Ce que dit la loi" in page.text
+
+
+def test_a_revision_page_only_shows_that_law_s_revisions(client, db_session):
+    law = _law_with_revision(db_session, "Texte initial parfaitement ordinaire.", "Autre texte.")
+    revision_id = db_session.query(LawRevision).filter_by(law_id=law.id).one().id
+    other = make_law(db_session, slug="loi-voisine", title="Loi voisine")
+    assert client.get(f"/loi/{other.slug}/modifications/{revision_id}").status_code == 404
+    assert client.get(f"/loi/{law.slug}/modifications/{revision_id}").status_code == 200
+
+
+def test_a_revision_id_that_cannot_exist_is_a_404_not_an_error(client, db_session):
+    law = make_law(db_session, slug="loi-ids")
+    for odd in ("99999999999999999999", "abc", "-1", "1e3", "١٢", "0", "007"):
+        assert client.get(f"/loi/{law.slug}/modifications/{odd}").status_code == 404, odd
+
+
+def test_the_results_page_diffs_each_revision_once():
+    """Revisions never change: the page reuses the diff instead of recomputing it."""
+    from app.templating import templates
+
+    diff_for_page = templates.env.globals["field_change"]
+    old, new = "Le chat dort ici. " * 10, "Le chien dort ici. " * 10
+    assert diff_for_page(old, new) is diff_for_page(old, new)
+    assert diff_for_page(old, new) == field_change(old, new)

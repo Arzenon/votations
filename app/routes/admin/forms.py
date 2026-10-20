@@ -7,12 +7,13 @@ values raise `InvalidFormValue`, shown as a 400 page naming the field.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 from fastapi import Depends, Form
 from sqlalchemy import String
 
 from app.config import display_zone
+from app.db import as_utc
 from app.models import Law
 from app.security import is_safe_url, safe_url
 
@@ -88,9 +89,7 @@ def dt_local(value: datetime | None) -> str:
     """Format a datetime for the form's local-time field."""
     if not value:
         return ""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(display_zone()).strftime("%Y-%m-%dT%H:%M")
+    return as_utc(value).astimezone(display_zone()).strftime("%Y-%m-%dT%H:%M")
 
 
 @dataclass

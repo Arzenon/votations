@@ -157,6 +157,33 @@ ouvre, et demande un `with op.get_context().autocommit_block():`. C'est une
 décision à prendre au moment d'écrire la migration, pas après l'avoir appliquée :
 `SELECT count(*) FROM votes` dit dans lequel des deux cas vous êtes.
 
+### Les migrations irréversibles
+
+La migration `7b1e4c9d2a60` (une empreinte du jeton de vote différente pour
+chaque loi) ne s'annule pas. Une fois appliquée :
+
+- une version antérieure du code ne démarre plus : son `alembic upgrade head` ne
+  connaît pas cette migration. Ne relancez donc pas le job `Deploy` d'une
+  exécution antérieure. Si `deploy.sh` revient de lui-même à la version
+  précédente, elle ne démarrera pas non plus : restaurez le dump qu'il vient de
+  prendre (`backup.sh restore`) ou redéployez la nouvelle version. Ne contournez
+  pas l'erreur (en marquant la base à une révision antérieure, par exemple) :
+  l'ancien code ne retrouverait plus les bulletins déjà déposés, et chacun
+  pourrait revoter sur les votations ouvertes ;
+- `alembic downgrade` refuse de passer tant que la table `votes` n'est pas vide :
+  la rejouer ensuite hacherait les jetons une seconde fois ;
+- les dumps antérieurs, dont celui que `deploy.sh` prend juste avant, gardent
+  l'ancienne empreinte, commune à toutes les lois. Avec l'un d'eux et la base
+  actuelle, on peut regrouper les votes d'un même navigateur, y compris ceux à
+  venir. Une fois la nouvelle version validée, supprimez-les (volume `backups`
+  et copies hors de la machine) sans attendre leur expiration ;
+- dans la base elle-même, la migration suivante (`a3d9f6c1e872`) réécrit la
+  table `votes` (`VACUUM FULL`), sans quoi les anciennes versions des lignes y
+  resteraient lisibles, ainsi que les statistiques du planificateur
+  (`pg_statistic`), qui en gardaient des valeurs d'exemple. Le journal de PostgreSQL (WAL) peut en garder une copie
+  jusqu'à ce que ses fichiers soient réécrits par l'activité suivante, ce qui
+  peut prendre du temps sur un site qui écrit peu.
+
 ## Sauvegardes
 
 Les lois importées se reconstruisent en relançant l'import. **Les votes ne se
@@ -238,11 +265,11 @@ docker compose -f docker-compose.prod.yml exec app python -m scripts.content imp
 > d'échouer en silence.
 
 L'import est **idempotent** : une loi dont le slug existe déjà est ignorée, pas
-fusionnée. `--replace` demande l'inverse — que le fichier fasse autorité — et
-**refuse de toucher une loi publiée** : la remplacer réécrirait le texte sur
-lequel des gens ont voté sans rien inscrire à l'historique public, ce qui rendrait
-fausse la page de résultats. Une loi publiée se modifie depuis `/admin`, où le
-changement est enregistré et affiché.
+fusionnée. `--replace` demande l'inverse (que le fichier fasse autorité) et
+**refuse de toucher une loi qui a été publiée**, même dépubliée depuis : la
+remplacer réécrirait le texte sur lequel des gens ont pu voter sans rien inscrire
+à l'historique public, ce qui rendrait fausse la page de résultats. Une telle loi
+se modifie depuis `/admin`, où le changement est enregistré et affiché.
 
 Ce que l'export **ne contient pas**, et pourquoi :
 
@@ -324,6 +351,14 @@ rien tourné.
   ```bash
   docker compose -f docker-compose.prod.yml logs --tail=50 assemblee-refresh
   ```
+
+- **Avec une adresse IPv6 (enregistrement AAAA), vérifier que Docker la gère.**
+  Réglé par défaut, Docker fait passer les connexions IPv6 par `docker-proxy`,
+  et Caddy voit alors l'adresse de sa passerelle pour tous les visiteurs IPv6 :
+  ils partagent une seule limite de votes (`VOTE_RATE_LIMIT`) et se font refuser
+  en masse. Activez IPv6 pour les réseaux Docker (documentation Docker « Use
+  IPv6 networking »), ou ne publiez pas d'enregistrement AAAA. L'application
+  compte une adresse IPv6 par bloc /64, celui d'une connexion.
 
 - **Ne pas rallumer les journaux d'accès.** Ils sont désactivés des deux côtés
   (`--no-access-log`, Caddy en `level ERROR`) parce qu'ils associeraient une

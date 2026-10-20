@@ -51,6 +51,18 @@ def test_a_voter_still_sees_their_own_vote_afterwards(client, open_law):
     assert 'value="against"' in page.text.split("Modifier mon vote")[0]
 
 
+def test_one_browser_leaves_unrelated_tokens_on_two_laws(client, open_law, db_session):
+    """The stored tokens can't be matched to group a browser's votes across laws."""
+    other = make_law(db_session, slug="loi-autre", title="Loi autre")
+    for law in (open_law, other):
+        client.post(f"/loi/{law.slug}/vote", data={"choice": "for"})
+    tokens = {vote.law_id: vote.voter_token for vote in db_session.query(Vote)}
+    assert len(tokens) == 2
+    assert tokens[open_law.id] != tokens[other.id]
+    # Still the same voter on each law.
+    assert "Modifier mon vote" in client.get(f"/loi/{other.slug}").text
+
+
 # --- Demographic counters follow a changed vote -------------------------------
 
 
@@ -803,6 +815,17 @@ def test_the_snapshot_does_move_once_enough_profiles_arrive(open_law, db_session
     age = breakdown(db_session, open_law, "age")
     assert age.shown is True
     assert {r.category for r in age.rows} == {"35-49", "65+"}
+
+
+def test_a_snapshot_is_not_an_edit_of_the_law(open_law, db_session):
+    """It doesn't move `updated_at`, which feeds the sitemap's lastmod."""
+    edited = datetime(2026, 1, 1, tzinfo=UTC)
+    open_law.updated_at = edited
+    db_session.commit()
+    _first_snapshot(db_session, open_law, age_bracket="35-49")
+    db_session.refresh(open_law)
+    assert open_law.demographics_snapshot_at is not None
+    assert open_law.updated_at == edited
 
 
 def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_session, client):

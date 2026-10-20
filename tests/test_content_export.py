@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from app.crud import laws as laws_crud
 from app.crud.laws import TRACKED_FIELDS
 from app.models import ImportedLaw, Law, LawRevision, Vote
 from scripts.content import (
@@ -362,6 +363,16 @@ def test_replacing_a_published_law_is_refused(db_session):
     assert db_session.query(Law).filter_by(slug="loi-en-cours").one().title == (
         "Titre modifié depuis"
     ), "nothing was written before the refusal"
+
+
+def test_replacing_a_law_unpublished_since_is_refused(db_session):
+    """Unpublishing first doesn't open a way around the public history."""
+    law = make_law(db_session, slug="loi-depubliee", title="Titre publié")
+    laws_crud.update(db_session, law, published=False)
+    document = build_document(db_session)
+
+    with pytest.raises(PublishedLawError, match="loi-depubliee"):
+        import_content_from(db_session, document, replace=True)
 
 
 def test_replacing_an_unpublished_draft_is_fine(db_session):

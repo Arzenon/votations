@@ -112,8 +112,26 @@ def test_a_vote_on_part_of_a_text_is_not_a_vote_on_the_text():
     """A vote on part of a text doesn't count, even "l'ensemble de la première partie"."""
     from app.scrutins import final_vote
 
-    partielle = _scrutin("p", objet="l'ensemble de la première partie du projet de loi de finances")
-    assert final_vote(["p"], {"p": partielle}) is None
+    for objet in (
+        "l'ensemble de la première partie du projet de loi de finances",
+        "la quatrième partie du projet de loi de financement de la sécurité sociale",
+    ):
+        assert final_vote(["p"], {"p": _scrutin("p", objet=objet)}) is None, objet
+
+
+def test_the_word_partie_alone_does_not_make_a_partial_vote():
+    """Votes mentioning "partie législative", "parties" or "contrepartie" are on the whole text."""
+    from app.scrutins import final_vote
+
+    for objet in (
+        "l'ensemble du projet de loi ratifiant l'ordonnance relative à la partie "
+        "législative du code de la commande publique",
+        "l'ensemble du projet de loi autorisant la ratification de la convention entre "
+        "les États parties",
+        "l'ensemble de la proposition de loi garantissant une contrepartie aux aidants",
+    ):
+        chosen = final_vote(["t"], {"t": _scrutin("t", objet=objet)})
+        assert chosen is not None, objet
 
 
 def test_a_law_with_no_recorded_vote_resolves_to_nothing():

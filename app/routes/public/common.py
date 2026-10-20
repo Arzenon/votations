@@ -7,7 +7,8 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.crud import laws as laws_crud
-from app.models import STATUS_OPEN, Law
+from app.db import as_utc, utcnow
+from app.models import STATUS_CLOSED, STATUS_OPEN, Law
 from app.templating import templates
 
 # For pages that are identical for every visitor (the default is no-store).
@@ -23,19 +24,33 @@ CLOSED_RESULTS_MAX_AGE = 300
 OPEN_RESULTS_CACHE = {"Cache-Control": f"public, max-age={OPEN_RESULTS_MAX_AGE}"}
 CLOSED_RESULTS_CACHE = {"Cache-Control": f"public, max-age={CLOSED_RESULTS_MAX_AGE}"}
 
+# Memo of an open vote's figures: enough to spare the database a recount per
+# visitor when a law is shared, short enough to stay a live count.
+OPEN_RESULTS_MEMO_AGE = 5.0
+
 
 def results_cache(status: str) -> dict[str, str]:
     """Cache header for a results page, depending on the vote's status."""
     return OPEN_RESULTS_CACHE if status == STATUS_OPEN else CLOSED_RESULTS_CACHE
 
 
-def results_memo_age(status: str) -> float:
-    """Max age of memoised figures for this page. Zero while the vote is open.
+# A count this close to the closing may still miss the last ballots, which
+# commit just after it (and the count itself can take a second).
+_CLOSING_MARGIN_SECONDS = 5.0
 
-    The browser cache is per visitor, but the memo is shared: using it on an
-    open vote could hide a voter's own ballot from them.
+
+def results_memo_age(law: Law) -> float:
+    """Max age of memoised figures for this law's pages.
+
+    Ballots don't clear the memo, so once the vote is closed only a count taken
+    after the closing is reused: one from its last seconds would pass for the
+    final result. Any other status keeps the short memo: a vote moved back to
+    "scheduled" may have taken ballots a minute ago.
     """
-    return 0.0 if status == STATUS_OPEN else float(CLOSED_RESULTS_MAX_AGE)
+    if law.status() == STATUS_CLOSED and law.closes_at is not None:
+        since_closing = (utcnow() - as_utc(law.closes_at)).total_seconds()
+        return min(float(CLOSED_RESULTS_MAX_AGE), since_closing - _CLOSING_MARGIN_SECONDS)
+    return OPEN_RESULTS_MEMO_AGE
 
 
 def visible(db: Session, slug: str) -> Law | None:

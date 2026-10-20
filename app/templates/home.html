@@ -33,6 +33,7 @@
           {# The date the list is sorted by. Missing for laws entered by hand. #}
           {% if law.promulgated_on %}<span>Promulguée le {{ law.promulgated_on | french_date }}</span>{% endif %}
           {# french_date converts from UTC to Paris time. #}
+          {% if state == "scheduled" and law.opens_at %}<span>Ouverture le {{ law.opens_at | french_date }}</span>{% endif %}
           {% if law.closes_at %}<span>Clôture le {{ law.closes_at | french_date }}</span>{% endif %}
           {# Shown but never used for sorting. #}
           {% set votes = tallies[law.id].total %}

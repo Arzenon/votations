@@ -1,6 +1,6 @@
 """Authentication routes: /connexion explains the provisional mechanism and its limits.
 
-No login button is shown, since `login_enabled` is False.
+There is nothing to log in to: the voter token is issued when voting.
 """
 
 from fastapi import APIRouter, Request

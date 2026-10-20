@@ -32,6 +32,13 @@ def admin_headers() -> dict[str, str]:
     }
 
 
+def fake_message(answer, stop_reason="end_turn"):
+    """What `client.messages.create` returns: a stop reason and a JSON text block."""
+    text = answer.model_dump_json() if answer is not None else ""
+    block = type("B", (), {"type": "text", "text": text})()
+    return type("R", (), {"stop_reason": stop_reason, "content": [block]})()
+
+
 def make_law(db: Session, **kwargs) -> Law:
     """A published, open law. Any field can be overridden."""
     defaults = {

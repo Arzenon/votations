@@ -235,6 +235,21 @@ def test_a_fallback_key_is_offered_to_the_verifier_oldest_first():
     assert settings.signing_keys[-1] == "la-nouvelle"
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("la-vieille", ["la-vieille"]),
+        ("la-vieille, l-avant-vieille", ["la-vieille", "l-avant-vieille"]),
+        ('["la-vieille", "l-avant-vieille"]', ["la-vieille", "l-avant-vieille"]),
+        ("", []),
+    ],
+)
+def test_fallback_keys_are_read_from_the_environment(monkeypatch, value, expected):
+    """As DEPLOY.md writes them, not only as Python arguments."""
+    monkeypatch.setenv("SECRET_KEY_FALLBACKS", value)
+    assert Settings().secret_key_fallbacks == expected
+
+
 def test_no_fallback_is_the_ordinary_case():
     assert Settings(secret_key="seule").signing_keys == ["seule"]
 

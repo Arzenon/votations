@@ -51,6 +51,34 @@ def test_editing_an_unpublished_draft_is_not_recorded(client, db_session):
     assert db_session.query(LawRevision).filter_by(law_id=law.id).count() == 0
 
 
+def test_unpublishing_does_not_stop_the_public_history(client, db_session):
+    """Unpublish, edit, republish: the edit and the republication are recorded."""
+    law = make_law(db_session, slug="loi-depubliee", summary_text="Texte voté.")
+    form = {
+        "title": law.title,
+        "opens_at": dt_local(law.opens_at),
+        "closes_at": dt_local(law.closes_at),
+    }
+    for data in (
+        {**form, "summary_text": "Texte voté."},
+        {**form, "summary_text": "Texte réécrit."},
+        {**form, "summary_text": "Texte réécrit.", "published": "1"},
+    ):
+        client.post(
+            f"/admin/lois/{law.id}", headers=admin_headers(), data=data, follow_redirects=False
+        )
+
+    recorded = [
+        (r.field, r.old_value, r.new_value)
+        for r in db_session.query(LawRevision).filter_by(law_id=law.id).order_by(LawRevision.id)
+    ]
+    assert recorded == [
+        ("published", "oui", "non"),
+        ("summary_text", "Texte voté.", "Texte réécrit."),
+        ("published", "non", "oui"),
+    ]
+
+
 def test_an_unmodified_law_says_so_plainly(client, open_law):
     page = client.get(f"/loi/{open_law.slug}/resultats")
     assert "Aucune modification depuis la publication" in page.text
@@ -144,6 +172,34 @@ def test_purging_an_archived_law_removes_it_for_good(client, db_session, open_la
     )
     assert r.status_code == 303
     assert db_session.get(Law, law_id) is None
+
+
+def test_purging_a_law_sets_its_dossier_aside_where_it_can_be_voted_on_again(
+    client, db_session, open_law
+):
+    """Its dossier isn't left "importée" without a law, where no action is offered."""
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid="DUID-PURGE",
+        title="Dossier",
+        law_code="2026-9",
+        promulgated_on=date(2026, 6, 1),
+        status="importe",
+        law_id=open_law.id,
+    )
+    db_session.add(item)
+    db_session.commit()
+    client.post(
+        f"/admin/lois/{open_law.id}/archiver", headers=admin_headers(), follow_redirects=False
+    )
+    client.post(
+        f"/admin/lois/{open_law.id}/supprimer", headers=admin_headers(), follow_redirects=False
+    )
+
+    db_session.refresh(item)
+    assert (item.status, item.law_id) == ("ignore", None)
+    listing = client.get("/admin/imports?statut=tous", headers=admin_headers()).text
+    assert f"/admin/lois/nouvelle?import_id={item.id}" in listing
 
 
 # --- Preview of an unpublished law ---------------------------------------------

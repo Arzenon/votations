@@ -54,10 +54,9 @@ _COUNT_COLUMNS = (
 # and would otherwise scan all their votes on every visit.
 #
 # The window never exceeds the page's own Cache-Control max-age, which is why
-# the durations live next to the headers in `app.routes.public.common`. The
-# results page of an open votation isn't memoised: a voter must see their own
-# ballot right away. A ballot calls `forget` for its law, so the window only
-# matters for other changes (admin edits, a second replica).
+# the durations live next to the headers in `app.routes.public.common`.
+# Ballots don't invalidate it: on a busy vote that would mean a recount on
+# every view. A new ballot shows up once the window has passed.
 
 
 class _Memo[T]:
@@ -88,10 +87,6 @@ class _Memo[T]:
                 self._entries.clear()
             self._entries[law_id] = (time.monotonic(), value)
 
-    def forget(self, law_id: int) -> None:
-        with self._lock:
-            self._entries.pop(law_id, None)
-
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
@@ -99,12 +94,6 @@ class _Memo[T]:
 
 _TALLIES: _Memo[Tally] = _Memo()
 _EVOLUTIONS: _Memo[list[EvolutionBucket]] = _Memo()
-
-
-def forget(law_id: int) -> None:
-    """Drop the memoised figures for a law that just changed."""
-    _TALLIES.forget(law_id)
-    _EVOLUTIONS.forget(law_id)
 
 
 def reset_cache() -> None:
@@ -320,7 +309,7 @@ def evolution(
     if total is None:
         total = count_votes(db, law_id)
     if total < settings.min_bucket_volume:
-        # Memoised too: crossing the threshold takes a ballot, which forgets it.
+        # Memoised too, like any other value.
         _EVOLUTIONS.put(law_id, [])
         return []
 

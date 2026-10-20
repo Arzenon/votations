@@ -22,8 +22,8 @@ from app.scrutins import ScrutinsFetchError, fetch_votes, final_vote
 def _attach_votes(records: list[PromulgatedLaw]) -> str:
     """Add the Assemblée vote counts. Returns a summary line.
 
-    Best effort: if the scrutins download fails, the import goes on without
-    counts.
+    Best effort: a law whose scrutins couldn't be read stays unchecked, and
+    `imports_crud.sync` then keeps its stored counts.
     """
     wanted = {ref for record in records for ref in record.vote_refs}
     if not wanted:
@@ -34,14 +34,19 @@ def _attach_votes(records: list[PromulgatedLaw]) -> str:
     try:
         index = fetch_votes(wanted)
     except ScrutinsFetchError as exc:
-        # an_vote_checked stays False.
-        return f"scrutins non récupérés ({exc}) - décomptes laissés vides"
+        return f"scrutins non récupérés ({exc}) - décomptes conservés"
 
     resolved = 0
     for record in records:
-        record.an_vote_checked = True
         vote = final_vote(record.vote_refs, index)
-        if vote is None:
+        # Trusted only if every vote after the one found was read: a missing
+        # later one may be the real final adoption (or, with none found, the
+        # only public scrutin). Unchecked, the stored counts are kept.
+        found_at = max(
+            (i for i, ref in enumerate(record.vote_refs) if vote and ref == vote.uid), default=-1
+        )
+        record.an_vote_checked = all(ref in index for ref in record.vote_refs[found_at + 1 :])
+        if vote is None or not record.an_vote_checked:
             continue
         record.an_vote_for = vote.pour
         record.an_vote_against = vote.contre

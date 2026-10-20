@@ -188,17 +188,16 @@ def fetch_reference(get: Getter | None = None) -> InseeData:
         try:
             year, obs = _latest(_observations(_payload(get, url)), lambda o: True)
             population = _value(obs[0])
-        except InseeFetchError:
-            continue  # skip a missing region
+        except InseeFetchError as exc:
+            # A missing région would inflate every other share once normalised,
+            # and replace the cached values. The job retries later instead.
+            raise InseeFetchError(f"région {code} indisponible : {exc}") from exc
         region_year = max(region_year, year)
         if code in OVERSEAS_CODES:
             overseas += population
         else:
             region_pop[REGION_CODE_TO_LABEL[code]] = population
-    if overseas:
-        region_pop[OVERSEAS_LABEL] = overseas
-    if not region_pop:
-        raise InseeFetchError("no region data")
+    region_pop[OVERSEAS_LABEL] = overseas
 
     grand_total = sum(region_pop.values())
     region = {label: round(100 * pop / grand_total, 1) for label, pop in region_pop.items()}
@@ -214,8 +213,15 @@ def _age_reference(obs: list[dict]) -> tuple[int, dict[str, float]]:
     # Exclude the total row ("_T") and rows without an AGE ("").
     year, rows = _latest(obs, lambda o: _dimension(o, "AGE") not in ("_T", ""))
     by_age = {_dimension(o, "AGE"): _value(o) for o in rows}
+    # A missing group would shrink its bracket and replace the cached values,
+    # as a missing région would (see `fetch_reference`).
+    missing = sorted(
+        {code for comp in AGE_BRACKET_COMPOSITION.values() for code, _ in comp} - set(by_age)
+    )
+    if missing:
+        raise InseeFetchError(f"tranches d'âge absentes : {', '.join(missing)}")
     brackets = {
-        label: sum(by_age.get(code, 0.0) * w for code, w in comp)
+        label: sum(by_age[code] * w for code, w in comp)
         for label, comp in AGE_BRACKET_COMPOSITION.items()
     }
     adult_total = sum(brackets.values())

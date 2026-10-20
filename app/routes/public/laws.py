@@ -6,6 +6,8 @@ HTMX swaps in after a vote.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
@@ -26,10 +28,12 @@ from app.models import (
     DIMENSION_SEXE,
     STATUS_CLOSED,
     STATUS_OPEN,
+    STATUS_SCHEDULED,
     Law,
     VoteChoice,
 )
 from app.routes.public.common import (
+    PUBLIC_PAGE_CACHE,
     not_found,
     results_cache,
     results_memo_age,
@@ -37,6 +41,7 @@ from app.routes.public.common import (
     visible,
 )
 from app.templating import templates
+from app.textdiff import full_change
 
 router = APIRouter()
 
@@ -123,7 +128,7 @@ def _refused_ballot(
 
     Keeps their existing vote and their profile selection (``chosen``).
     """
-    voter_token = auth.peek_voter_token(request)
+    voter_token = auth.peek_voter_token(request, law.id)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
     return _ballot_fragment(
         request,
@@ -145,14 +150,15 @@ def law_page_context(
     existing_choice: str | None = None,
     demographics_locked: bool = False,
     preview: bool = False,
+    ballot_token: str = "",
 ) -> dict:
     """Context for ``law.html``. Also used by the admin preview."""
     # The tally is only shown once the vote is closed. law.id is None for the
     # preview of an unsaved law.
-    if status == STATUS_OPEN:
+    if status in (STATUS_OPEN, STATUS_SCHEDULED):
         tally = None
     elif law.id:
-        tally = results_crud.tally(db, law.id)
+        tally = results_crud.tally(db, law.id, max_age=results_memo_age(law))
     else:
         tally = results_crud.empty_tally()
 
@@ -166,6 +172,8 @@ def law_page_context(
         "demographics_locked": demographics_locked,
         "revision_count": laws_crud.count_revisions(db, law.id) if law.id else 0,
         "preview": preview,
+        # Per visitor, like the rest of this page (never cached).
+        "ballot_token": ballot_token,
         # For the "Signaler une erreur" link; hidden if empty.
         "contact_email": get_settings().legal_contact_email,
         "jsonld": seo.graph(
@@ -188,7 +196,7 @@ def law_page(
         return not_found(request)
 
     # Don't create a token for readers, only for voters.
-    voter_token = auth.peek_voter_token(request)
+    voter_token = auth.peek_voter_token(request, law.id)
     existing = votes_crud.get_existing(db, law.id, voter_token) if voter_token else None
 
     return templates.TemplateResponse(
@@ -201,6 +209,7 @@ def law_page(
             status=law.status(),
             existing_choice=existing.choice if existing else None,
             demographics_locked=bool(existing and existing.demographics_recorded),
+            ballot_token=auth.ballot_token(request),
         ),
     )
 
@@ -214,6 +223,8 @@ def cast_vote(
     age_bracket: str = Form(""),
     sexe: str = Form(""),
     region: str = Form(""),
+    # See `AuthProvider.ballot_token`.
+    jeton: str = Form(""),
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
@@ -255,7 +266,7 @@ def cast_vote(
         return too_many_votes(request)
 
     carrier = Response()  # collects cookies set by the helpers
-    voter_token = auth.get_voter_token(request, carrier)
+    voter_token = auth.get_voter_token(request, carrier, law.id, form_token=jeton)
 
     # One transaction until the commit below. `cast_vote` locks the vote row
     # meanwhile, so concurrent ballots can't count the profile twice.
@@ -318,9 +329,9 @@ def results_page(
     law = visible(db, slug)
     if law is None:
         return not_found(request)
-    # Memoised only once the vote is closed (see `results_memo_age`).
+    # Memoised briefly while open, longer once closed (see `results_memo_age`).
     status = law.status()
-    memo_age = results_memo_age(status)
+    memo_age = results_memo_age(law)
     tally = results_crud.tally(db, law.id, max_age=memo_age)
     evolution = results_crud.evolution(db, law.id, total=tally.total, max_age=memo_age)
     # Pass with_profile to save a query (see `_live_categories`).
@@ -367,4 +378,32 @@ def results_page(
             "revision_pages": history.count,
         },
         headers=results_cache(status),
+    )
+
+
+# A stored id: digits without a leading zero, within Postgres's integer. Anything
+# else is a 404.
+_REVISION_ID = re.compile(r"[1-9][0-9]{0,8}")
+
+
+@router.get("/loi/{slug}/modifications/{revision_id}", response_class=HTMLResponse)
+def revision_page(request: Request, slug: str, revision_id: str, db: Session = Depends(get_db)):
+    """One change in full, for those too large to diff on the results page."""
+    law = visible(db, slug)
+    revision = (
+        laws_crud.get_revision(db, law.id, int(revision_id))
+        if law is not None and _REVISION_ID.fullmatch(revision_id)
+        else None
+    )
+    if law is None or revision is None:
+        return not_found(request)
+    return templates.TemplateResponse(
+        request,
+        "revision.html",
+        {
+            "law": law,
+            "rev": revision,
+            "change": full_change(revision.old_value, revision.new_value),
+        },
+        headers=PUBLIC_PAGE_CACHE,
     )

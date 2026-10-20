@@ -10,6 +10,7 @@ from app.models.demographics import (
     INSEE_REFERENCE,
     VALID_CATEGORIES,
     DemographicTally,
+    clean_profile,
 )
 from app.models.imported_law import (
     DRAFT_FAILED,
@@ -63,4 +64,5 @@ __all__ = [
     "LawRevision",
     "Vote",
     "VoteChoice",
+    "clean_profile",
 ]

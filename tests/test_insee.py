@@ -29,6 +29,11 @@ QUINQUENNAL = {
     "Y55T59": 200.0,
     "Y60T64": 200.0,  # 50-64 = 600
     "Y65T69": 100.0,
+    "Y70T74": 0.0,
+    "Y75T79": 0.0,
+    "Y80T84": 0.0,
+    "Y85T89": 0.0,
+    "Y90T94": 0.0,
     "Y_GE95": 100.0,  # 65+ = 200
     "Y_LT5": 999.0,
     "Y5T9": 999.0,
@@ -59,7 +64,9 @@ def _fake_payload(url: str) -> dict:
     if level == "REG" and code in insee.REGION_CODE_TO_LABEL:
         pop = 200.0 if code == "11" else 100.0  # IDF bigger
         return {"observations": [_obs({"SEX": "_T", "AGE": "_T"}, pop)]}
-    return {"observations": []}  # overseas / unknown → skipped
+    if level == "REG" and code in insee.OVERSEAS_CODES:
+        return {"observations": [_obs({"SEX": "_T", "AGE": "_T"}, 10.0)]}
+    return {"observations": []}
 
 
 def test_fetch_reference_parses_sex_age_and_region():
@@ -76,10 +83,11 @@ def test_fetch_reference_parses_sex_age_and_region():
     assert age["18-24"] == round(100 * 700 / adults, 1)
 
     region = data.values["region"]
-    assert len(region) == len(insee.REGION_CODE_TO_LABEL)  # 13 metro, no overseas
+    assert len(region) == len(insee.REGION_CODE_TO_LABEL) + 1  # 13 metro + overseas
     assert abs(sum(region.values()) - 100.0) < 1.0  # normalised (rounding)
     assert max(region, key=region.get) == "Île-de-France"  # the bigger one
-    assert "Outre-mer" not in region
+    # The five overseas codes, summed: 50 out of 200 + 12 * 100 + 50.
+    assert region["Outre-mer"] == round(100 * 50 / 1450, 1)
 
 
 def test_fetch_reference_raises_on_unreachable():
@@ -91,6 +99,35 @@ def test_fetch_reference_raises_on_unreachable():
         raise AssertionError("expected InseeFetchError")
     except insee.InseeFetchError:
         pass
+
+
+def test_a_missing_region_fails_the_refresh_instead_of_skewing_the_others():
+    """Normalising without a région (here Île-de-France, then Mayotte) inflates the others."""
+    import pytest
+
+    for code in ("11", "06"):
+
+        def without(url: str, code=code) -> bytes:
+            if f"-REG-{code}" in url:
+                raise insee.InseeFetchError("timeout")
+            return fake_get(url)
+
+        with pytest.raises(insee.InseeFetchError, match=f"région {code}"):
+            insee.fetch_reference(get=without)
+
+
+def test_a_missing_age_group_fails_the_refresh_instead_of_skewing_the_brackets():
+    import pytest
+
+    def without(url: str) -> bytes:
+        payload = _fake_payload(url)
+        payload["observations"] = [
+            o for o in payload["observations"] if o["dimensions"]["AGE"] != "Y20T24"
+        ]
+        return json.dumps(payload).encode()
+
+    with pytest.raises(insee.InseeFetchError, match="Y20T24"):
+        insee.fetch_reference(get=without)
 
 
 def _reference(db, dimension):

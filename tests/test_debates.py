@@ -347,6 +347,32 @@ def test_an_unreadable_sitting_is_skipped_not_fatal():
     assert len(fetch_speeches(seances, get=get)) == 1
 
 
+@pytest.mark.parametrize(
+    "odd",
+    [
+        None,  # a document served as `null`
+        dict(REUNION, compteRenduRef={"@attributes": {}}),  # an XML node, not an id
+        dict(REUNION, compteRenduRef="CRSANR5L17S2026O1N999"),  # see the record below
+    ],
+)
+def test_a_sitting_of_an_unexpected_shape_is_skipped_not_fatal(odd):
+    """The other sittings still give their speeches, and the draft keeps its blocks."""
+    good = dict(REUNION, uid="RUANR5L17S2026IDS30540")
+    get = _getter(
+        {
+            "RUANR5L17S2026IDS30539": odd,
+            "CRSANR5L17S2026O1N999": dict(TWO_BILLS, metadonnees="texte brut"),
+            "RUANR5L17S2026IDS30540": good,
+            "CRSANR5L17S2026O1N195": TWO_BILLS,
+        }
+    )
+    seances = [
+        SEANCES[0],
+        {"reunion_ref": "RUANR5L17S2026IDS30540", "odj_ref": "RUANR5L17S2026IDS30539PT2"},
+    ]
+    assert [s.speaker for s in fetch_speeches(seances, get=get)] == ["M. Notre Loi"]
+
+
 def test_a_record_is_downloaded_once_however_many_agenda_items_point_at_it():
     """A record (~600 kB) is downloaded once even if two agenda items point to it."""
     fetched: list[str] = []

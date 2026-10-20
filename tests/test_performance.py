@@ -284,21 +284,49 @@ def test_the_home_page_does_not_recount_inside_its_own_cache_window(
     assert counted == [], f"the page counted the votes again: {counted}"
 
 
-def test_a_ballot_makes_the_home_page_count_that_law_again(client, db_session, open_law):
-    """A ballot invalidates the memo for its law."""
-    assert "Aucun vote" in client.get("/").text
+def test_ballots_on_a_busy_vote_do_not_make_its_results_recount(client, open_law, count_queries):
+    """Within the memo, new ballots don't trigger a recount of the votes."""
+    client.get(f"/loi/{open_law.slug}/resultats")
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
-    assert "1 vote" in client.get("/").text
+    with count_queries() as seen:
+        client.get(f"/loi/{open_law.slug}/resultats")
+    counted = [q for q in seen if "count" in q.lower() and "from votes" in q.lower()]
+    assert counted == [], f"a ballot made the page count again: {counted}"
 
 
-def test_an_open_votation_recounts_its_results_every_time(client, open_law, count_queries):
-    """Results of an open vote aren't memoised."""
+def test_an_open_votation_is_not_recounted_for_every_visitor(client, open_law, count_queries):
+    """A shared law's results page doesn't scan its votes on each view."""
     client.get(f"/loi/{open_law.slug}/resultats")
     with count_queries() as seen:
         client.get(f"/loi/{open_law.slug}/resultats")
-    assert [q for q in seen if "from votes" in q.lower()], (
-        "results of an open vote should be counted live"
-    )
+    touched = [q for q in seen if "from votes" in q.lower()]
+    assert touched == [], f"an open vote was counted again within its memo: {touched}"
+
+
+def test_a_count_from_before_the_closing_is_not_shown_as_the_result(client, db_session, open_law):
+    """A count memoised in the vote's last seconds isn't reused once it closes."""
+    client.get(f"/loi/{open_law.slug}/resultats")  # memoises 0 votes
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    open_law.closes_at = datetime.now(UTC)
+    db_session.commit()
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "Nombre total de votant·e·s : <strong>1</strong>" in page
+
+
+def test_a_rescheduled_votation_does_not_reuse_a_count_from_minutes_ago(
+    client, db_session, open_law
+):
+    """Moved back to "scheduled", a vote may have taken ballots since its last count."""
+    import time
+
+    client.get(f"/loi/{open_law.slug}/resultats")  # memoises 0 votes
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    _, counted = results_crud._TALLIES._entries[open_law.id]
+    results_crud._TALLIES._entries[open_law.id] = (time.monotonic() - 60, counted)
+    open_law.opens_at = datetime.now(UTC) + timedelta(days=1)
+    db_session.commit()
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "Nombre total de votant·e·s : <strong>1</strong>" in page
 
 
 def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, count_queries):
@@ -310,20 +338,34 @@ def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, c
     assert touched == [], f"a closed vote was counted again: {touched}"
 
 
+def test_a_closed_votation_s_law_page_reads_its_tally_from_the_memo(
+    client, closed_law, count_queries
+):
+    """The law page of a closed vote doesn't count its votes on every view."""
+    client.get(f"/loi/{closed_law.slug}")
+    with count_queries() as seen:
+        client.get(f"/loi/{closed_law.slug}")
+    touched = [q for q in seen if "count" in q.lower() and "from votes" in q.lower()]
+    assert touched == [], f"a closed vote was counted again: {touched}"
+
+
 def test_the_memo_window_is_the_one_the_page_promises():
     """The memo duration equals the page's max-age."""
-    from app.models import STATUS_CLOSED, STATUS_OPEN
     from app.routes.public.common import (
         CLOSED_RESULTS_CACHE,
+        OPEN_RESULTS_MAX_AGE,
         PUBLIC_PAGE_CACHE,
         PUBLIC_PAGE_MAX_AGE,
         results_memo_age,
     )
 
+    now = datetime.now(UTC)
+    open_law = Law(published=True, opens_at=now - timedelta(days=1))
+    closed_law = Law(published=True, closes_at=now - timedelta(days=1))
     assert PUBLIC_PAGE_CACHE["Cache-Control"] == f"public, max-age={PUBLIC_PAGE_MAX_AGE}"
-    assert results_memo_age(STATUS_OPEN) == 0.0
+    assert 0 < results_memo_age(open_law) <= OPEN_RESULTS_MAX_AGE
     assert CLOSED_RESULTS_CACHE["Cache-Control"] == (
-        f"public, max-age={results_memo_age(STATUS_CLOSED):.0f}"
+        f"public, max-age={results_memo_age(closed_law):.0f}"
     )
 
 
