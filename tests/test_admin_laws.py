@@ -174,6 +174,34 @@ def test_purging_an_archived_law_removes_it_for_good(client, db_session, open_la
     assert db_session.get(Law, law_id) is None
 
 
+def test_purging_a_law_sets_its_dossier_aside_where_it_can_be_voted_on_again(
+    client, db_session, open_law
+):
+    """Its dossier isn't left "importée" without a law, where no action is offered."""
+    item = ImportedLaw(
+        source="assemblee",
+        dossier_uid="DUID-PURGE",
+        title="Dossier",
+        law_code="2026-9",
+        promulgated_on=date(2026, 6, 1),
+        status="importe",
+        law_id=open_law.id,
+    )
+    db_session.add(item)
+    db_session.commit()
+    client.post(
+        f"/admin/lois/{open_law.id}/archiver", headers=admin_headers(), follow_redirects=False
+    )
+    client.post(
+        f"/admin/lois/{open_law.id}/supprimer", headers=admin_headers(), follow_redirects=False
+    )
+
+    db_session.refresh(item)
+    assert (item.status, item.law_id) == ("ignore", None)
+    listing = client.get("/admin/imports?statut=tous", headers=admin_headers()).text
+    assert f"/admin/lois/nouvelle?import_id={item.id}" in listing
+
+
 # --- Preview of an unpublished law ---------------------------------------------
 
 

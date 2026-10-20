@@ -28,6 +28,7 @@ from app.labels import french_date, french_datetime
 from app.models import (
     SEARCH_VECTOR_QUERY_SQL,
     STATUS_CLOSED,
+    STATUS_IGNORED,
     STATUS_IMPORTED,
     STATUS_OPEN,
     STATUS_SCHEDULED,
@@ -427,7 +428,15 @@ def restore(db: Session, law: Law) -> Law:
 
 
 def purge(db: Session, law: Law) -> None:
-    """Permanently delete a law and its votes. Only offered for archived laws."""
+    """Permanently delete a law and its votes. Only offered for archived laws.
+
+    Its dossier goes back among the ignored ones, where it can be voted on
+    again: left "importée" without a law, the admin offers it no action.
+    """
+    staged = db.scalar(select(ImportedLaw).where(ImportedLaw.law_id == law.id))
+    if staged is not None:
+        staged.status = STATUS_IGNORED
+        staged.law_id = None
     db.delete(law)
     db.commit()
 
