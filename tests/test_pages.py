@@ -4,6 +4,7 @@ import base64
 import re
 
 from app.config import get_settings
+from app.crud import results as results_crud
 from tests.helpers import admin_headers, make_law
 
 
@@ -494,6 +495,8 @@ def test_the_cards_show_participation(client, db_session, open_law):
     """Cards show participation (but aren't sorted by it)."""
     assert "Aucun vote" in client.get("/").text
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    # Ballots don't clear the home page's memo (see `app.crud.results`).
+    results_crud.reset_cache()
     page = client.get("/").text
     assert "1 vote" in page and "1 votes" not in page
 

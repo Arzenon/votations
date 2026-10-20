@@ -7,7 +7,8 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.crud import laws as laws_crud
-from app.models import STATUS_OPEN, Law
+from app.db import as_utc, utcnow
+from app.models import STATUS_CLOSED, STATUS_OPEN, Law
 from app.templating import templates
 
 # For pages that are identical for every visitor (the default is no-store).
@@ -33,13 +34,25 @@ def results_cache(status: str) -> dict[str, str]:
     return OPEN_RESULTS_CACHE if status == STATUS_OPEN else CLOSED_RESULTS_CACHE
 
 
-def results_memo_age(status: str) -> float:
-    """Max age of memoised figures for this page.
+# A count this close to the closing may still miss the last ballots, which
+# commit just after it (and the count itself can take a second).
+_CLOSING_MARGIN_SECONDS = 5.0
 
-    The memo is shared, so on an open vote it could hide a voter's own ballot:
-    `cast_vote` forgets its law's figures once the ballot is committed.
+
+def results_memo_age(law: Law) -> float:
+    """Max age of memoised figures for this law's pages.
+
+    Ballots don't clear the memo, so once the vote is closed only a count taken
+    after the closing is reused: one from its last seconds would pass for the
+    final result.
     """
-    return OPEN_RESULTS_MEMO_AGE if status == STATUS_OPEN else float(CLOSED_RESULTS_MAX_AGE)
+    status = law.status()
+    if status == STATUS_OPEN:
+        return OPEN_RESULTS_MEMO_AGE
+    if status == STATUS_CLOSED and law.closes_at is not None:
+        since_closing = (utcnow() - as_utc(law.closes_at)).total_seconds()
+        return min(float(CLOSED_RESULTS_MAX_AGE), since_closing - _CLOSING_MARGIN_SECONDS)
+    return float(CLOSED_RESULTS_MAX_AGE)
 
 
 def visible(db: Session, slug: str) -> Law | None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 from sqlalchemy import event
@@ -285,11 +284,14 @@ def test_the_home_page_does_not_recount_inside_its_own_cache_window(
     assert counted == [], f"the page counted the votes again: {counted}"
 
 
-def test_a_ballot_makes_the_home_page_count_that_law_again(client, db_session, open_law):
-    """A ballot invalidates the memo for its law."""
-    assert "Aucun vote" in client.get("/").text
+def test_ballots_on_a_busy_vote_do_not_make_its_results_recount(client, open_law, count_queries):
+    """Within the memo, new ballots don't trigger a recount of the votes."""
+    client.get(f"/loi/{open_law.slug}/resultats")
     client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
-    assert "1 vote" in client.get("/").text
+    with count_queries() as seen:
+        client.get(f"/loi/{open_law.slug}/resultats")
+    counted = [q for q in seen if "count" in q.lower() and "from votes" in q.lower()]
+    assert counted == [], f"a ballot made the page count again: {counted}"
 
 
 def test_an_open_votation_is_not_recounted_for_every_visitor(client, open_law, count_queries):
@@ -301,24 +303,12 @@ def test_an_open_votation_is_not_recounted_for_every_visitor(client, open_law, c
     assert touched == [], f"an open vote was counted again within its memo: {touched}"
 
 
-@pytest.mark.parametrize("stored", ["before the commit", "after the last forget"])
-def test_a_voter_sees_their_ballot_on_the_results_page_right_away(client, open_law, stored):
-    """Even if a page counted the votes during the ballot and memoised that count."""
-    real_forget = results_crud.forget
-    seen: list[int] = []
-
-    def forget(law_id: int) -> None:
-        real_forget(law_id)
-        if not seen:
-            # The call before the commit: a reader starts counting here.
-            seen.append(results_crud._TALLIES.version(law_id))
-            if stored == "before the commit":
-                results_crud._TALLIES.put(law_id, results_crud.empty_tally(), seen[0])
-
-    with patch.object(results_crud, "forget", forget):
-        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
-    if stored == "after the last forget":
-        results_crud._TALLIES.put(open_law.id, results_crud.empty_tally(), seen[0])
+def test_a_count_from_before_the_closing_is_not_shown_as_the_result(client, db_session, open_law):
+    """A count memoised in the vote's last seconds isn't reused once it closes."""
+    client.get(f"/loi/{open_law.slug}/resultats")  # memoises 0 votes
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    open_law.closes_at = datetime.now(UTC)
+    db_session.commit()
     page = client.get(f"/loi/{open_law.slug}/resultats").text
     assert "Nombre total de votant·e·s : <strong>1</strong>" in page
 
@@ -334,7 +324,6 @@ def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, c
 
 def test_the_memo_window_is_the_one_the_page_promises():
     """The memo duration equals the page's max-age."""
-    from app.models import STATUS_CLOSED, STATUS_OPEN
     from app.routes.public.common import (
         CLOSED_RESULTS_CACHE,
         OPEN_RESULTS_MAX_AGE,
@@ -343,10 +332,13 @@ def test_the_memo_window_is_the_one_the_page_promises():
         results_memo_age,
     )
 
+    now = datetime.now(UTC)
+    open_law = Law(published=True, opens_at=now - timedelta(days=1))
+    closed_law = Law(published=True, closes_at=now - timedelta(days=1))
     assert PUBLIC_PAGE_CACHE["Cache-Control"] == f"public, max-age={PUBLIC_PAGE_MAX_AGE}"
-    assert 0 < results_memo_age(STATUS_OPEN) <= OPEN_RESULTS_MAX_AGE
+    assert 0 < results_memo_age(open_law) <= OPEN_RESULTS_MAX_AGE
     assert CLOSED_RESULTS_CACHE["Cache-Control"] == (
-        f"public, max-age={results_memo_age(STATUS_CLOSED):.0f}"
+        f"public, max-age={results_memo_age(closed_law):.0f}"
     )
 
 
