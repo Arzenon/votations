@@ -124,8 +124,11 @@ Trouvés en implémentant, pas prévus par la note d'origine :
    toutes on en trouve 94.
 2. **« l'ensemble » ne suffit pas à reconnaître un vote sur le texte entier.** Un
    des trois se libelle « **l'ensemble de** la première partie du projet de loi de
-   finances ». Un filtre sur « l'ensemble » le laisse passer ; le filtre en place
-   écarte tout objet contenant « partie ».
+   finances ». Un filtre sur « l'ensemble » le laisse passer. Le filtre en place
+   écarte « partie » précédée d'un ordinal (« première » à « quatrième ») :
+   « partie » seule attraperait aussi « partie législative du code » ou « États
+   parties ». Sur les 8 894 scrutins de l'export (relevé le 20/10/2026), il en
+   retient 9, tous des votes sur une partie du texte.
 
 #### Ce que l'export ne contient pas
 
