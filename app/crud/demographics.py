@@ -37,6 +37,7 @@ from app.models import (
     Vote,
     VoteChoice,
 )
+from app.profile_cookie import clean_profile
 
 
 def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, delta: int) -> None:
@@ -69,15 +70,6 @@ def _requested(age_bracket: str | None, sexe: str | None, region: str | None) ->
     return [(dim, cat) for dim, cat in candidates.items() if cat and cat in VALID_CATEGORIES[dim]]
 
 
-def _known(categories: dict[str, str] | None) -> dict[str, str]:
-    """Drop unknown (dimension, category) pairs."""
-    return {
-        dimension: category
-        for dimension, category in (categories or {}).items()
-        if dimension in VALID_CATEGORIES and category in VALID_CATEGORIES[dimension]
-    }
-
-
 def record(
     db: Session,
     *,
@@ -104,7 +96,7 @@ def record(
             vote=vote,
             choice=choice,
             previous_choice=previous_choice,
-            categories=_known(previous_categories),
+            categories=clean_profile(previous_categories),
         )
 
     provided = _requested(age_bracket, sexe, region)
