@@ -23,6 +23,10 @@ CLOSED_RESULTS_MAX_AGE = 300
 OPEN_RESULTS_CACHE = {"Cache-Control": f"public, max-age={OPEN_RESULTS_MAX_AGE}"}
 CLOSED_RESULTS_CACHE = {"Cache-Control": f"public, max-age={CLOSED_RESULTS_MAX_AGE}"}
 
+# Memo of an open vote's figures: enough to spare the database a recount per
+# visitor when a law is shared, short enough to stay a live count.
+OPEN_RESULTS_MEMO_AGE = 5.0
+
 
 def results_cache(status: str) -> dict[str, str]:
     """Cache header for a results page, depending on the vote's status."""
@@ -30,12 +34,12 @@ def results_cache(status: str) -> dict[str, str]:
 
 
 def results_memo_age(status: str) -> float:
-    """Max age of memoised figures for this page. Zero while the vote is open.
+    """Max age of memoised figures for this page.
 
-    The browser cache is per visitor, but the memo is shared: using it on an
-    open vote could hide a voter's own ballot from them.
+    The memo is shared, so on an open vote it could hide a voter's own ballot:
+    `cast_vote` forgets its law's figures once the ballot is committed.
     """
-    return 0.0 if status == STATUS_OPEN else float(CLOSED_RESULTS_MAX_AGE)
+    return OPEN_RESULTS_MEMO_AGE if status == STATUS_OPEN else float(CLOSED_RESULTS_MAX_AGE)
 
 
 def visible(db: Session, slug: str) -> Law | None:

@@ -294,6 +294,9 @@ def cast_vote(
             return _refused_ballot(request, db, law, auth, notice=CLOSED_NOTICE, chosen=chosen)
         return RedirectResponse(_back_to(law), status_code=303)
     db.commit()
+    # Again after the commit: a page read meanwhile may have memoised the
+    # figures without this ballot (see `results_memo_age`).
+    results_crud.forget(law.id)
     # Only after the commit, so the cookie never refers to a rolled-back vote.
     profile.remember(carrier, law.id, on_file)
 
@@ -322,7 +325,7 @@ def results_page(
     law = visible(db, slug)
     if law is None:
         return not_found(request)
-    # Memoised only once the vote is closed (see `results_memo_age`).
+    # Memoised briefly while open, longer once closed (see `results_memo_age`).
     status = law.status()
     memo_age = results_memo_age(status)
     tally = results_crud.tally(db, law.id, max_age=memo_age)

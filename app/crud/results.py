@@ -54,10 +54,10 @@ _COUNT_COLUMNS = (
 # and would otherwise scan all their votes on every visit.
 #
 # The window never exceeds the page's own Cache-Control max-age, which is why
-# the durations live next to the headers in `app.routes.public.common`. The
-# results page of an open votation isn't memoised: a voter must see their own
-# ballot right away. A ballot calls `forget` for its law, so the window only
-# matters for other changes (admin edits, a second replica).
+# the durations live next to the headers in `app.routes.public.common`. A
+# ballot calls `forget` for its law, before and after its commit, so a voter
+# sees their own ballot right away and the window only matters for other
+# changes (admin edits, a second replica).
 
 
 class _Memo[T]:

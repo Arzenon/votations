@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import event
@@ -291,14 +292,31 @@ def test_a_ballot_makes_the_home_page_count_that_law_again(client, db_session, o
     assert "1 vote" in client.get("/").text
 
 
-def test_an_open_votation_recounts_its_results_every_time(client, open_law, count_queries):
-    """Results of an open vote aren't memoised."""
+def test_an_open_votation_is_not_recounted_for_every_visitor(client, open_law, count_queries):
+    """A shared law's results page doesn't scan its votes on each view."""
     client.get(f"/loi/{open_law.slug}/resultats")
     with count_queries() as seen:
         client.get(f"/loi/{open_law.slug}/resultats")
-    assert [q for q in seen if "from votes" in q.lower()], (
-        "results of an open vote should be counted live"
-    )
+    touched = [q for q in seen if "from votes" in q.lower()]
+    assert touched == [], f"an open vote was counted again within its memo: {touched}"
+
+
+def test_a_voter_sees_their_ballot_on_the_results_page_right_away(client, open_law):
+    """Even if a page read during the ballot memoised the figures without it."""
+    real_forget = results_crud.forget
+    calls: list[int] = []
+
+    def forget(law_id: int) -> None:
+        real_forget(law_id)
+        if not calls:
+            # The call before the commit, then a read memoising the old tally.
+            results_crud._TALLIES.put(law_id, results_crud.empty_tally())
+        calls.append(law_id)
+
+    with patch.object(results_crud, "forget", forget):
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "Nombre total de votant·e·s : <strong>1</strong>" in page
 
 
 def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, count_queries):
@@ -315,13 +333,14 @@ def test_the_memo_window_is_the_one_the_page_promises():
     from app.models import STATUS_CLOSED, STATUS_OPEN
     from app.routes.public.common import (
         CLOSED_RESULTS_CACHE,
+        OPEN_RESULTS_MAX_AGE,
         PUBLIC_PAGE_CACHE,
         PUBLIC_PAGE_MAX_AGE,
         results_memo_age,
     )
 
     assert PUBLIC_PAGE_CACHE["Cache-Control"] == f"public, max-age={PUBLIC_PAGE_MAX_AGE}"
-    assert results_memo_age(STATUS_OPEN) == 0.0
+    assert 0 < results_memo_age(STATUS_OPEN) <= OPEN_RESULTS_MAX_AGE
     assert CLOSED_RESULTS_CACHE["Cache-Control"] == (
         f"public, max-age={results_memo_age(STATUS_CLOSED):.0f}"
     )
