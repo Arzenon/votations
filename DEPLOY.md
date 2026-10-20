@@ -180,7 +180,8 @@ chaque loi) ne s'annule pas. Une fois appliquée :
 - dans la base elle-même, la migration suivante (`a3d9f6c1e872`) réécrit la
   table `votes` (`VACUUM FULL`), sans quoi les anciennes versions des lignes y
   resteraient lisibles. Le journal de PostgreSQL (WAL) peut en garder une copie
-  jusqu'à son recyclage, quelques heures en général.
+  jusqu'à ce que ses fichiers soient réécrits par l'activité suivante, ce qui
+  peut prendre du temps sur un site qui écrit peu.
 
 ## Sauvegardes
 
