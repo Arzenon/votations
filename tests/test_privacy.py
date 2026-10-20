@@ -817,6 +817,17 @@ def test_the_snapshot_does_move_once_enough_profiles_arrive(open_law, db_session
     assert {r.category for r in age.rows} == {"35-49", "65+"}
 
 
+def test_a_snapshot_is_not_an_edit_of_the_law(open_law, db_session):
+    """It doesn't move `updated_at`, which feeds the sitemap's lastmod."""
+    edited = datetime(2026, 1, 1, tzinfo=UTC)
+    open_law.updated_at = edited
+    db_session.commit()
+    _first_snapshot(db_session, open_law, age_bracket="35-49")
+    db_session.refresh(open_law)
+    assert open_law.demographics_snapshot_at is not None
+    assert open_law.updated_at == edited
+
+
 def test_a_cell_that_moved_by_one_holds_only_its_category_back(open_law, db_session, client):
     """A step copies a category only if each of its cells moved by 0 or a full cell.
 

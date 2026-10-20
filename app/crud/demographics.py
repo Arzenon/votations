@@ -314,8 +314,17 @@ def refresh_snapshot(db: Session, law: Law) -> bool:
         )
         .values(published_count=DemographicTally.count, published_at=now)
     )
-    law.demographics_snapshot_at = now
-    law.demographics_snapshot_profiles = profiled
+    # updated_at is set to itself: the snapshot isn't an edit, and the column
+    # feeds the sitemap's lastmod.
+    db.execute(
+        update(Law)
+        .where(Law.id == law.id)
+        .values(
+            demographics_snapshot_at=now,
+            demographics_snapshot_profiles=profiled,
+            updated_at=Law.updated_at,
+        )
+    )
     return True
 
 
