@@ -84,8 +84,9 @@ tests/
 Le code de vote ne dépend que de l'interface `AuthProvider`
 (`app/auth/base.py`). Le seul fournisseur actuel, `AnonymousProvider`, dépose un
 jeton aléatoire dans un cookie signé au moment du vote (jamais à la simple
-lecture) et n'en stocke qu'une empreinte différente pour chaque loi : la base ne
-permet pas de regrouper les votes d'un même navigateur. Aucun bouton de
+lecture) et n'en stocke qu'une empreinte différente pour chaque loi : ces
+empreintes ne permettent pas de regrouper les votes d'un même navigateur (la base
+garde en revanche l'heure de chaque vote et un numéro de ligne). Aucun bouton de
 connexion n'est affiché.
 
 FranceConnect n'est pas accessible à ce projet pour des raisons juridiques (voir
