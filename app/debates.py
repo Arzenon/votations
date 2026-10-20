@@ -440,13 +440,18 @@ def fetch_speeches(seances: list[dict], get: Getter | None = None) -> list[Speec
                 continue
             subject = _agenda_subject(reunion, odj_ref) if odj_ref else ""
             record = document(cr_ref)
+            # Validated before going into the source URL.
+            legislature = str((record.get("metadonnees") or {}).get("legislature") or "")
+            if not legislature.isdigit():
+                legislature = fallback
+            # No legislature: keep the speeches, without a link.
+            url = SEANCE_URL.format(legislature=legislature, uid=cr_ref) if legislature else ""
+            speeches = speeches_from_record(record, subject=subject, url=url)
         except DebatesFetchError:
             continue
-        # Validated before going into the source URL.
-        legislature = str((record.get("metadonnees") or {}).get("legislature") or "")
-        if not legislature.isdigit():
-            legislature = fallback
-        # No legislature: keep the speeches, without a link.
-        url = SEANCE_URL.format(legislature=legislature, uid=cr_ref) if legislature else ""
-        out.extend(speeches_from_record(record, subject=subject, url=url))
+        except AttributeError, KeyError, TypeError, RecursionError:
+            # Fields can have unexpected types after the XML conversion.
+            log.warning("séance %s ignorée : structure inattendue", reunion_ref)
+            continue
+        out.extend(speeches)
     return out
