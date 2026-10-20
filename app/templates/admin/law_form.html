@@ -193,6 +193,13 @@
     et après. C'est ce qui permet à un lecteur de vérifier que les votes portaient
     bien sur le texte affiché.
   </p>
+  {% elif revision_total %}
+  {# Same rule as `laws_crud.records_changes`. #}
+  <p class="meta">
+    Cette loi a déjà été publiée : <strong>chaque modification enregistrée ici
+    reste inscrite à l'historique public</strong>, même tant qu'elle est
+    dépubliée, et sera affichée à sa republication.
+  </p>
   {% else %}
   <p class="meta">
     Cette loi n'est pas encore publiée : les modifications ne sont pas

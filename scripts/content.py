@@ -27,7 +27,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.crud.laws import moves_final_closing, slugify
+from app.crud.laws import moves_final_closing, records_changes, slugify
 from app.db import SessionLocal, utcnow
 from app.models import ImportedLaw, Law, LawRevision
 
@@ -199,7 +199,7 @@ class ContentFormatError(RuntimeError):
 
 
 class PublishedLawError(RuntimeError):
-    """``--replace`` was asked to overwrite a law that is currently published."""
+    """``--replace`` was asked to overwrite a law that has been published."""
 
 
 class FinalClosingError(RuntimeError):
@@ -234,13 +234,13 @@ def _import_law(db: Session, entry: dict, *, replace: bool) -> str:
     if existing is not None and not replace:
         # Skip, so running twice is harmless.
         return "skipped"
-    if existing is not None and existing.published:
-        # --replace doesn't record revisions, so a published law would change
-        # without trace in its public history. Edit it in /admin instead.
+    if existing is not None and records_changes(db, existing):
+        # --replace doesn't record revisions, so a law that has been published
+        # would change without trace in its public history. Edit it in /admin.
         raise PublishedLawError(
-            f"« {slug} » est publiée : la remplacer réécrirait le texte sur lequel "
-            "des gens ont voté sans l'inscrire à l'historique public. Modifiez-la "
-            "depuis /admin, ou dépubliez-la d'abord."
+            f"« {slug} » a été publiée : la remplacer réécrirait le texte sur lequel "
+            "des gens ont pu voter sans l'inscrire à l'historique public. "
+            "Modifiez-la depuis /admin."
         )
 
     columns = {name: _restore(name, entry.get(name)) for name in LAW_FIELDS}

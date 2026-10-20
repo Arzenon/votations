@@ -138,8 +138,9 @@ Réglages : `ANTHROPIC_API_KEY`, `AI_MODEL`, `AI_EFFORT`, `AI_MAX_INPUT_TOKENS`,
 - **Administration** : HTTP Basic, comparaison à temps constant, blocage après
   `ADMIN_RATE_LIMIT` échecs. Identifiants en ASCII uniquement.
 - **Liens** : seuls `http` et `https` sont acceptés, à la saisie et à l'affichage.
-- **Historique public** : toute modification d'une loi publiée est enregistrée et
-  affichée sur la page de résultats.
+- **Historique public** : dès sa première publication, toute modification d'une
+  loi est enregistrée (même dépubliée entre-temps) et affichée sur la page de
+  résultats.
 - **Suppression** : une votation s'archive (réversible). La suppression
   définitive se fait depuis les archives.
 - **En-têtes** : CSP stricte (`script-src 'self'`, rien en ligne), `nosniff`,

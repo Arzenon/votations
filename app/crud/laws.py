@@ -307,12 +307,21 @@ def _as_text(value) -> str:
     return str(value)
 
 
+def records_changes(db: Session, law: Law) -> bool:
+    """Whether edits go to the public history: from the first publication on.
+
+    Unpublishing doesn't stop it, so a text can't be changed out of sight and
+    republished. The unpublication itself is a revision, hence the count.
+    """
+    return law.published or count_revisions(db, law.id) > 0
+
+
 def update(db: Session, law: Law, **fields) -> Law:
-    """Apply an edit, logging changes if the law is already published.
+    """Apply an edit, logging changes once the law has been published.
 
     Draft edits aren't logged: nobody has voted on a draft.
     """
-    record = law.published
+    record = records_changes(db, law)
     changed_at = utcnow()
     for key, value in fields.items():
         before = getattr(law, key, None)
