@@ -16,12 +16,22 @@ from fastapi import Request, Response
 class AuthProvider(Protocol):
     """What the app needs from an authentication backend."""
 
-    def get_voter_token(self, request: Request, response: Response, law_id: int) -> str:
+    def get_voter_token(
+        self, request: Request, response: Response, law_id: int, *, form_token: str = ""
+    ) -> str:
         """Return this voter's anonymous token for this law, creating it if needed.
 
         Only used to enforce one vote per law; must not be linkable to an
         identity, nor across laws. ``response`` is used to set the cookie. Only
-        call when actually voting.
+        call when actually voting. ``form_token`` is the ballot form's
+        `ballot_token`, used by a voter who has none yet.
+        """
+        ...
+
+    def ballot_token(self, request: Request) -> str:
+        """A value for the ballot form, so a form posted twice counts once.
+
+        Empty when the visitor already has a token. Never stores anything.
         """
         ...
 

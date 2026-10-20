@@ -1,8 +1,8 @@
 """Anonymous auth provider: a random token in a signed cookie.
 
-The token is created on the first vote, not on reading. The database stores a
-hash of it per law, so a leak reveals neither the cookie nor which votes come
-from the same browser. The hash is unkeyed on purpose: the token is 256 random
+The cookie is set on the first vote, not on reading. The database stores a
+hash of the token per law, so a leak reveals neither the cookie nor which votes
+come from the same browser. The hash is unkeyed on purpose: the token is 256 random
 bits, and rotating SECRET_KEY mustn't let everyone vote again.
 """
 
@@ -42,10 +42,24 @@ class AnonymousProvider:
         raw = self._read_cookie(request)
         return law_token(raw, law_id) if raw is not None else None
 
-    def get_voter_token(self, request: Request, response: Response, law_id: int) -> str:
+    def ballot_token(self, request: Request) -> str:
+        """A signed token for the ballot form, or "" if the visitor has a cookie.
+
+        Nothing is stored: it only becomes the voter's token if a ballot
+        arrives with it and without a cookie (see `get_voter_token`).
+        """
+        if self._read_cookie(request) is not None:
+            return ""
+        return self._serializer.dumps(secrets.token_urlsafe(32))
+
+    def get_voter_token(
+        self, request: Request, response: Response, law_id: int, *, form_token: str = ""
+    ) -> str:
         raw = self._read_cookie(request)
         if raw is None:
-            raw = secrets.token_urlsafe(32)
+            # The form's token rather than a fresh one: a form posted twice
+            # (double click without JavaScript) must count as one voter.
+            raw = self._loads(form_token) or secrets.token_urlsafe(32)
             response.set_cookie(
                 COOKIE_NAME,
                 self._serializer.dumps(raw),
@@ -57,7 +71,9 @@ class AnonymousProvider:
         return law_token(raw, law_id)
 
     def _read_cookie(self, request: Request) -> str | None:
-        signed = request.cookies.get(COOKIE_NAME)
+        return self._loads(request.cookies.get(COOKIE_NAME))
+
+    def _loads(self, signed: str | None) -> str | None:
         if not signed:
             return None
         try:

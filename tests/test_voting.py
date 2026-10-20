@@ -235,3 +235,31 @@ def test_a_category_this_site_does_not_know_is_never_echoed_back(client, open_la
 def test_an_untouched_ballot_selects_nothing(client, open_law):
     r = client.get(f"/loi/{open_law.slug}")
     assert " selected>" not in r.text
+
+
+_BALLOT_TOKEN = re.compile(r'name="jeton" value="([^"]+)"')
+
+
+def test_a_first_ballot_posted_twice_counts_once(client, open_law, db_session):
+    """A double click without JavaScript sends the form twice, both without a cookie."""
+    page = client.get(f"/loi/{open_law.slug}").text
+    jeton = _BALLOT_TOKEN.search(page).group(1)
+    assert not client.cookies, "reading the page must not set a cookie"
+
+    for choice in ("for", "against"):
+        client.cookies.clear()  # the second request left before the first answered
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": choice, "jeton": jeton})
+    assert db_session.query(Vote).one().choice == "against"
+
+
+def test_a_voter_with_a_cookie_gets_no_ballot_token(client, open_law):
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    assert not _BALLOT_TOKEN.search(client.get(f"/loi/{open_law.slug}").text)
+
+
+def test_a_forged_ballot_token_is_ignored(client, open_law, db_session):
+    """An unsigned value can't choose the voter's token: a fresh one is drawn."""
+    for _ in range(2):
+        client.cookies.clear()
+        client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for", "jeton": "choisi"})
+    assert db_session.query(Vote).count() == 2

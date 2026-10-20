@@ -150,6 +150,7 @@ def law_page_context(
     existing_choice: str | None = None,
     demographics_locked: bool = False,
     preview: bool = False,
+    ballot_token: str = "",
 ) -> dict:
     """Context for ``law.html``. Also used by the admin preview."""
     # The tally is only shown once the vote is closed. law.id is None for the
@@ -171,6 +172,8 @@ def law_page_context(
         "demographics_locked": demographics_locked,
         "revision_count": laws_crud.count_revisions(db, law.id) if law.id else 0,
         "preview": preview,
+        # Per visitor, like the rest of this page (never cached).
+        "ballot_token": ballot_token,
         # For the "Signaler une erreur" link; hidden if empty.
         "contact_email": get_settings().legal_contact_email,
         "jsonld": seo.graph(
@@ -206,6 +209,7 @@ def law_page(
             status=law.status(),
             existing_choice=existing.choice if existing else None,
             demographics_locked=bool(existing and existing.demographics_recorded),
+            ballot_token=auth.ballot_token(request),
         ),
     )
 
@@ -219,6 +223,8 @@ def cast_vote(
     age_bracket: str = Form(""),
     sexe: str = Form(""),
     region: str = Form(""),
+    # See `AuthProvider.ballot_token`.
+    jeton: str = Form(""),
     db: Session = Depends(get_db),
     auth: AuthProvider = Depends(get_auth_provider),
 ):
@@ -260,7 +266,7 @@ def cast_vote(
         return too_many_votes(request)
 
     carrier = Response()  # collects cookies set by the helpers
-    voter_token = auth.get_voter_token(request, carrier, law.id)
+    voter_token = auth.get_voter_token(request, carrier, law.id, form_token=jeton)
 
     # One transaction until the commit below. `cast_vote` locks the vote row
     # meanwhile, so concurrent ballots can't count the profile twice.

@@ -10,6 +10,8 @@
   {% if law and voting_open %}
   <form action="/loi/{{ law.slug }}/vote" method="post"
         hx-post="/loi/{{ law.slug }}/vote" hx-target="#ballot" hx-swap="outerHTML">
+    {# Only before a first vote: a form posted twice then counts once. #}
+    {% if ballot_token %}<input type="hidden" name="jeton" value="{{ ballot_token }}">{% endif %}
     <fieldset>
       <legend>Votre vote</legend>
       {% for choice in choices %}

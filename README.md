@@ -89,6 +89,10 @@ empreintes ne permettent pas de regrouper les votes d'un même navigateur (la ba
 garde en revanche l'heure de chaque vote et un numéro de ligne). Aucun bouton de
 connexion n'est affiché.
 
+Avant un premier vote, le formulaire porte un jeton signé, qui ne devient celui
+du votant que si le bulletin arrive sans cookie : un formulaire envoyé deux fois
+(double clic sans JavaScript) ne compte alors qu'une voix.
+
 FranceConnect n'est pas accessible à ce projet pour des raisons juridiques (voir
 `CLAUDE.md`).
 
