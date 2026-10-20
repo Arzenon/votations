@@ -3,9 +3,10 @@
 Stored states stay ASCII since they appear in URLs, CSS classes and exports.
 """
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 from app.config import display_zone
+from app.db import as_utc
 from app.models.imported_law import (
     STATUS_IGNORED,
     STATUS_IMPORTED,
@@ -96,8 +97,7 @@ def local_day(value: date) -> date:
     would land on the previous day). A plain date is returned as is.
     """
     if isinstance(value, datetime):
-        aware = value if value.tzinfo else value.replace(tzinfo=UTC)
-        return aware.astimezone(display_zone()).date()
+        return as_utc(value).astimezone(display_zone()).date()
     return value
 
 
@@ -110,5 +110,5 @@ def french_date(value: date) -> str:
 def french_datetime(value: datetime) -> str:
     """e.g. ``20/08/2026 à 19:50 (Europe/Paris)``."""
     zone = display_zone()
-    local = value.astimezone(zone) if value.tzinfo else value.replace(tzinfo=UTC).astimezone(zone)
+    local = as_utc(value).astimezone(zone)
     return f"{local:%d/%m/%Y à %H:%M} ({zone.key})"
