@@ -235,6 +235,8 @@ def _ask[T: BaseModel](
 
     if response.stop_reason == "max_tokens":
         raise AiDraftError("réponse tronquée (max_tokens)")
+    if response.stop_reason == "model_context_window_exceeded":
+        raise AiDraftError("réponse tronquée : fenêtre de contexte du modèle atteinte")
     if response.stop_reason == "refusal":
         raise AiDraftError("refus du modèle")
     text = next((block.text for block in response.content if block.type == "text"), "")

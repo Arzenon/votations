@@ -251,7 +251,11 @@ def test_api_failure_becomes_a_readable_error():
 
 def test_a_cut_off_or_refused_answer_says_so():
     """The stop reason is read before the JSON, which a cut-off answer lacks."""
-    for stop_reason, said in (("max_tokens", "tronquée"), ("refusal", "refus du modèle")):
+    for stop_reason, said in (
+        ("max_tokens", "tronquée"),
+        ("model_context_window_exceeded", "fenêtre de contexte"),
+        ("refusal", "refus du modèle"),
+    ):
         client = _FakeClient(draft=None, stop_reason=stop_reason)
         with pytest.raises(AiDraftError, match=said):
             generate_draft(LAW, client=client)
