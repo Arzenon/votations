@@ -44,15 +44,13 @@ def results_memo_age(law: Law) -> float:
 
     Ballots don't clear the memo, so once the vote is closed only a count taken
     after the closing is reused: one from its last seconds would pass for the
-    final result.
+    final result. Any other status keeps the short memo: a vote moved back to
+    "scheduled" may have taken ballots a minute ago.
     """
-    status = law.status()
-    if status == STATUS_OPEN:
-        return OPEN_RESULTS_MEMO_AGE
-    if status == STATUS_CLOSED and law.closes_at is not None:
+    if law.status() == STATUS_CLOSED and law.closes_at is not None:
         since_closing = (utcnow() - as_utc(law.closes_at)).total_seconds()
         return min(float(CLOSED_RESULTS_MAX_AGE), since_closing - _CLOSING_MARGIN_SECONDS)
-    return float(CLOSED_RESULTS_MAX_AGE)
+    return OPEN_RESULTS_MEMO_AGE
 
 
 def visible(db: Session, slug: str) -> Law | None:

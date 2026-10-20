@@ -313,6 +313,22 @@ def test_a_count_from_before_the_closing_is_not_shown_as_the_result(client, db_s
     assert "Nombre total de votant·e·s : <strong>1</strong>" in page
 
 
+def test_a_rescheduled_votation_does_not_reuse_a_count_from_minutes_ago(
+    client, db_session, open_law
+):
+    """Moved back to "scheduled", a vote may have taken ballots since its last count."""
+    import time
+
+    client.get(f"/loi/{open_law.slug}/resultats")  # memoises 0 votes
+    client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    _, counted = results_crud._TALLIES._entries[open_law.id]
+    results_crud._TALLIES._entries[open_law.id] = (time.monotonic() - 60, counted)
+    open_law.opens_at = datetime.now(UTC) + timedelta(days=1)
+    db_session.commit()
+    page = client.get(f"/loi/{open_law.slug}/resultats").text
+    assert "Nombre total de votant·e·s : <strong>1</strong>" in page
+
+
 def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, count_queries):
     """Results of a closed vote are memoised."""
     client.get(f"/loi/{closed_law.slug}/resultats")
