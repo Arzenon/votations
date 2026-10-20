@@ -213,8 +213,15 @@ def _age_reference(obs: list[dict]) -> tuple[int, dict[str, float]]:
     # Exclude the total row ("_T") and rows without an AGE ("").
     year, rows = _latest(obs, lambda o: _dimension(o, "AGE") not in ("_T", ""))
     by_age = {_dimension(o, "AGE"): _value(o) for o in rows}
+    # A missing group would shrink its bracket and replace the cached values,
+    # as a missing région would (see `fetch_reference`).
+    missing = sorted(
+        {code for comp in AGE_BRACKET_COMPOSITION.values() for code, _ in comp} - set(by_age)
+    )
+    if missing:
+        raise InseeFetchError(f"tranches d'âge absentes : {', '.join(missing)}")
     brackets = {
-        label: sum(by_age.get(code, 0.0) * w for code, w in comp)
+        label: sum(by_age[code] * w for code, w in comp)
         for label, comp in AGE_BRACKET_COMPOSITION.items()
     }
     adult_total = sum(brackets.values())

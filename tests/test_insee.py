@@ -29,6 +29,11 @@ QUINQUENNAL = {
     "Y55T59": 200.0,
     "Y60T64": 200.0,  # 50-64 = 600
     "Y65T69": 100.0,
+    "Y70T74": 0.0,
+    "Y75T79": 0.0,
+    "Y80T84": 0.0,
+    "Y85T89": 0.0,
+    "Y90T94": 0.0,
     "Y_GE95": 100.0,  # 65+ = 200
     "Y_LT5": 999.0,
     "Y5T9": 999.0,
@@ -109,6 +114,20 @@ def test_a_missing_region_fails_the_refresh_instead_of_skewing_the_others():
 
         with pytest.raises(insee.InseeFetchError, match=f"région {code}"):
             insee.fetch_reference(get=without)
+
+
+def test_a_missing_age_group_fails_the_refresh_instead_of_skewing_the_brackets():
+    import pytest
+
+    def without(url: str) -> bytes:
+        payload = _fake_payload(url)
+        payload["observations"] = [
+            o for o in payload["observations"] if o["dimensions"]["AGE"] != "Y20T24"
+        ]
+        return json.dumps(payload).encode()
+
+    with pytest.raises(insee.InseeFetchError, match="Y20T24"):
+        insee.fetch_reference(get=without)
 
 
 def _reference(db, dimension):
