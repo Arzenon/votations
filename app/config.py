@@ -4,12 +4,13 @@ Settings with a few allowed values are ``Literal`` and numbers have a floor, so
 a typo fails at boot instead of silently weakening a privacy setting.
 """
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -32,8 +33,9 @@ class Settings(BaseSettings):
     # Old keys still accepted to verify cookies (comma-separated, oldest first).
     # Use when changing SECRET_KEY, e.g. on a host migration: otherwise every
     # voter gets a new token and can vote again. Remove after a year.
-    # Never put a leaked key here; rotate it without a fallback.
-    secret_key_fallbacks: list[str] = []
+    # Never put a leaked key here; rotate it without a fallback. NoDecode: the
+    # environment value is split below, not parsed as JSON.
+    secret_key_fallbacks: Annotated[list[str], NoDecode] = []
 
     admin_username: str = "admin"
     admin_password: str = "admin"  # noqa: S105
@@ -151,7 +153,9 @@ class Settings(BaseSettings):
     @field_validator("secret_key_fallbacks", mode="before")
     @classmethod
     def _split_fallback_keys(cls, value):
-        """Accept ``a,b`` instead of JSON. token_urlsafe keys never contain commas."""
+        """Accept ``a,b`` as well as JSON. token_urlsafe keys never contain commas."""
+        if isinstance(value, str) and value.lstrip().startswith("["):
+            return json.loads(value)
         if isinstance(value, str):
             return [key.strip() for key in value.split(",") if key.strip()]
         return value
