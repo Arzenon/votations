@@ -263,11 +263,11 @@ docker compose -f docker-compose.prod.yml exec app python -m scripts.content imp
 > d'échouer en silence.
 
 L'import est **idempotent** : une loi dont le slug existe déjà est ignorée, pas
-fusionnée. `--replace` demande l'inverse — que le fichier fasse autorité — et
-**refuse de toucher une loi publiée** : la remplacer réécrirait le texte sur
-lequel des gens ont voté sans rien inscrire à l'historique public, ce qui rendrait
-fausse la page de résultats. Une loi publiée se modifie depuis `/admin`, où le
-changement est enregistré et affiché.
+fusionnée. `--replace` demande l'inverse (que le fichier fasse autorité) et
+**refuse de toucher une loi qui a été publiée**, même dépubliée depuis : la
+remplacer réécrirait le texte sur lequel des gens ont pu voter sans rien inscrire
+à l'historique public, ce qui rendrait fausse la page de résultats. Une telle loi
+se modifie depuis `/admin`, où le changement est enregistré et affiché.
 
 Ce que l'export **ne contient pas**, et pourquoi :
 
