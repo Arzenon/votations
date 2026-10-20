@@ -93,6 +93,18 @@ DIMENSION_ORDER = {
 # Allowed categories per dimension, for form validation.
 VALID_CATEGORIES = {dim: set(order) for dim, order in DIMENSION_ORDER.items()}
 
+
+def clean_profile(profile: object) -> dict[str, str]:
+    """Keep only known dimensions with known categories."""
+    if not isinstance(profile, dict):
+        return {}
+    return {
+        dim: value
+        for dim, value in profile.items()
+        if dim in DIMENSIONS and isinstance(value, str) and value in VALID_CATEGORIES[dim]
+    }
+
+
 # Approximate national shares (%), only used to compare the sample with the
 # population, never to weight results. Rough INSEE figures (adult population
 # for age, total population for sex and region).

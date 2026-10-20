@@ -36,8 +36,8 @@ from app.models import (
     Law,
     Vote,
     VoteChoice,
+    clean_profile,
 )
-from app.profile_cookie import clean_profile
 
 
 def _add(db: Session, law_id: int, dimension: str, category: str, choice: str, delta: int) -> None:
