@@ -156,7 +156,7 @@ def law_page_context(
     if status == STATUS_OPEN:
         tally = None
     elif law.id:
-        tally = results_crud.tally(db, law.id)
+        tally = results_crud.tally(db, law.id, max_age=results_memo_age(law))
     else:
         tally = results_crud.empty_tally()
 

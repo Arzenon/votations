@@ -322,6 +322,17 @@ def test_a_closed_votation_reads_its_results_from_the_memo(client, closed_law, c
     assert touched == [], f"a closed vote was counted again: {touched}"
 
 
+def test_a_closed_votation_s_law_page_reads_its_tally_from_the_memo(
+    client, closed_law, count_queries
+):
+    """The law page of a closed vote doesn't count its votes on every view."""
+    client.get(f"/loi/{closed_law.slug}")
+    with count_queries() as seen:
+        client.get(f"/loi/{closed_law.slug}")
+    touched = [q for q in seen if "count" in q.lower() and "from votes" in q.lower()]
+    assert touched == [], f"a closed vote was counted again: {touched}"
+
+
 def test_the_memo_window_is_the_one_the_page_promises():
     """The memo duration equals the page's max-age."""
     from app.routes.public.common import (
