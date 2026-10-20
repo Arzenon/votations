@@ -301,20 +301,24 @@ def test_an_open_votation_is_not_recounted_for_every_visitor(client, open_law, c
     assert touched == [], f"an open vote was counted again within its memo: {touched}"
 
 
-def test_a_voter_sees_their_ballot_on_the_results_page_right_away(client, open_law):
-    """Even if a page read during the ballot memoised the figures without it."""
+@pytest.mark.parametrize("stored", ["before the commit", "after the last forget"])
+def test_a_voter_sees_their_ballot_on_the_results_page_right_away(client, open_law, stored):
+    """Even if a page counted the votes during the ballot and memoised that count."""
     real_forget = results_crud.forget
-    calls: list[int] = []
+    seen: list[int] = []
 
     def forget(law_id: int) -> None:
         real_forget(law_id)
-        if not calls:
-            # The call before the commit, then a read memoising the old tally.
-            results_crud._TALLIES.put(law_id, results_crud.empty_tally())
-        calls.append(law_id)
+        if not seen:
+            # The call before the commit: a reader starts counting here.
+            seen.append(results_crud._TALLIES.version(law_id))
+            if stored == "before the commit":
+                results_crud._TALLIES.put(law_id, results_crud.empty_tally(), seen[0])
 
     with patch.object(results_crud, "forget", forget):
         client.post(f"/loi/{open_law.slug}/vote", data={"choice": "for"})
+    if stored == "after the last forget":
+        results_crud._TALLIES.put(open_law.id, results_crud.empty_tally(), seen[0])
     page = client.get(f"/loi/{open_law.slug}/resultats").text
     assert "Nombre total de votant·e·s : <strong>1</strong>" in page
 

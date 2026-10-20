@@ -55,9 +55,10 @@ _COUNT_COLUMNS = (
 #
 # The window never exceeds the page's own Cache-Control max-age, which is why
 # the durations live next to the headers in `app.routes.public.common`. A
-# ballot calls `forget` for its law, before and after its commit, so a voter
-# sees their own ballot right away and the window only matters for other
-# changes (admin edits, a second replica).
+# ballot calls `forget` for its law, before and after its commit, and a value
+# counted before a `forget` is never stored (see `_Memo.version`), so a voter
+# sees their own ballot right away. The window only matters for other changes
+# (admin edits, a second replica).
 
 
 class _Memo[T]:
@@ -68,6 +69,8 @@ class _Memo[T]:
 
     def __init__(self, max_entries: int = 4096) -> None:
         self._entries: dict[int, tuple[float, T]] = {}
+        # Bumped by `forget`. One int per law that ever changed.
+        self._versions: dict[int, int] = {}
         self._lock = threading.Lock()
         self._max_entries = max_entries
 
@@ -82,8 +85,20 @@ class _Memo[T]:
         stored_at, value = found
         return value if time.monotonic() - stored_at <= max_age else None
 
-    def put(self, law_id: int, value: T) -> None:
+    def version(self, law_id: int) -> int:
+        """Read before counting, and pass to `put`.
+
+        A count that started before a ballot's commit can finish after the
+        `forget` that follows it: its value would hide that ballot.
+        """
         with self._lock:
+            return self._versions.get(law_id, 0)
+
+    def put(self, law_id: int, value: T, version: int) -> None:
+        """Store ``value``, unless the law was forgotten since ``version`` was read."""
+        with self._lock:
+            if self._versions.get(law_id, 0) != version:
+                return
             if len(self._entries) >= self._max_entries and law_id not in self._entries:
                 self._entries.clear()
             self._entries[law_id] = (time.monotonic(), value)
@@ -91,6 +106,7 @@ class _Memo[T]:
     def forget(self, law_id: int) -> None:
         with self._lock:
             self._entries.pop(law_id, None)
+            self._versions[law_id] = self._versions.get(law_id, 0) + 1
 
     def clear(self) -> None:
         with self._lock:
@@ -132,6 +148,7 @@ def tally(db: Session, law_id: int, *, max_age: float = 0.0) -> Tally:
     remembered = _TALLIES.get(law_id, max_age)
     if remembered is not None:
         return remembered
+    version = _TALLIES.version(law_id)
     rows = db.execute(
         select(Vote.choice, *_COUNT_COLUMNS).where(Vote.law_id == law_id).group_by(Vote.choice)
     ).all()
@@ -141,7 +158,7 @@ def tally(db: Session, law_id: int, *, max_age: float = 0.0) -> Tally:
         counts[choice] = n
         profiled += with_profile
     result = _tally_from_counts(counts, profiled)
-    _TALLIES.put(law_id, result)
+    _TALLIES.put(law_id, result, version)
     return result
 
 
@@ -161,6 +178,7 @@ def tallies_for(db: Session, law_ids: list[int], *, max_age: float = 0.0) -> dic
     if not wanted:
         return out
 
+    versions = {law_id: _TALLIES.version(law_id) for law_id in wanted}
     rows = db.execute(
         select(Vote.law_id, Vote.choice, *_COUNT_COLUMNS)
         .where(Vote.law_id.in_(wanted))
@@ -175,7 +193,7 @@ def tallies_for(db: Session, law_ids: list[int], *, max_age: float = 0.0) -> dic
         profiled[law_id] += with_profile
     for law_id, c in counts.items():
         counted = _tally_from_counts(c, profiled[law_id])
-        _TALLIES.put(law_id, counted)
+        _TALLIES.put(law_id, counted, versions[law_id])
         out[law_id] = counted
     return out
 
@@ -315,13 +333,14 @@ def evolution(
     remembered = _EVOLUTIONS.get(law_id, max_age)
     if remembered is not None:
         return remembered
+    version = _EVOLUTIONS.version(law_id)
 
     settings = get_settings()
     if total is None:
         total = count_votes(db, law_id)
     if total < settings.min_bucket_volume:
         # Memoised too: crossing the threshold takes a ballot, which forgets it.
-        _EVOLUTIONS.put(law_id, [])
+        _EVOLUTIONS.put(law_id, [], version)
         return []
 
     zone = display_zone()
@@ -347,7 +366,7 @@ def evolution(
                 daily=[voted.get(day, 0) for day in _days_between(start, end)],
             )
         )
-    _EVOLUTIONS.put(law_id, curve)
+    _EVOLUTIONS.put(law_id, curve, version)
     return curve
 
 
