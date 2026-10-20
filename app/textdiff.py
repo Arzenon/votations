@@ -201,5 +201,8 @@ def field_change(old: str | None, new: str | None, *, inline: bool = True) -> Fi
     )
 
 
-# Revisions never change, so the revision page computes each diff once per process.
+# Revisions never change, so each diff is computed once per process: a large
+# one takes a fifth of a second. The results page shows 20 revisions per page,
+# and an entry holds both versions (up to ~100k characters for arguments).
+inline_change = lru_cache(maxsize=64)(field_change)
 full_change = lru_cache(maxsize=32)(partial(field_change, inline=False))

@@ -19,7 +19,7 @@ from app.labels import (
 )
 from app.security import safe_url
 from app.seo import DATA_LICENCE_NAME, DATA_LICENCE_URL
-from app.textdiff import field_change
+from app.textdiff import inline_change
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -70,7 +70,7 @@ templates.env.globals["DATA_LICENCE_NAME"] = DATA_LICENCE_NAME
 templates.env.globals["DATA_LICENCE_URL"] = DATA_LICENCE_URL
 templates.env.globals["CHOICE_LABELS"] = CHOICE_LABELS
 # A global rather than a filter since it takes two values.
-templates.env.globals["field_change"] = field_change
+templates.env.globals["field_change"] = inline_change
 
 
 def _digest(name: str) -> str:

@@ -259,3 +259,13 @@ def test_a_revision_id_that_cannot_exist_is_a_404_not_an_error(client, db_sessio
     law = make_law(db_session, slug="loi-ids")
     for odd in ("99999999999999999999", "abc", "-1", "1e3", "١٢", "0", "007"):
         assert client.get(f"/loi/{law.slug}/modifications/{odd}").status_code == 404, odd
+
+
+def test_the_results_page_diffs_each_revision_once():
+    """Revisions never change: the page reuses the diff instead of recomputing it."""
+    from app.templating import templates
+
+    diff_for_page = templates.env.globals["field_change"]
+    old, new = "Le chat dort ici. " * 10, "Le chien dort ici. " * 10
+    assert diff_for_page(old, new) is diff_for_page(old, new)
+    assert diff_for_page(old, new) == field_change(old, new)
