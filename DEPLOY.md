@@ -179,7 +179,8 @@ chaque loi) ne s'annule pas. Une fois appliquée :
   et copies hors de la machine) sans attendre leur expiration ;
 - dans la base elle-même, la migration suivante (`a3d9f6c1e872`) réécrit la
   table `votes` (`VACUUM FULL`), sans quoi les anciennes versions des lignes y
-  resteraient lisibles. Le journal de PostgreSQL (WAL) peut en garder une copie
+  resteraient lisibles, ainsi que les statistiques du planificateur
+  (`pg_statistic`), qui en gardaient des valeurs d'exemple. Le journal de PostgreSQL (WAL) peut en garder une copie
   jusqu'à ce que ses fichiers soient réécrits par l'activité suivante, ce qui
   peut prendre du temps sur un site qui écrit peu.
 

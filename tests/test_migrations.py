@@ -130,6 +130,46 @@ def test_the_old_shared_hash_does_not_stay_in_the_table_files(engine):
         command.upgrade(config, "head")
 
 
+def test_the_old_shared_hash_does_not_stay_in_the_planner_statistics(engine):
+    """ANALYZE copies sample voter_token values into pg_statistic, which
+    rewriting `votes` leaves alone."""
+    import hashlib
+
+    from sqlalchemy import delete
+    from sqlalchemy.orm import Session
+
+    from app.models import Law, Vote
+
+    shared = hashlib.sha256(b"jeton-de-test").hexdigest()
+    stats = text(
+        "SELECT coalesce(most_common_vals::text, '') || coalesce(histogram_bounds::text, '')"
+        " FROM pg_stats WHERE tablename = 'votes' AND attname = 'voter_token'"
+    )
+    config = alembic_config(TEST_DATABASE_URL)
+    command.downgrade(config, "5e8b2d47a1c9")
+    try:
+        with Session(engine) as db:
+            laws = [Law(slug=f"migration-{n}", title="L", published=True) for n in "ab"]
+            db.add_all(laws)
+            db.flush()
+            db.add_all(Vote(law_id=law.id, voter_token=shared, choice="for") for law in laws)
+            db.commit()
+            db.execute(text("ANALYZE votes"))
+            db.commit()
+            assert shared in (db.scalar(stats) or ""), "the setup should put it in the stats"
+            before = db.scalar(text("SELECT pg_relation_filenode('pg_statistic')"))
+        command.upgrade(config, "head")
+        with engine.connect() as conn:
+            assert shared not in (conn.scalar(stats) or "")
+            # Rewritten too, or the replaced statistics stay in its file.
+            assert conn.scalar(text("SELECT pg_relation_filenode('pg_statistic')")) != before
+    finally:
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            db.execute(delete(Law).where(Law.slug.like("migration-%")))
+            db.commit()
+
+
 def test_the_per_law_token_migration_refuses_to_downgrade_over_votes(engine):
     """Upgrading again would hash the stored tokens twice, so votes block the downgrade."""
     from sqlalchemy import delete

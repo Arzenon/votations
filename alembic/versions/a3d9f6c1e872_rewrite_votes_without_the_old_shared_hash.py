@@ -4,7 +4,9 @@
 leaves the previous row version in the table and index files until the space
 is reused: anyone with a copy of the data volume could still read the shared
 hash and link a browser's votes. VACUUM FULL rewrites the table and its
-indexes, dropping those versions.
+indexes, dropping those versions. The planner statistics hold sample values
+of voter_token too: ANALYZE replaces them, and rewriting pg_statistic drops
+the replaced rows.
 
 Separate from 7b1e4c9d2a60 because VACUUM can't run in a transaction: the
 autocommit block commits what came before it, and a failure after committing
@@ -27,7 +29,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.get_context().autocommit_block():
-        op.execute("VACUUM FULL votes")
+        op.execute("VACUUM (FULL, ANALYZE) votes")
+        op.execute("VACUUM FULL pg_catalog.pg_statistic")
 
 
 def downgrade() -> None:
